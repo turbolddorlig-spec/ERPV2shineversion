@@ -2,6 +2,7 @@
 import clsx from 'clsx';
 import { useId } from 'react';
 import { Icon } from '@/components/icons';
+import { ZoomButton, type ZoomImg } from '@/components/ui/Lightbox';
 import type { Img } from './ProductEditor';
 
 /** Хадгалаагүй (сонгосон) зураг */
@@ -29,6 +30,9 @@ export function ImageGroups({ colors, images, pending, canEdit, productName, onA
   // Барааны өнгөнөөс хасагдсан ч зурагтай үлдсэн өнгийг ч харуулна
   const orphan = [...new Set(images.map((i) => i.color).filter((c) => c && !colors.includes(c)))];
   const groups = ['', ...colors, ...orphan];
+  // Томруулж харахад бүх зургийг (бүлгийн дарааллаар) нэг цомгоор гүйлгэнэ
+  const ordered = groups.flatMap((c) => images.filter((i) => i.color === c));
+  const gallery: ZoomImg[] = ordered.map((im) => ({ src: im.lg, alt: `${productName} · ${im.color || 'ерөнхий'}`, name: `${productName} ${im.color}`.trim() }));
 
   return (
     <div className="flex flex-col gap-4">
@@ -50,10 +54,11 @@ export function ImageGroups({ colors, images, pending, canEdit, productName, onA
             <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4">
               {imgs.map((img, i) => (
                 <li key={img.id} className={clsx('flex flex-col gap-1 rounded-xl border p-1', img.isMain ? 'border-accent' : 'border-line')}>
-                  <a href={img.lg} target="_blank" rel="noreferrer" className="relative block aspect-square overflow-hidden rounded-lg bg-surface2">
+                  <ZoomButton images={gallery} index={ordered.findIndex((o) => o.id === img.id)} label={`${productName} ${color || 'ерөнхий'} зураг ${i + 1} — томруулах`}
+                    className="relative block aspect-square w-full cursor-zoom-in overflow-hidden rounded-lg bg-surface2">
                     <img src={img.md} alt={`${productName} ${color || 'ерөнхий'} зураг ${i + 1}`} loading="lazy" className="h-full w-full object-cover" />
                     {img.isMain ? <span className="absolute left-1 top-1 rounded-md bg-accent px-1.5 text-[10.5px] font-bold text-on-accent">Үндсэн</span> : null}
-                  </a>
+                  </ZoomButton>
                   {canEdit ? (
                     <div className="flex flex-wrap justify-center gap-0.5">
                       {!img.isMain ? <IconBtn label="Үндсэн зураг болгох" icon="star" onClick={() => onOp(img, 'main')} /> : null}
@@ -73,10 +78,11 @@ export function ImageGroups({ colors, images, pending, canEdit, productName, onA
               ))}
               {pend.map((p) => (
                 <li key={p.id} className="flex flex-col gap-1 rounded-xl border border-dashed border-accent p-1">
-                  <span className="relative block aspect-square overflow-hidden rounded-lg bg-surface2">
+                  <ZoomButton images={[{ src: p.url, alt: p.file.name, name: p.file.name }]} label={`${p.file.name} — томруулах`}
+                    className="relative block aspect-square w-full cursor-zoom-in overflow-hidden rounded-lg bg-surface2">
                     <img src={p.url} alt={`Сонгосон зураг: ${p.file.name}`} className="h-full w-full object-cover" />
                     <span className="absolute inset-x-0 bottom-0 bg-ink/70 py-0.5 text-center text-[10.5px] font-bold text-on-ink">Хадгалаагүй</span>
-                  </span>
+                  </ZoomButton>
                   <button type="button" onClick={() => onRemovePending(p.id)} className="h-8 rounded-lg bg-surface2 text-[12px] font-semibold">Болих</button>
                 </li>
               ))}

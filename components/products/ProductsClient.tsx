@@ -10,6 +10,7 @@ import { ReasonModal } from '@/components/ui/ReasonModal';
 import { Modal } from '@/components/ui/Modal';
 import { Icon } from '@/components/icons';
 import { api, ApiError } from '@/components/ui/api';
+import { ZoomButton, largeOf } from '@/components/ui/Lightbox';
 import { CATEGORY_DOT, money } from '@/lib/format';
 
 interface Item {
@@ -29,7 +30,11 @@ export function StatusBadge({ status, label }: { status: Item['status']; label: 
   return <Badge tone={status === 'ACTIVE' ? 'ok' : status === 'DISCONTINUED' ? 'warn' : 'neutral'}>{label}</Badge>;
 }
 
-export function Thumb({ src, alt, size = 44 }: { src: string | null; alt: string; size?: number }) {
+/** Жижиг зураг. `zoom` өгвөл дээр нь дарахад томорч, татаж авах боломжтой (#36) */
+export function Thumb({ src, alt, size = 44, zoom }: { src: string | null; alt: string; size?: number; zoom?: string }) {
+  if (src && zoom) {
+    return <ZoomButton images={[{ src: largeOf(src), alt, name: zoom }]} label={`${alt} — зургийг томруулах`}><Thumb src={src} alt={alt} size={size} /></ZoomButton>;
+  }
   return src
     ? <img src={src} alt={alt} loading="lazy" width={size} height={size} className="shrink-0 rounded-[10px] bg-surface2 object-cover" style={{ width: size, height: size }} />
     : <span aria-hidden="true" className="grid shrink-0 place-items-center rounded-[10px] bg-surface2 text-subtle" style={{ width: size, height: size }}><Icon name="image" size={Math.round(size / 2.4)} /></span>;
@@ -178,7 +183,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
                   <td className="border-b border-line px-3 py-2">
                     {/* Нэр, кодыг хуулж авах боломжтой — дарахад бараа руу орохгүй (эзний шийдвэр #33) */}
                     <div className="flex items-center gap-3">
-                      <Thumb src={p.thumb} alt={p.name} />
+                      <Thumb src={p.thumb} alt={p.name} zoom={`${p.code} ${p.name}`} />
                       <span className="flex min-w-0 select-text flex-col"><span className="font-semibold">{p.name}</span><span className="text-[12px] text-subtle">{p.code}</span></span>
                     </div>
                   </td>
@@ -202,7 +207,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
                     <td className="border-b border-line/60 py-1.5 pl-10 pr-3">
                       <span className="flex items-center gap-2.5">
                         <span aria-hidden="true" className="h-5 w-3 shrink-0 rounded-bl-md border-b-2 border-l-2 border-line" />
-                        <Thumb src={v.thumb} alt={v.label} size={30} />
+                        <Thumb src={v.thumb} alt={`${p.name} · ${v.label}`} size={30} zoom={v.code} />
                         <span className="flex min-w-0 flex-col leading-tight"><span className="font-semibold">{v.label}</span><span className="text-[11.5px] text-subtle">{v.code}</span></span>
                       </span>
                     </td>
@@ -227,7 +232,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
             <div className="flex items-center gap-3">
             {canEdit ? <input type="checkbox" aria-label={`${p.code} сонгох`} checked={selected.has(p.id)} onChange={() => toggle(p.id)} className="h-5 w-5 shrink-0 accent-[var(--accent)]" /> : null}
             <div className="flex min-w-0 flex-1 select-text items-center gap-3">
-              <Thumb src={p.thumb} alt={p.name} size={56} />
+              <Thumb src={p.thumb} alt={p.name} size={56} zoom={`${p.code} ${p.name}`} />
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="truncate text-[15px] font-bold">{p.name}</span>
                 <span className="text-[12.5px] text-subtle">{p.code} · {p.hasVariants ? `${p.variantCount} хувилбар` : p.attrs ?? 'Үндсэн'}</span>
@@ -245,7 +250,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
                   <ul className="ml-3 flex flex-col border-l-2 border-line pl-3">
                     {p.variants.map((v) => (
                       <li key={v.id} className={clsx('flex items-center gap-2.5 border-b border-line/60 py-2 last:border-0', !v.isActive && 'opacity-55')}>
-                        <Thumb src={v.thumb} alt={v.label} size={34} />
+                        <Thumb src={v.thumb} alt={`${p.name} · ${v.label}`} size={34} zoom={v.code} />
                         <span className="flex min-w-0 flex-1 flex-col leading-tight">
                           <span className="truncate text-[14px] font-semibold">{v.label}</span>
                           <span className="truncate text-[11.5px] text-subtle">{v.code}{v.isActive ? '' : ' · Идэвхгүй'}</span>
