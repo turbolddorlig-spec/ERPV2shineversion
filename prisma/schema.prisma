@@ -133,35 +133,39 @@ model Season {
 }
 
 model Product {
-  id          Int            @id @default(autoincrement())
+  id          Int           @id @default(autoincrement())
   /// Давхардахгүй код (хуучин системийн кодууд хэвээр)
-  code        String         @unique
+  code        String        @unique
   name        String
   description String?
   categoryId  Int?
-  category    Category?      @relation(fields: [categoryId], references: [id])
+  category    Category?     @relation(fields: [categoryId], references: [id])
   seasonId    Int?
-  season      Season?        @relation(fields: [seasonId], references: [id])
+  season      Season?       @relation(fields: [seasonId], references: [id])
   /// Зарах үнэ, төгрөг
   price       Int
   /// Өртөг (авсан үнэ) — зөвхөн Супер админ, Админ харна
   costPrice   Int?
-  status      ProductStatus  @default(ACTIVE)
+  status      ProductStatus @default(ACTIVE)
   statusNote  String?
   /// Хувилбарын тэнхлэгүүд. Хоёулаа хоосон бол нэг "үндсэн" хувилбартай.
-  colors      String[]       @default([])
-  sizes       String[]       @default([])
+  colors      String[]      @default([])
+  sizes       String[]      @default([])
   /// Зэрэг засварт нэг нь нөгөөгөө чимээгүй дарахаас сэргийлнэ
-  version     Int            @default(1)
-  createdById String?        @db.Uuid
-  updatedById String?        @db.Uuid
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  version     Int           @default(1)
+  createdById String?       @db.Uuid
+  updatedById String?       @db.Uuid
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  /// Үндсэн агуулахын тавиурын код («A-3») — бэлтгэлийн жагсаалт энэ дарааллаар (#38)
+  shelfCode String?
 
   variants ProductVariant[]
   images   ProductImage[]
 
   @@index([status])
+  @@index([shelfCode])
   @@index([categoryId])
   @@index([seasonId])
   @@index([updatedAt])
@@ -183,6 +187,9 @@ model ProductVariant {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  balances StockBalance[]
+  moves    StockMove[]
+
   @@unique([productId, color, size])
   @@index([productId])
 }
@@ -203,4 +210,290 @@ model ProductImage {
   createdAt DateTime @default(now())
 
   @@index([productId, sortOrder])
+}
+
+// ─────────────────────────── Модуль 2: Үлдэгдлийн журнал ───────────────────────────
+// Үлдэгдэл = журнал (StockMove). Бараа хөдлөх бүрт мөр бичигдэнэ, засах/устгах боломжгүй.
+// StockBalance нь журналын нийлбэрийн хурдан хуулбар (нэг гүйлгээнд хамт шинэчлэгдэнэ, сөрөг болохыг DB хориглоно).
+
+model Warehouse {
+  id        Int            @id @default(autoincrement())
+  name      String         @unique
+  address   String?
+  /// Захиалга энэ агуулахын тавиураас гарна (яг нэг)
+  isPrimary Boolean        @default(false)
+  isActive  Boolean        @default(true)
+  sortOrder Int            @default(0)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  location  StockLocation?
+}
+
+enum LocationKind {
+  WAREHOUSE
+  TRANSIT
+  STAFF
+  DRIVER
+}
+
+/// Бараа байж болох газар: агуулах, замдаа (шилжүүлэг), ажилтны гарт (зээл), жолоочийн гарт (Модуль 4)
+model StockLocation {
+  id          Int            @id @default(autoincrement())
+  kind        LocationKind
+  warehouseId Int?           @unique
+  warehouse   Warehouse?     @relation(fields: [warehouseId], references: [id])
+  userId      String?        @db.Uuid
+  name        String
+  createdAt   DateTime       @default(now())
+  balances    StockBalance[]
+
+  @@unique([kind, userId])
+}
+
+model StockBalance {
+  locationId Int
+  location   StockLocation  @relation(fields: [locationId], references: [id])
+  variantId  Int
+  variant    ProductVariant @relation(fields: [variantId], references: [id])
+  qty        Int            @default(0)
+  updatedAt  DateTime       @default(now())
+
+  @@id([locationId, variantId])
+  @@index([variantId])
+}
+
+enum MoveType {
+  RECEIPT
+  TRANSFER_SEND
+  TRANSFER_RECEIVE
+  TRANSFER_BACK
+  TRANSFER_LOSS
+  ISSUE
+  COUNT_PLUS
+  COUNT_MINUS
+  LOAN_OUT
+  LOAN_RETURN
+  LOAN_CHARGE
+}
+
+/// Журнал: нэг мөр = нэг хувилбарын нэг хөдөлгөөн (хаанаас → хаашаа). fromId/toId хоосон = гаднаас / гадагш.
+model StockMove {
+  id        BigInt         @id @default(autoincrement())
+  at        DateTime       @default(now())
+  type      MoveType
+  variantId Int
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+  qty       Int
+  fromId    Int?
+  toId      Int?
+  /// receipt | issue | transfer | count | loan
+  docType   String
+  docId     Int
+  note      String?
+  actorId   String         @db.Uuid
+  actorName String
+
+  @@index([variantId, id])
+  @@index([fromId, id])
+  @@index([toId, id])
+  @@index([at])
+  @@index([docType, docId])
+}
+
+model StockReceipt {
+  id            Int      @id @default(autoincrement())
+  warehouseId   Int
+  note          String?
+  /// Давхар дарахаас хамгаалах түлхүүр
+  idemKey       String   @unique
+  createdById   String   @db.Uuid
+  createdByName String
+  createdAt     DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+enum IssueReason {
+  DAMAGE
+  SAMPLE
+  SUPPLIER_RETURN
+}
+
+model StockIssue {
+  id            Int         @id @default(autoincrement())
+  warehouseId   Int
+  reason        IssueReason
+  note          String
+  idemKey       String      @unique
+  createdById   String      @db.Uuid
+  createdByName String
+  createdAt     DateTime    @default(now())
+
+  @@index([createdAt])
+  @@index([reason, createdAt])
+}
+
+enum TransferStatus {
+  SENT
+  RECEIVED
+  DISCREPANCY
+  RESOLVED
+  CANCELLED
+}
+
+model StockTransfer {
+  id              Int                 @id @default(autoincrement())
+  fromWarehouseId Int
+  toWarehouseId   Int
+  status          TransferStatus      @default(SENT)
+  note            String?
+  /// Үндсэн агуулахын дүүргэлтээс үүссэн
+  refill          Boolean             @default(false)
+  idemKey         String              @unique
+  sentById        String              @db.Uuid
+  sentByName      String
+  sentAt          DateTime            @default(now())
+  receivedById    String?             @db.Uuid
+  receivedByName  String?
+  receivedAt      DateTime?
+  resolvedById    String?             @db.Uuid
+  resolvedByName  String?
+  resolvedAt      DateTime?
+  resolveNote     String?
+  lines           StockTransferLine[]
+
+  @@index([status, toWarehouseId])
+  @@index([sentAt])
+}
+
+model StockTransferLine {
+  id          Int           @id @default(autoincrement())
+  transferId  Int
+  transfer    StockTransfer @relation(fields: [transferId], references: [id])
+  variantId   Int
+  sentQty     Int
+  receivedQty Int?
+  /// Дутагдлыг шийдсэн: илгээгч рүү буцаасан / хорогдол
+  returnedQty Int           @default(0)
+  lostQty     Int           @default(0)
+
+  @@unique([transferId, variantId])
+}
+
+enum CountStatus {
+  OPEN
+  SUBMITTED
+  CLOSED
+  CANCELLED
+}
+
+enum CountLineStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model StockCount {
+  id            Int              @id @default(autoincrement())
+  warehouseId   Int
+  status        CountStatus      @default(OPEN)
+  note          String?
+  createdById   String           @db.Uuid
+  createdByName String
+  createdAt     DateTime         @default(now())
+  submittedAt   DateTime?
+  closedAt      DateTime?
+  lines         StockCountLine[]
+
+  @@index([status, warehouseId])
+}
+
+model StockCountLine {
+  id            Int             @id @default(autoincrement())
+  countId       Int
+  count         StockCount      @relation(fields: [countId], references: [id])
+  variantId     Int
+  /// Тоолох үеийн системийн тоо
+  systemQty     Int
+  countedQty    Int
+  countedAt     DateTime        @default(now())
+  countedById   String          @db.Uuid
+  countedByName String
+  status        CountLineStatus @default(PENDING)
+  appliedDelta  Int?
+  decidedById   String?         @db.Uuid
+  decidedByName String?
+  decidedAt     DateTime?
+
+  @@unique([countId, variantId])
+}
+
+enum LoanStatus {
+  REQUESTED
+  ISSUED
+  CLOSED
+  REJECTED
+  CANCELLED
+}
+
+/// Ажилтны бараа зээл (#38): хүсэлт → агуулах олгоно → буцаалт / цалингаас суутгал
+model StaffLoan {
+  id           Int             @id @default(autoincrement())
+  staffId      String          @db.Uuid
+  staffName    String
+  status       LoanStatus      @default(REQUESTED)
+  note         String?
+  warehouseId  Int?
+  idemKey      String          @unique
+  requestedAt  DateTime        @default(now())
+  issuedById   String?         @db.Uuid
+  issuedByName String?
+  issuedAt     DateTime?
+  decidedNote  String?
+  closedAt     DateTime?
+  lines        StaffLoanLine[]
+
+  @@index([status, requestedAt])
+  @@index([staffId, requestedAt])
+}
+
+model StaffLoanLine {
+  id          Int       @id @default(autoincrement())
+  loanId      Int
+  loan        StaffLoan @relation(fields: [loanId], references: [id])
+  variantId   Int
+  qty         Int
+  returnedQty Int       @default(0)
+  chargedQty  Int       @default(0)
+  /// Олгох үеийн зарах үнэ ба нэгжийн суутгал (үнэ − хямдрал), Супер админ / Нягтлан засна
+  unitPrice   Int?
+  deduction   Int?
+
+  @@unique([loanId, variantId])
+}
+
+/// Захиалгын нөөцлөлт — Модуль 3 бичнэ. Үндсэн агуулахын дүүргэлтийн тооцоонд ашиглана.
+model StockReservation {
+  id        Int      @id @default(autoincrement())
+  ref       String
+  variantId Int
+  qty       Int
+  createdAt DateTime @default(now())
+
+  @@unique([ref, variantId])
+  @@index([variantId])
+}
+
+/// Системийн тохиргоо (жишээ: loanDiscount = 5000)
+model AppSetting {
+  key         String   @id
+  value       Json
+  updatedAt   DateTime @updatedAt
+  updatedById String?  @db.Uuid
+}
+
+/// Давхар дарахаас хамгаалах түлхүүр (нэг баримт дээрх давтагдах үйлдэлд: зээлийн хэсэгчилсэн буцаалт г.м.)
+model IdemKey {
+  key       String   @id
+  createdAt DateTime @default(now())
 }

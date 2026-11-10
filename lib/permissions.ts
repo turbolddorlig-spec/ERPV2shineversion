@@ -4,7 +4,7 @@ export type PageKey =
   | 'dashboard' | 'orders' | 'bank-import' | 'products' | 'goods-outflow'
   | 'warehouse' | 'handover' | 'driver-lead' | 'driver' | 'issues'
   | 'accounting' | 'penalties' | 'salary' | 'my-penalties' | 'supplier'
-  | 'users' | 'settings' | 'product-history';
+  | 'users' | 'settings' | 'product-history' | 'loans';
 
 export type Group = 'Үндсэн' | 'Агуулах' | 'Хүргэлт' | 'Санхүү' | 'Систем';
 
@@ -39,6 +39,8 @@ export const PAGES: PageDef[] = [
     edit: [...SA_A, 'MARKETING_LEAD'], view: ['MARKETING', 'WAREHOUSE', 'PENALTY_OFFICER'] },
   { key: 'goods-outflow', label: 'Барааны гарц', short: 'Гарц', href: '/goods-outflow', group: 'Үндсэн', icon: 'trend', module: 7, edit: [...SA_A, 'MARKETING_LEAD', 'MARKETING'] },
   { key: 'warehouse', label: 'Агуулах', short: 'Агуулах', href: '/warehouse', group: 'Агуулах', icon: 'warehouse', module: 2, edit: [...SA_A, 'WAREHOUSE'], view: ['ACCOUNTING'] },
+  { key: 'loans', label: 'Бараа зээл', short: 'Зээл', href: '/loans', group: 'Агуулах', icon: 'hand', module: 2,
+    edit: [...SA_A, 'WAREHOUSE', 'ACCOUNTING', 'OPERATOR_LEAD', 'OPERATOR', 'MARKETING_LEAD', 'MARKETING'] },
   { key: 'handover', label: 'Жолоочид бараа өгөх', short: 'Падаан', href: '/handover', group: 'Агуулах', icon: 'swap', module: 4, edit: [...SA_A, 'WAREHOUSE'], view: ['ACCOUNTING'] },
   { key: 'driver-lead', label: 'Жолооч удирдлага', short: 'Хуваарь', href: '/driver-lead', group: 'Хүргэлт', icon: 'users', module: 4, edit: [...SA_A, 'DRIVER_LEAD'] },
   { key: 'driver', label: 'Миний хүргэлт', short: 'Хүргэлт', href: '/driver', group: 'Хүргэлт', icon: 'truck', module: 5, edit: ['DRIVER'] },
@@ -101,3 +103,15 @@ export const canManageCatalogLists = (roles: Role[]) => has(roles, [...SA_A, 'MA
 export const canReviewProductEdits = (roles: Role[]) => has(roles, [...SA_A, 'MARKETING_LEAD']);
 /** Захиалга авахдаа бараа хайх (Модуль 3) — бараа хуудас харахгүй операторт ч хэрэгтэй */
 export const canSearchProducts = (roles: Role[]) => canView(roles, 'products') || canView(roles, 'orders');
+
+// ── Модуль 2: агуулах, үлдэгдэл (шийдвэр #38–#40) ──
+/** Орлого, шилжүүлэг, зарлага, тооллого оруулах, зээл олгох/хүлээн авах, тавиур */
+export const canOperateStock = (roles: Role[]) => has(roles, [...SA_A, 'WAREHOUSE']);
+/** Тооллого батлах, шилжүүлгийн дутагдал шийдэх, агуулах удирдах */
+export const canApproveStock = (roles: Role[]) => has(roles, SA_A);
+/** Бараа зээл хүсэх */
+export const canRequestLoan = (roles: Role[]) => has(roles, ['OPERATOR', 'OPERATOR_LEAD', 'MARKETING', 'MARKETING_LEAD']);
+/** Зээлийн хямдрал засах, цалингаас суутгах гэж тэмдэглэх */
+export const canLoanFinance = (roles: Role[]) => has(roles, ['SUPER_ADMIN', 'ACCOUNTING']);
+/** Бүх ажилтны зээлийг харах */
+export const canSeeAllLoans = (roles: Role[]) => has(roles, [...SA_A, 'WAREHOUSE', 'ACCOUNTING']);

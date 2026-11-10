@@ -7,6 +7,7 @@ import sharp from 'sharp';
 import type { Role } from '@prisma/client';
 import { AppError } from '@/lib/errors';
 import type { UserActor } from '@/lib/services/users';
+import { resetDb } from '../helpers/reset';
 
 let db: typeof import('@/lib/db').db;
 let P: typeof import('@/lib/services/products');
@@ -46,13 +47,7 @@ const png = (w = 1200, h = 900) => sharp({ create: { width: w, height: h, channe
 const R = 'Нийлүүлэгч үнэ өсгөсөн';
 
 beforeEach(async () => {
-  await db.$executeRawUnsafe('TRUNCATE "ProductImage", "ProductVariant", "Product", "Category", "Season", "AuditReview", "Session", "User" RESTART IDENTITY CASCADE');
-  // Зөвхөн ТЕСТИЙН database: түүхийн хамгаалалтыг түр унтрааж цэвэрлэнэ (production-д хэзээ ч хийхгүй)
-  await db.$transaction([
-    db.$executeRawUnsafe('ALTER TABLE "AuditLog" DISABLE TRIGGER USER'),
-    db.$executeRawUnsafe('TRUNCATE "AuditLog"'),
-    db.$executeRawUnsafe('ALTER TABLE "AuditLog" ENABLE TRIGGER USER'),
-  ]);
+  await resetDb(db as never);
 });
 
 describe('бараа үүсгэх', () => {
