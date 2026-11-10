@@ -2,7 +2,7 @@
 const nextConfig = {
   output: 'standalone',
   poweredByHeader: false,
-  experimental: { serverComponentsExternalPackages: ['@prisma/client', 'bcryptjs'] },
+  experimental: { serverComponentsExternalPackages: ['@prisma/client', 'bcryptjs'], instrumentationHook: true },
   async headers() {
     return [
       {

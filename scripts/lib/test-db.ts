@@ -11,10 +11,13 @@ export async function resetDb(db: PrismaClient) {
     db.$executeRawUnsafe('ALTER TABLE "StockMove" DISABLE TRIGGER USER'),
     db.$executeRawUnsafe(`TRUNCATE "StockMove", "StockBalance", "StockReceipt", "StockIssue", "StockTransferLine", "StockTransfer",
       "StockCountLine", "StockCount", "StaffLoanLine", "StaffLoan", "StockReservation", "IdemKey", "Warehouse",
+      "OrderLine", "Order", "Page", "PageAssignment", "BlacklistEntry", "CallNoteTransfer", "CallNote", "MetaEvent",
       "ProductImage", "ProductVariant", "Product", "Category", "Season", "AuditReview", "Session", "User", "AuditLog", "StockLocation" RESTART IDENTITY CASCADE`),
     // «Замдаа» газрыг migration-ийн адил дахин үүсгэнэ (id = 1)
     db.$executeRawUnsafe(`INSERT INTO "StockLocation" ("kind", "name") VALUES ('TRANSIT', 'Замдаа')`),
-    db.$executeRawUnsafe(`INSERT INTO "AppSetting" ("key","value","updatedAt") VALUES ('loanDiscount','5000',now()) ON CONFLICT ("key") DO UPDATE SET "value" = '5000'`),
+    db.$executeRawUnsafe(`DELETE FROM "AppSetting"`),
+    db.$executeRawUnsafe(`INSERT INTO "AppSetting" ("key","value","updatedAt") VALUES ('loanDiscount','5000',now()), ('deliveryFeeUB','5000',now()), ('deliveryFeeRural','10000',now()), ('paymentWaitDays','7',now())`),
+    db.$executeRawUnsafe(`ALTER SEQUENCE order_number_seq RESTART WITH 1`),
     db.$executeRawUnsafe('ALTER TABLE "StockMove" ENABLE TRIGGER USER'),
     db.$executeRawUnsafe('ALTER TABLE "AuditLog" ENABLE TRIGGER USER'),
   ]);

@@ -13,7 +13,7 @@ import { Thumb } from '@/components/products/ProductsClient';
 interface Wh { id: number; name: string; isPrimary: boolean }
 interface Row {
   variantId: number; productId: number; code: string; name: string; label: string; thumb: string | null; shelfCode: string | null; isActive: boolean;
-  byWarehouse: Record<string, number>; transit: number; staff: number; driver: number; total: number; reserved: number; available: number;
+  byWarehouse: Record<string, number>; transit: number; staff: number; driver: number; total: number; reserved: number; reservedPending: number; available: number;
 }
 interface StockResp { items: Row[]; page: number; pageSize: number; hasMore: boolean; warehouses: Wh[]; canOperate: boolean }
 interface Today { refill: number; incoming: number; discrepancy: number; loanRequests: number; countsToApprove: number; openCounts: number; returns: number; approver: boolean }
@@ -186,7 +186,7 @@ export function WarehouseClient({ canOperate, canApprove }: { canOperate: boolea
                     <td className="border-b border-line px-2 py-2 text-right text-info">{r.transit || ''}</td>
                     <td className="border-b border-line px-2 py-2 text-right text-muted">{r.staff || ''}</td>
                     <td className="border-b border-line px-2 py-2 text-right font-extrabold">{r.total}</td>
-                    <td className="border-b border-line px-2 py-2 text-right text-muted">{r.reserved || ''}</td>
+                    <td className="border-b border-line px-2 py-2 text-right text-muted">{r.reserved || ''}{r.reservedPending ? <span className="block text-[11px] text-warn" title="Төлбөр хүлээж буй захиалгад">{r.reservedPending} төлб.</span> : null}</td>
                     <td className={clsx('border-b border-line px-2 py-2 text-right font-bold', r.available < 0 ? 'text-bad-ink' : 'text-ok-ink')}>{r.available}</td>
                     <td className="border-b border-line px-3 py-2"><RowActions r={r} canOperate={canOperate} /></td>
                   </tr>
@@ -212,7 +212,7 @@ export function WarehouseClient({ canOperate, canApprove }: { canOperate: boolea
                 {whs.filter((w) => r.byWarehouse[w.id]).map((w) => <span key={w.id} className="rounded-lg bg-surface2 px-2 py-1 font-semibold">{w.isPrimary ? '★ ' : ''}{w.name}: {r.byWarehouse[w.id]}</span>)}
                 {r.transit ? <span className="rounded-lg bg-info-soft px-2 py-1 font-semibold text-info">Замдаа: {r.transit}</span> : null}
                 {r.staff ? <span className="rounded-lg bg-surface2 px-2 py-1 font-semibold">Зээлд: {r.staff}</span> : null}
-                {r.reserved ? <span className="rounded-lg bg-surface2 px-2 py-1 font-semibold">Захиалгад: {r.reserved}</span> : null}
+                {r.reserved ? <span className="rounded-lg bg-surface2 px-2 py-1 font-semibold">Захиалгад: {r.reserved}{r.reservedPending ? ` (төлбөр хүлээж буй ${r.reservedPending})` : ''}</span> : null}
                 <span className={clsx('rounded-lg px-2 py-1 font-bold', r.available < 0 ? 'bg-bad-soft text-bad-ink' : 'bg-ok-soft text-ok-ink')}>Боломжтой: {r.available}</span>
               </div>
               <RowActions r={r} canOperate={canOperate} mobile />

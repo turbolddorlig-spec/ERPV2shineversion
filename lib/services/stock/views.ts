@@ -16,16 +16,19 @@ async function warehousesWithLoc() {
 
 /** Хувилбар бүрийн байршлын үлдэгдэл: агуулах тус бүр, замдаа, ажилтны гарт, жолоочийн гарт, захиалгад */
 export async function balancesFor(variantIds: number[]) {
-  const out = new Map<number, { byLocation: Map<number, number>; transit: number; staff: number; driver: number; warehouses: number; reserved: number }>();
+  const out = new Map<number, { byLocation: Map<number, number>; transit: number; staff: number; driver: number; warehouses: number; reserved: number; reservedPending: number }>();
   if (!variantIds.length) return out;
   const transit = await transitLocationId();
   const [rows, res] = await Promise.all([
     db.$queryRaw<{ variantId: number; locationId: number; kind: string; qty: number }[]>`
       SELECT b."variantId", b."locationId", l."kind"::text AS kind, b."qty" FROM "StockBalance" b JOIN "StockLocation" l ON l.id = b."locationId"
       WHERE b."variantId" IN (${Prisma.join(variantIds)}) AND b."qty" <> 0`,
-    db.stockReservation.groupBy({ by: ['variantId'], where: { variantId: { in: variantIds } }, _sum: { qty: true } }),
+    // Нөөц: нийт ба «Төлбөр хүлээж буй» захиалгынх (#43 8 — агуулахад тусдаа харагдана)
+    db.$queryRaw<{ variantId: number; total: number; pending: number }[]>`
+      SELECT r."variantId", sum(r.qty)::int AS total, COALESCE(sum(r.qty) FILTER (WHERE o.status = 'PENDING_PAYMENT'), 0)::int AS pending
+      FROM "StockReservation" r LEFT JOIN "Order" o ON o.id = r."orderId" WHERE r."variantId" IN (${Prisma.join(variantIds)}) GROUP BY r."variantId"`,
   ]);
-  for (const id of variantIds) out.set(id, { byLocation: new Map(), transit: 0, staff: 0, driver: 0, warehouses: 0, reserved: 0 });
+  for (const id of variantIds) out.set(id, { byLocation: new Map(), transit: 0, staff: 0, driver: 0, warehouses: 0, reserved: 0, reservedPending: 0 });
   for (const r of rows) {
     const o = out.get(r.variantId)!;
     o.byLocation.set(r.locationId, r.qty);
@@ -34,7 +37,7 @@ export async function balancesFor(variantIds: number[]) {
     else if (r.kind === 'STAFF') o.staff += r.qty;
     else if (r.kind === 'DRIVER') o.driver += r.qty;
   }
-  for (const r of res) out.get(r.variantId)!.reserved = r._sum.qty ?? 0;
+  for (const r of res) { const o = out.get(r.variantId)!; o.reserved = r.total; o.reservedPending = r.pending; }
   return out;
 }
 
@@ -74,7 +77,7 @@ export async function stockList(actor: UserActor, params: { q?: string; category
       return {
         variantId: r.id, ...info.get(r.id)!, isActive: r.isActive, productStatus: r.status,
         byWarehouse: Object.fromEntries(whs.map((w) => [w.id, b.byLocation.get(w.locationId) ?? 0])),
-        transit: b.transit, staff: b.staff, driver: b.driver, total: b.warehouses, reserved: b.reserved, available: b.warehouses - b.reserved,
+        transit: b.transit, staff: b.staff, driver: b.driver, total: b.warehouses, reserved: b.reserved, reservedPending: b.reservedPending, available: b.warehouses - b.reserved,
       };
     }),
   };

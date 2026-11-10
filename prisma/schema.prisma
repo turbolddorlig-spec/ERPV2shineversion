@@ -48,6 +48,8 @@ model User {
   theme              Theme     @default(SYSTEM)
   lastLoginAt        DateTime?
   passwordChangedAt  DateTime  @default(now())
+  /// Захиалга үүсгэхэд сүүлд сонгосон пэйж (#50)
+  lastPageId         Int?
   createdById        String?   @db.Uuid
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
@@ -159,7 +161,9 @@ model Product {
   updatedAt   DateTime      @updatedAt
 
   /// Үндсэн агуулахын тавиурын код («A-3») — бэлтгэлийн жагсаалт энэ дарааллаар (#38)
-  shelfCode String?
+  shelfCode        String?
+  /// Зарах үнэд хүргэлтийн төлбөр багтсан эсэх (#43). Үгүй бол захиалгад хүргэлтийн төлбөр нэмэгдэнэ
+  deliveryIncluded Boolean @default(true)
 
   variants ProductVariant[]
   images   ProductImage[]
@@ -476,12 +480,15 @@ model StaffLoanLine {
 model StockReservation {
   id        Int      @id @default(autoincrement())
   ref       String
+  /// Захиалгын нөөц бол захиалгын id (Модуль 3)
+  orderId   Int?
   variantId Int
   qty       Int
   createdAt DateTime @default(now())
 
   @@unique([ref, variantId])
   @@index([variantId])
+  @@index([orderId])
 }
 
 /// Системийн тохиргоо (жишээ: loanDiscount = 5000)
@@ -496,4 +503,230 @@ model AppSetting {
 model IdemKey {
   key       String   @id
   createdAt DateTime @default(now())
+}
+
+// ─────────────────────────── Модуль 3: Захиалга ───────────────────────────
+
+/// Facebook пэйж (#43, хуучин шиг)
+model Page {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+/// Ахлах оператор операторт пэйж хуваарилна. Хуваарилалтгүй бол бүх идэвхтэй пэйж.
+model PageAssignment {
+  userId    String   @id @db.Uuid
+  pageIds   Int[]    @default([])
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+}
+
+/// 7 төлөв (#44, #45): «Он сар өдөртэй» = NEW + хүргэх өдөр маргаашаас хойш (тусдаа хадгалахгүй, автомат)
+enum OrderStatus {
+  PENDING_PAYMENT
+  NEW
+  ASSIGNED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+enum CancelReason {
+  CUSTOMER_CANCELLED
+  DUPLICATE
+  OUT_OF_STOCK
+  NO_ANSWER
+  PAYMENT_TIMEOUT
+  OTHER
+}
+
+model Order {
+  id                Int           @id @default(autoincrement())
+  /// 8 оронтой хүний унших дугаар — хэзээ ч солигдохгүй (#43)
+  number            String        @unique
+  status            OrderStatus
+  phone             String
+  extraPhone        String?
+  province          String
+  district          String?
+  /// Хороо (дугаар); null = «Хороо тодорхойгүй» (#43)
+  khoroo            Int?
+  addressDetail     String
+  note              String?
+  pageId            Int
+  operatorId        String        @db.Uuid
+  operatorName      String
+  /// Хүргэх өдөр (#44): анхдагч маргааш
+  deliveryDate      DateTime      @db.Date
+  prepaid           Boolean       @default(false)
+  /// Баталгаажсан мөч: УБ «Шинэ» үүсэхэд эсвэл «Мөнгө орсон»-д. Тайлан, цагийн мэдээ, Meta үүгээр
+  confirmedAt       DateTime?
+  /// Төлбөр хүлээж буй захиалгын хугацаа (дуусахад автомат цуцлагдана)
+  paymentDeadline   DateTime?
+  /// Барааны нийт (жагсаалтын үнээр), хөнгөлөлт, хүргэлт, төлөх дүн — сервер тооцно
+  subtotal          Int
+  discount          Int           @default(0)
+  deliveryFee       Int           @default(0)
+  total             Int
+  /// Хүргэлтийн төлбөрийг оператор өөрчилсөн (Супер админ шалгана)
+  deliveryFeeEdited Boolean       @default(false)
+  /// Хар жагсаалттай утсаар авахдаа бичсэн шалтгаан
+  blacklistNote     String?
+  /// Жолооч «Маргааш» дарсан тоо (Модуль 5)
+  postponeCount     Int           @default(0)
+  /// Падаанд орсон (Модуль 4) — бараа засахгүй
+  handoverId        Int?
+  cancelReason      CancelReason?
+  cancelNote        String?
+  cancelledAt       DateTime?
+  cancelledByName   String?
+  deliveredAt       DateTime?
+  /// Давхар дарах / сүлжээ тасрахаас хамгаалах (#47)
+  idemKey           String        @unique
+  version           Int           @default(1)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  lines             OrderLine[]
+
+  @@index([status, deliveryDate])
+  @@index([status, createdAt])
+  @@index([confirmedAt])
+  @@index([createdAt])
+  @@index([phone])
+  @@index([extraPhone])
+  @@index([pageId, confirmedAt])
+  @@index([operatorId, confirmedAt])
+  @@index([status, paymentDeadline])
+}
+
+/// Захиалгын мөр — барааны хуулбар (#28)
+model OrderLine {
+  id               Int     @id @default(autoincrement())
+  orderId          Int
+  order            Order   @relation(fields: [orderId], references: [id])
+  variantId        Int
+  productId        Int
+  code             String
+  name             String
+  label            String
+  imageKey         String?
+  listPrice        Int
+  unitPrice        Int
+  qty              Int
+  discountReason   String?
+  deliveryIncluded Boolean @default(true)
+
+  @@unique([orderId, variantId])
+  @@index([variantId])
+}
+
+/// Хар жагсаалт (#43): анхааруулна; ахлах / админ удирдана; жолооч нэмнэ (Модуль 5)
+model BlacklistEntry {
+  id           Int       @id @default(autoincrement())
+  phone        String
+  reason       String
+  orderNumber  String?
+  reportedById String?   @db.Uuid
+  reportedBy   String
+  isActive     Boolean   @default(true)
+  removedBy    String?
+  removedAt    DateTime?
+  removeNote   String?
+  createdAt    DateTime  @default(now())
+
+  @@index([phone, isActive])
+  @@index([createdAt])
+}
+
+enum CallStatus {
+  PENDING
+  CONTACTED
+  ORDERED
+  CANCELLED
+  TRANSFERRED
+}
+
+enum CallCloseReason {
+  NO_ANSWER
+  PRICE
+  OUT_OF_STOCK
+  NO_SIZE_COLOR
+  DELIVERY
+  JUST_ASKING
+  BOUGHT_ELSEWHERE
+  OTHER
+}
+
+/// Дуудлагын бүртгэл (хуучин логик) + хаах шалтгаан (#54)
+model CallNote {
+  id            Int                @id @default(autoincrement())
+  phone         String
+  variantId     Int?
+  productText   String?
+  pageId        Int?
+  note          String?
+  status        CallStatus         @default(PENDING)
+  ownerId       String             @db.Uuid
+  ownerName     String
+  attempts      Int                @default(0)
+  lastAttemptAt DateTime?
+  orderId       Int?
+  closeReason   CallCloseReason?
+  closeNote     String?
+  closedAt      DateTime?
+  createdById   String             @db.Uuid
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  transfers     CallNoteTransfer[]
+
+  @@index([ownerId, status])
+  @@index([phone])
+  @@index([createdAt])
+  @@index([status, createdAt])
+}
+
+enum TransferRequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+model CallNoteTransfer {
+  id        Int                   @id @default(autoincrement())
+  noteId    Int
+  note      CallNote              @relation(fields: [noteId], references: [id])
+  fromId    String                @db.Uuid
+  fromName  String
+  toId      String                @db.Uuid
+  toName    String
+  status    TransferRequestStatus @default(PENDING)
+  createdAt DateTime              @default(now())
+  decidedAt DateTime?
+
+  @@index([toId, status])
+  @@index([noteId])
+}
+
+enum MetaEventStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+/// Meta CAPI Purchase (#43): баталгаажсан захиалгад нэг л удаа; алдаа гарвал дахин илгээнэ
+model MetaEvent {
+  id            Int             @id @default(autoincrement())
+  orderId       Int             @unique
+  status        MetaEventStatus @default(PENDING)
+  attempts      Int             @default(0)
+  nextAttemptAt DateTime        @default(now())
+  lastError     String?
+  sentAt        DateTime?
+  createdAt     DateTime        @default(now())
+
+  @@index([status, nextAttemptAt])
 }

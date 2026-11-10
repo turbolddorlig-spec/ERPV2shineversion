@@ -13,6 +13,7 @@ const MATRIX: Record<PageKey, string> = {
   'goods-outflow':'E E - - - - - - E E - -',
   warehouse:      'E E - - - - V E - - - -',
   loans:          'E E E E - - E E E E - -',
+  reports:        'E - - - - - - - E E - -',
   handover:       'E E - - - - V E - - - -',
   'driver-lead':  'E E - - E - - - - - - -',
   driver:         '- - - - - E - - - - - -',

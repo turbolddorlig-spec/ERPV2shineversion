@@ -4,6 +4,7 @@ import { writeAudit } from '../audit';
 import { badRequest, conflict, forbidden, notFound } from '../errors';
 import { canChangeProductCode, canChangeProductStatus, canEdit, canSearchProducts, canSeeCost, canView } from '../permissions';
 import { productStockTotals } from './stock/views';
+import { availableFor } from './orders/core';
 import { mediaUrl } from '../storage';
 import {
   cleanAxis, cleanProductCode, comboKey, combos, reasonProblem, suggestNextCode, variantCode, variantLabel, type Combo,
@@ -86,7 +87,7 @@ export function serializeProduct(p: FullProduct, roles: UserActor['roles']) {
   return {
     id: p.id, code: p.code, name: p.name, description: p.description,
     category: p.category, season: p.season,
-    price: p.price, ...(showCost ? { costPrice: p.costPrice } : {}),
+    price: p.price, ...(showCost ? { costPrice: p.costPrice } : {}), deliveryIncluded: p.deliveryIncluded,
     status: p.status, statusLabel: STATUS_LABEL[p.status], statusNote: p.statusNote,
     colors: p.colors, sizes: p.sizes, version: p.version,
     createdAt: p.createdAt, updatedAt: p.updatedAt,
@@ -192,7 +193,7 @@ export async function getProduct(actor: UserActor, id: number) {
 
 export interface ProductInput {
   code?: unknown; name?: unknown; description?: unknown; categoryId?: unknown; seasonId?: unknown;
-  price?: unknown; costPrice?: unknown; colors?: unknown; sizes?: unknown;
+  price?: unknown; costPrice?: unknown; colors?: unknown; sizes?: unknown; deliveryIncluded?: unknown;
 }
 
 export async function createProduct(actor: UserActor, input: ProductInput) {
@@ -217,7 +218,7 @@ export async function createProduct(actor: UserActor, input: ProductInput) {
     const p = await db.$transaction(async (tx) => {
       const created = await tx.product.create({
         data: {
-          code, name, description, categoryId, seasonId, price, costPrice, colors, sizes,
+          code, name, description, categoryId, seasonId, price, costPrice, colors, sizes, deliveryIncluded: input.deliveryIncluded !== false,
           createdById: actor.id, updatedById: actor.id,
           variants: { create: list.map((c, i) => ({ code: variantCode(code, c), color: c.color, size: c.size, sortOrder: i })) },
         },
@@ -273,6 +274,9 @@ export async function updateProduct(actor: UserActor, id: number, input: UpdateI
   if (input.description !== undefined) {
     const v = cleanDescription(input.description);
     if (v !== p.description) { data.description = v; changes.description = { from: p.description, to: v }; tags.add('info'); }
+  }
+  if (typeof input.deliveryIncluded === 'boolean' && input.deliveryIncluded !== p.deliveryIncluded) {
+    data.deliveryIncluded = input.deliveryIncluded; changes.deliveryIncluded = { from: p.deliveryIncluded, to: input.deliveryIncluded }; tags.add('price');
   }
   let categoryId = p.categoryId;
   let seasonId = p.seasonId;
@@ -496,12 +500,14 @@ export async function searchVariants(actor: UserActor, qInput: string, limit = 2
       id: true, code: true, color: true, size: true, priceOverride: true,
       product: {
         select: {
-          id: true, code: true, name: true, price: true, status: true,
+          id: true, code: true, name: true, price: true, status: true, description: true, deliveryIncluded: true,
           images: { orderBy: [{ isMain: 'desc' }, { sortOrder: 'asc' }], select: { fileKey: true, color: true } },
         },
       },
     },
   })).sort((a, b) => order.get(a.product.id)! - order.get(b.product.id)!).slice(0, take);
+  // Захиалах боломжтой тоо (агуулахуудын нийт − нөөцлөлт) — оператор захиалга авахад харна (Модуль 3)
+  const av = await availableFor(db, rows.map((r) => r.id));
   return rows.map((v) => {
     const img = v.product.images.find((i) => v.color && i.color === v.color) ?? v.product.images[0];
     return {
@@ -510,7 +516,8 @@ export async function searchVariants(actor: UserActor, qInput: string, limit = 2
       // Захиалгад харагдах нэг мөр: «Жигнүүрийн цаас · Улаан · 38см» (#34)
       fullName: v.color || v.size ? `${v.product.name} · ${variantLabel(v)}` : v.product.name,
       status: v.product.status, discontinued: v.product.status === 'DISCONTINUED',
-      thumb: img ? mediaUrl(img.fileKey, 'sm') : null,
+      thumb: img ? mediaUrl(img.fileKey, 'sm') : null, image: img ? mediaUrl(img.fileKey, 'lg') : null,
+      description: v.product.description, deliveryIncluded: v.product.deliveryIncluded, available: av.get(v.id) ?? 0,
     };
   });
 }

@@ -4,7 +4,7 @@ export type PageKey =
   | 'dashboard' | 'orders' | 'bank-import' | 'products' | 'goods-outflow'
   | 'warehouse' | 'handover' | 'driver-lead' | 'driver' | 'issues'
   | 'accounting' | 'penalties' | 'salary' | 'my-penalties' | 'supplier'
-  | 'users' | 'settings' | 'product-history' | 'loans';
+  | 'users' | 'settings' | 'product-history' | 'loans' | 'reports';
 
 export type Group = 'Үндсэн' | 'Агуулах' | 'Хүргэлт' | 'Санхүү' | 'Систем';
 
@@ -33,6 +33,7 @@ const SA_A: Role[] = ['SUPER_ADMIN', 'ADMIN'];
 export const PAGES: PageDef[] = [
   { key: 'dashboard', label: 'Хянах самбар', short: 'Хянах', href: '/dashboard', group: 'Үндсэн', icon: 'chart', module: 7, edit: SA_A },
   { key: 'orders', label: 'Захиалга', short: 'Захиалга', href: '/orders', group: 'Үндсэн', icon: 'flow', module: 3, edit: [...SA_A, 'OPERATOR_LEAD', 'OPERATOR'], view: ['PENALTY_OFFICER'] },
+  { key: 'reports', label: 'Тайлан', short: 'Тайлан', href: '/reports', group: 'Үндсэн', icon: 'chart', module: 3, edit: ['SUPER_ADMIN', 'MARKETING_LEAD', 'MARKETING'] },
   { key: 'bank-import', label: 'Банкны импорт', short: 'Банк', href: '/bank-import', group: 'Үндсэн', icon: 'bank', module: 6, edit: [...SA_A, 'OPERATOR_LEAD', 'OPERATOR'] },
   { key: 'products', label: 'Бараа', short: 'Бараа', href: '/products', group: 'Үндсэн', icon: 'box', module: 1, edit: [...SA_A, 'WAREHOUSE', 'MARKETING_LEAD', 'MARKETING'], view: ['PENALTY_OFFICER'] },
   { key: 'product-history', label: 'Барааны засвар', short: 'Засвар', href: '/products/history', group: 'Үндсэн', icon: 'history', module: 1,
@@ -52,7 +53,7 @@ export const PAGES: PageDef[] = [
   { key: 'my-penalties', label: 'Миний торгууль', short: 'Торгууль', href: '/my-penalties', group: 'Систем', icon: 'file', module: 7,
     edit: ['SUPER_ADMIN', 'ADMIN', 'OPERATOR_LEAD', 'OPERATOR', 'DRIVER_LEAD', 'DRIVER', 'ACCOUNTING', 'WAREHOUSE', 'MARKETING_LEAD', 'MARKETING', 'PENALTY_OFFICER'] },
   { key: 'users', label: 'Хэрэглэгч', short: 'Хэрэглэгч', href: '/users', group: 'Систем', icon: 'user', module: 0, edit: [...SA_A, 'OPERATOR_LEAD', 'DRIVER_LEAD', 'MARKETING_LEAD'] },
-  { key: 'settings', label: 'Тохиргоо', short: 'Тохиргоо', href: '/settings', group: 'Систем', icon: 'sliders', module: 7, edit: SA_A },
+  { key: 'settings', label: 'Тохиргоо', short: 'Тохиргоо', href: '/settings', group: 'Систем', icon: 'sliders', module: 3, edit: SA_A },
 ];
 
 export type Access = 'none' | 'view' | 'edit';
@@ -115,3 +116,15 @@ export const canRequestLoan = (roles: Role[]) => has(roles, ['OPERATOR', 'OPERAT
 export const canLoanFinance = (roles: Role[]) => has(roles, ['SUPER_ADMIN', 'ACCOUNTING']);
 /** Бүх ажилтны зээлийг харах */
 export const canSeeAllLoans = (roles: Role[]) => has(roles, [...SA_A, 'WAREHOUSE', 'ACCOUNTING']);
+
+// ── Модуль 3: захиалга (шийдвэр #43–#54) ──
+/** Захиалга үүсгэх, засах, цуцлах — бүх оператор бүх захиалгыг (хуучин шиг, #43 7) */
+export const canEditOrders = (roles: Role[]) => canEdit(roles, 'orders');
+/** «Мөнгө орсон», буцаах, төлбөрийн хугацаа сунгах */
+export const canMarkPaid = (roles: Role[]) => has(roles, [...SA_A, 'OPERATOR_LEAD']);
+/** Хар жагсаалт удирдах, пэйж хуваарилах, дуудлагыг шууд шилжүүлэх */
+export const canSuperviseOperators = (roles: Role[]) => has(roles, [...SA_A, 'OPERATOR_LEAD']);
+/** Үнийн хөнгөлөлт, хүргэлтийн төлбөрийн өөрчлөлтийг «Шалгасан» (#43 2) */
+export const canReviewDiscounts = (roles: Role[]) => has(roles, ['SUPER_ADMIN']);
+/** Хүргэлтийн төлбөр, хүлээх хоног, пэйж, Meta Pixel тохиргоо */
+export const canManageOrderSettings = (roles: Role[]) => has(roles, SA_A);
