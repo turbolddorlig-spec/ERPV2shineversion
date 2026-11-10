@@ -1,0 +1,131 @@
+'use client';
+import clsx from 'clsx';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Icon } from '../icons';
+import { ThemeToggle } from './ThemeToggle';
+
+export interface NavItem {
+  key: string; label: string; short: string; href: string; group: string; icon: string; readOnly: boolean;
+}
+
+function initials(name: string) {
+  return name.split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
+}
+
+function Logo({ small }: { small?: boolean }) {
+  return (
+    <span className={clsx('font-extrabold tracking-[-0.03em]', small ? 'text-[19px]' : 'text-[22px]')}>
+      zahialga<span className="text-accent">•</span>
+    </span>
+  );
+}
+
+async function logout() {
+  await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
+  window.location.href = '/login';
+}
+
+export function AppShell({ user, nav, children }: { user: { name: string; roleLabels: string[] }; nav: NavItem[]; children: ReactNode }) {
+  const pathname = usePathname();
+  const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(false), [pathname]);
+  const active = (href: string) => pathname === href || pathname.startsWith(href + '/');
+  const current = nav.find((n) => active(n.href));
+  const groups = Array.from(new Set(nav.map((n) => n.group)));
+
+  return (
+    <div className="min-h-screen">
+      {/* Компьютер, том таблет: зүүн rail цэс */}
+      <nav aria-label="Үндсэн цэс" className="fixed inset-y-0 left-0 z-30 hidden w-[84px] flex-col gap-1 overflow-y-auto bg-rail px-2 py-3.5 lg:flex">
+        <Link href="/" aria-label="Нүүр" className="mx-auto mb-3 grid h-11 w-11 place-items-center rounded-[13px] bg-[#E8590C] text-[22px] font-extrabold tracking-[-0.04em] text-white">
+          z<span className="text-[#16181D]">.</span>
+        </Link>
+        {nav.map((n) => (
+          <Link key={n.key} href={n.href} aria-current={active(n.href) ? 'page' : undefined} title={n.label}
+            className={clsx('flex min-h-[58px] flex-col items-center justify-center gap-1 rounded-xl px-0.5 py-1.5 text-center',
+              active(n.href) ? 'bg-rail-active text-white' : 'text-rail-text hover:bg-rail-active/60 hover:text-white')}>
+            <Icon name={n.icon} size={21} className={active(n.href) ? 'text-[#FF8A4C]' : undefined} />
+            <span className="text-[10.5px] font-semibold leading-tight">{n.short}</span>
+          </Link>
+        ))}
+        <Link href="/me" title="Миний мэдээлэл" className="mx-auto mt-auto grid h-10 w-10 place-items-center rounded-full bg-[#2A2E38] text-[12px] font-bold text-[#ECEDEF]">
+          {initials(user.name)}
+        </Link>
+      </nav>
+
+      {/* Гар утас, таблет: дээд мөр */}
+      <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-line bg-surface/95 px-3 pb-2 pt-[max(8px,env(safe-area-inset-top))] backdrop-blur lg:hidden">
+        <button type="button" onClick={() => setOpen(true)} aria-label="Цэс нээх" aria-expanded={open}
+          className="grid h-11 w-11 place-items-center rounded-xl bg-surface2 text-ink">
+          <Icon name="menu" />
+        </button>
+        <div className="flex min-w-0 flex-1 flex-col leading-tight">
+          <Logo small />
+          <span className="truncate text-[12.5px] font-semibold text-muted">{current?.label ?? ''}</span>
+        </div>
+        <ThemeToggle />
+      </header>
+
+      {/* Гар утасны цэс */}
+      {open ? (
+        <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-modal="true" aria-label="Цэс">
+          <button type="button" aria-label="Цэс хаах" className="absolute inset-0 bg-black/50" onClick={() => setOpen(false)} />
+          <div className="absolute inset-y-0 left-0 flex w-[min(320px,86vw)] flex-col overflow-y-auto bg-surface pb-[max(16px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] shadow-pop">
+            <div className="flex items-center justify-between px-4 pb-3">
+              <Logo />
+              <button type="button" onClick={() => setOpen(false)} aria-label="Цэс хаах" className="grid h-11 w-11 place-items-center rounded-xl text-muted hover:bg-surface2">
+                <Icon name="close" />
+              </button>
+            </div>
+            {groups.map((g) => (
+              <div key={g} className="px-2 pb-2">
+                <p className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-[0.07em] text-subtle">{g}</p>
+                {nav.filter((n) => n.group === g).map((n) => (
+                  <Link key={n.key} href={n.href} aria-current={active(n.href) ? 'page' : undefined}
+                    className={clsx('flex min-h-[48px] items-center gap-3 rounded-xl px-3 text-[15px] font-semibold',
+                      active(n.href) ? 'bg-accent-soft text-accent-ink' : 'text-ink hover:bg-surface2')}>
+                    <Icon name={n.icon} size={20} />
+                    <span className="flex-1">{n.label}</span>
+                    {n.readOnly ? <span className="text-[11px] font-bold text-subtle">харах</span> : null}
+                  </Link>
+                ))}
+              </div>
+            ))}
+            <div className="mt-auto border-t border-line px-4 pt-3">
+              <Link href="/me" className="flex items-center gap-3 rounded-xl py-2">
+                <span className="grid h-10 w-10 place-items-center rounded-full bg-ink text-[13px] font-bold text-on-ink">{initials(user.name)}</span>
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate text-[14px] font-bold">{user.name}</span>
+                  <span className="truncate text-[12px] text-muted">{user.roleLabels.join(', ')}</span>
+                </span>
+              </Link>
+              <button type="button" onClick={logout} className="mt-2 flex h-11 w-full items-center gap-3 rounded-xl px-1 text-[15px] font-semibold text-bad-ink">
+                <Icon name="logout" /> Гарах
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="lg:pl-[84px]">
+        <div className="mx-auto w-full max-w-[1400px] px-[max(16px,env(safe-area-inset-left))] pb-[max(24px,env(safe-area-inset-bottom))] pt-4 lg:px-7 lg:pt-6">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: ReactNode; actions?: ReactNode }) {
+  return (
+    <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+      <div className="flex min-w-0 flex-col gap-1">
+        <h1 className="text-[24px] font-extrabold tracking-[-0.03em] md:text-[26px]">{title}</h1>
+        {subtitle ? <p className="text-[13.5px] text-muted">{subtitle}</p> : null}
+      </div>
+      {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
+    </div>
+  );
+}

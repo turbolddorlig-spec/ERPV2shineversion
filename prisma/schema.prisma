@@ -1,0 +1,94 @@
+// zahialga• ERP V2 — Модуль 0 (Суурь)
+// Энэ модульд зөвхөн нэвтрэх, хэрэглэгч, эрх, үйлдлийн түүх багтана.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// 12 role (эзний шийдвэр #15). Нэг хэрэглэгч олон role-тэй байж болно (#18).
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  OPERATOR_LEAD
+  OPERATOR
+  DRIVER_LEAD
+  DRIVER
+  ACCOUNTING
+  WAREHOUSE
+  MARKETING_LEAD
+  MARKETING
+  PENALTY_OFFICER
+  SUPPLIER
+}
+
+enum Theme {
+  SYSTEM
+  LIGHT
+  DARK
+}
+
+model User {
+  id                 String    @id @default(uuid()) @db.Uuid
+  /// 8 оронтой, зөвхөн тоо (нэвтрэх нэр)
+  phone              String    @unique
+  name               String
+  passwordHash       String
+  roles              Role[]
+  isActive           Boolean   @default(true)
+  /// Нууц үг сэргээсний дараа анх нэвтрэхдээ солих ёстой
+  mustChangePassword Boolean   @default(false)
+  failedLoginCount   Int       @default(0)
+  lockedUntil        DateTime?
+  theme              Theme     @default(SYSTEM)
+  lastLoginAt        DateTime?
+  passwordChangedAt  DateTime  @default(now())
+  createdById        String?   @db.Uuid
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  sessions Session[]
+
+  @@index([isActive])
+  @@index([name])
+}
+
+/// Нэвтрэлт. Токены hash-ийг л хадгална. 30 хоног, ашиглах бүрт сунгагдана (#16).
+model Session {
+  id         String    @id @default(uuid()) @db.Uuid
+  tokenHash  String    @unique
+  userId     String    @db.Uuid
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  ip         String?
+  userAgent  String?
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Үйлдлийн түүх. Зөвхөн нэмэгдэнэ — засах, устгахыг database өөрөө хориглоно.
+model AuditLog {
+  id         BigInt   @id @default(autoincrement())
+  at         DateTime @default(now())
+  actorId    String?  @db.Uuid
+  /// Тухайн үеийн нэр (дараа нь нэр солигдсон ч түүх хэвээр)
+  actorName  String
+  action     String
+  entityType String
+  entityId   String?
+  details    Json?
+  ip         String?
+
+  @@index([at])
+  @@index([entityType, entityId])
+  @@index([actorId, at])
+}

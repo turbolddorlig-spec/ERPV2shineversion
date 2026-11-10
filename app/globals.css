@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* zahialga• дизайны токенууд (Prototype 2). Light нь үндсэн, Dark нь доор. */
+:root {
+  --bg: #F3F2EE; --bg-grad: linear-gradient(180deg, #F7F6F2 0%, #EFEEE9 100%);
+  --surface: #FFFFFF; --surface2: #F7F6F3; --lane: #ECEAE4; --line: #E1DED6;
+  --ink: #16181D; --on-ink: #FFFFFF; --muted: #4D525C; --subtle: #62676F;
+  --accent: #D9480F; --on-accent: #FFFFFF; --accent-soft: #FFF1E8; --accent-ink: #B23A0A;
+  --ok: #15803D; --ok-soft: #E9F7EE; --ok-ink: #166534;
+  --bad: #DC2626; --bad-soft: #FEE2E2; --bad-ink: #991B1B;
+  --warn-soft: #FEF3C7; --warn-ink: #92400E;
+  --info-soft: #E3ECFD; --info-ink: #1D4ED8;
+  --rail: #16181D; --rail-active: #262A33; --rail-text: #AEB3BD;
+  --shadow: 0 1px 2px rgba(22,24,29,0.06);
+  --shadow-lg: 0 10px 30px rgba(22,24,29,0.12);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E1014; --bg-grad: #0E1014;
+    --surface: #171A20; --surface2: #1D2028; --lane: #13161B; --line: #2A2E38;
+    --ink: #ECEDEF; --on-ink: #16181D; --muted: #B0B4BD; --subtle: #959AA4;
+    --accent: #FF7A3D; --on-accent: #1A0E07; --accent-soft: rgba(255,122,61,0.14); --accent-ink: #FFA477;
+    --ok: #4ADE80; --ok-soft: rgba(74,222,128,0.12); --ok-ink: #86EFAC;
+    --bad: #F87171; --bad-soft: rgba(248,113,113,0.14); --bad-ink: #FCA5A5;
+    --warn-soft: rgba(251,191,36,0.14); --warn-ink: #FCD34D;
+    --info-soft: rgba(96,165,250,0.15); --info-ink: #93C5FD;
+    --rail: #0A0B0E; --rail-active: #20242D; --rail-text: #AEB3BD;
+    --shadow: 0 1px 2px rgba(0,0,0,0.35);
+    --shadow-lg: 0 10px 32px rgba(0,0,0,0.45);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E1014; --bg-grad: #0E1014;
+  --surface: #171A20; --surface2: #1D2028; --lane: #13161B; --line: #2A2E38;
+  --ink: #ECEDEF; --on-ink: #16181D; --muted: #B0B4BD; --subtle: #959AA4;
+  --accent: #FF7A3D; --on-accent: #1A0E07; --accent-soft: rgba(255,122,61,0.14); --accent-ink: #FFA477;
+  --ok: #4ADE80; --ok-soft: rgba(74,222,128,0.12); --ok-ink: #86EFAC;
+  --bad: #F87171; --bad-soft: rgba(248,113,113,0.14); --bad-ink: #FCA5A5;
+  --warn-soft: rgba(251,191,36,0.14); --warn-ink: #FCD34D;
+  --info-soft: rgba(96,165,250,0.15); --info-ink: #93C5FD;
+  --rail: #0A0B0E; --rail-active: #20242D; --rail-text: #AEB3BD;
+  --shadow: 0 1px 2px rgba(0,0,0,0.35);
+  --shadow-lg: 0 10px 32px rgba(0,0,0,0.45);
+  color-scheme: dark;
+}
+
+html, body { min-height: 100%; }
+body {
+  background: var(--bg-grad);
+  background-color: var(--bg);
+  color: var(--ink);
+  font-family: Onest, Inter, system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  -webkit-tap-highlight-color: transparent;
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+/* iOS дээр input дээр дарахад томруулахгүй */
+input, select, textarea { font-size: 16px; }
+@media (min-width: 768px) { input, select, textarea { font-size: 14px; } }
