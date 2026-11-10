@@ -33,7 +33,14 @@ const STATUS = [
 ];
 
 const fmtPhone = (p: string) => (p.length === 8 ? `${p.slice(0, 4)}-${p.slice(4)}` : p);
-const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleString('mn-MN', { timeZone: 'Asia/Ulaanbaatar', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '—');
+/** Улаанбаатарын цагаар: 2026.11.10 21:11 */
+const fmtDate = (s: string | null) => {
+  if (!s) return '—';
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Ulaanbaatar', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date(s)).map((x) => [x.type, x.value]));
+  return `${p.year}.${p.month}.${p.day} ${p.hour}:${p.minute}`;
+};
 const isLocked = (r: Row) => !!r.lockedUntil && new Date(r.lockedUntil).getTime() > Date.now();
 
 function StatusBadge({ r }: { r: Row }) {

@@ -36,7 +36,7 @@ docker compose up -d --build
 
 say "Апп бэлэн болохыг хүлээж байна"
 for i in $(seq 1 60); do
-  if docker compose exec -T app wget -qO- http://127.0.0.1:3000/api/health >/dev/null 2>&1; then break; fi
+  if docker compose exec -T app node healthcheck.mjs >/dev/null 2>&1; then break; fi
   sleep 3
 done
 

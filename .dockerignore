@@ -1,0 +1,14 @@
+# Нууц тохиргоо, өгөгдөл, хөгжүүлэлтийн файлыг image-д ХЭЗЭЭ Ч оруулахгүй
+.env
+.env.*
+!.env.example
+.git
+node_modules
+.next
+backups
+tests
+test-results
+*.log
+Dockerfile.sandbox
+sandbox-ca.crt
+docker-compose.override.yml
