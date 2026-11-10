@@ -1,0 +1,137 @@
+<title>Модуль 3 Төлөвлөгөө</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap">
+<style>
+/* Layout: reading column; what changes → structure diagram → screens → rules → access → tests → impact → approval */
+:root{--bg:#F5F4F0;--surface:#FFFFFF;--surface2:#EFEDE7;--line:#E1DED6;--ink:#16181D;--muted:#4D525C;--subtle:#5F646E;--accent:#C2410C;--accent-soft:#FFF1E8;--ok:#166534;--ok-bg:#E6F4EA;--info:#1D4ED8;--info-bg:#E3ECFD;--warn:#92400E;--warn-bg:#FEF3C7;--font:"Onest",Inter,system-ui,sans-serif}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0E1014;--surface:#171A20;--surface2:#1D2028;--line:#2A2E38;--ink:#ECEDEF;--muted:#B0B4BD;--subtle:#9A9FA9;--accent:#FF8A4C;--accent-soft:rgba(255,122,61,.14);--ok:#86EFAC;--ok-bg:rgba(74,222,128,.13);--info:#93C5FD;--info-bg:rgba(96,165,250,.15);--warn:#FCD34D;--warn-bg:rgba(251,191,36,.14);color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0E1014;--surface:#171A20;--surface2:#1D2028;--line:#2A2E38;--ink:#ECEDEF;--muted:#B0B4BD;--subtle:#9A9FA9;--accent:#FF8A4C;--accent-soft:rgba(255,122,61,.14);--ok:#86EFAC;--ok-bg:rgba(74,222,128,.13);--info:#93C5FD;--info-bg:rgba(96,165,250,.15);--warn:#FCD34D;--warn-bg:rgba(251,191,36,.14);color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.6;font-variant-numeric:tabular-nums;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:980px;margin:0 auto;padding-block:36px 64px;display:flex;flex-direction:column;gap:34px}
+h1{font-size:clamp(28px,4vw,38px);font-weight:800;letter-spacing:-.03em;line-height:1.1;margin:0;text-wrap:balance}
+h2{font-size:21px;font-weight:800;letter-spacing:-.02em;margin:0}
+h3{font-size:15.5px;font-weight:700;margin:0}
+p{margin:0;max-width:76ch}
+.eyebrow{font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--subtle)}
+.brand{font-weight:800}.brand span{color:var(--accent)}
+.lede{color:var(--muted);font-size:16px}
+section{display:flex;flex-direction:column;gap:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.card p,.card li{font-size:14px;color:var(--muted)}
+ul,ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;max-width:82ch}
+li{color:var(--muted)} li strong{color:var(--ink)}
+code{font-size:12.5px;background:var(--surface2);padding:1px 5px;border-radius:5px;white-space:nowrap}
+.tree{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:10px;overflow-x:auto}
+.node{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.box{border-radius:10px;padding:8px 12px;font-weight:700;font-size:14px;white-space:nowrap}
+.b-prod{background:var(--accent-soft);color:var(--accent)}
+.b-var{background:var(--info-bg);color:var(--info)}
+.b-img{background:var(--ok-bg);color:var(--ok)}
+.b-meta{background:var(--surface2);color:var(--muted);font-weight:600}
+.indent{padding-left:28px;border-left:2px dashed var(--line);margin-left:14px;display:flex;flex-direction:column;gap:8px}
+.tablebox{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:13.5px}
+th{text-align:left;font-size:12px;font-weight:700;color:var(--muted);background:var(--surface2);padding:9px 12px;border-bottom:1px solid var(--line)}
+td{padding:9px 12px;border-bottom:1px solid var(--line);color:var(--muted);vertical-align:top}
+td:first-child{color:var(--ink);font-weight:600}
+tr:last-child td{border-bottom:0}
+.note{background:var(--accent-soft);border-radius:14px;padding:14px 16px;font-size:14px}
+.warn{background:var(--warn-bg);color:var(--warn);border-radius:14px;padding:14px 16px;font-size:14px}
+footer{font-size:13px;color:var(--subtle)}
+</style>
+<div class="wrap">
+<header style="display:flex;flex-direction:column;gap:10px">
+<span class="eyebrow"><span class="brand">zahialga<span>•</span></span> · ERP V2 · Модуль 3</span>
+<h1>Захиалгын модулийн төлөвлөгөө</h1>
+<p class="lede">Оператор захиалга үүсгэх, засах, цуцлах; үлдэгдэл нөөцлөх; давхардал, хар жагсаалт; хүргэлтийн төлбөр; Meta Pixel. <strong>Үлдэгдэл, мөнгө, Meta CAPI-д шууд нөлөөлнө</strong> — тиймээс бүх дүрмийг энд тодорхой бичив.</p>
+</header>
+
+<section><h2>Таны шийдвэрүүд (#43)</h2>
+<div class="grid">
+<div class="card"><h3>Хүргэлтийн төлбөр</h3><p>Бараа бүрт <strong>«Үнэд хүргэлт багтсан»</strong> (анхдагч тийм, ~90%). Багтаагүй бараа захиалгад орвол хүргэлтийн төлбөр <strong>захиалгад нэг удаа</strong> нэмэгдэнэ: Тохиргоонд УБ (жишээ 5,000₮), орон нутаг (жишээ 10,000₮). Оператор нэмж/хасч/өөрчилж болно — шалтгаантай.</p></div>
+<div class="card"><h3>Үнэ хямдруулах</h3><p>Оператор үнийг <strong>бууруулж</strong> болно (нэмэхгүй), шалтгаан заавал. Захиалга шууд үүснэ. <strong>Супер админ</strong> дараа нь «Шалгасан» товчоор хянана (Барааны засварын хуудас шиг). Хүргэлтийн төлбөрийн өөрчлөлт ч энд.</p></div>
+<div class="card"><h3>Давхар захиалга</h3><p>Ижил утсаар (2 утасны аль нь ч) идэвхтэй захиалга байвал <strong>хориглоно</strong>, тэр захиалгыг харуулж «Тэнд бараа нэмэх» товчтой. Тусдаа захиалга хэрэгтэй бол <strong>ахлах оператор зөвшөөрнө</strong>.</p></div>
+<div class="card"><h3>Хар жагсаалт</h3><p><strong>Анхааруулна</strong> (хэн, хэзээ, хэдэн удаа). Захиалга авч болно — шалтгаантай. Ахлах оператор / админ жагсаалтыг харж, нэмж, хасна. Жолооч нэмнэ (Модуль 5).</p></div>
+<div class="card"><h3>Meta Pixel (хуучин шиг, 1)</h3><p>Захиалга <strong>батлагдсан үед</strong>: УБ «Шинэ» үүсмэгц; «Хүлээгдэж буй» мөнгө ормогц. Нэг захиалгад нэг л удаа. Алдаа гарвал автомат дахин илгээнэ, лог админд. Pixel дугаар, түлхүүрийг Тохиргоонд нэг удаа.</p></div>
+<div class="card"><h3>Нэг дугаар</h3><p>Захиалга <strong>дугаараа хадгална</strong>. Он сар өдөр, «Маргааш», хоцорсон төлбөр — огноо солигдож, түүхэнд бичигдэнэ. Шинэ дугаар үүсгэхгүй.</p></div>
+<div class="card"><h3>Оператор (хуучин шиг)</h3><p>Бүгд бүх захиалгыг харж, засаж, цуцалж чадна. Хэн юу хийсэн нь түүхэнд нэрээр.</p></div>
+<div class="card"><h3>Орон нутаг</h3><p>Заавал урьдчилан төлбөртэй («Хүлээгдэж буй»). N хоногт (анхдагч 7, Тохиргоонд) мөнгө ороогүй бол автомат цуцлагдаж нөөц суллагдана. Ахлах оператор захиалга тус бүрийн хугацааг сунгаж болно. <strong>Хүлээгдэж буй захиалгын нөөц агуулахад тусдаа харагдана.</strong></p></div>
+<div class="card"><h3>«Мөнгө орсон»</h3><p>Үүссэн огноо хэвээр. Тусдаа <strong>«баталгаажсан өдөр»</strong> — өнөөдрийн захиалга, операторын тоо түүгээр. Ахлах оператор / админ дарна, алдаатай бол буцаана.</p></div>
+<div class="card"><h3>Хаяг</h3><p>Аймаг/хот → дүүрэг → <strong>хороо (сонгох)</strong>. Хороо мэдэхгүй бол <strong>«Хороо тодорхойгүй»</strong> гэж үүсгэнэ — жагсаалт, хуваарилалтад тэмдэгтэй (ахлах жолооч залгаж тодруулна).</p></div>
+<div class="card"><h3>Цуцлах</h3><p>Шалтгаан сонгоно (Үйлчлүүлэгч болисон · Давхар захиалга · Бараа дутуу · Утас авахгүй · Бусад) + тайлбар. Цуцлалтын тайлан.</p></div>
+<div class="card"><h3>Он сар өдөртэй</h3><p>Үүсмэгц нөөцлөнө. Хүргэх өдрийн өмнөх өдөр автоматаар «Шинэ» болж хуваарилалтад бэлэн (дугаар хэвээр).</p></div>
+<div class="card"><h3>Дуудлагын бүртгэл (хуучин шиг)</h3><p>Утас (олныг нэг дор), бараа, пэйж, тэмдэглэл. Төлөв: Хүлээгдэж буй → Холбогдсон → Захиалсан / Цуцалсан / Шилжүүлсэн. 5 оролдлого (30 мин зайтай). Өөр операторт шилжүүлэх хүсэлт → хүлээн авах/татгалзах. Захиалга үүсэхэд автомат холбогдоно.</p></div>
+<div class="card"><h3>Пэйж (хуучин шиг)</h3><p>Пэйжийн жагсаалт, ахлах оператор операторуудад хуваарилна. Захиалга бүр аль пэйжээс.</p></div>
+<div class="card"><h3>Цагийн мэдээ</h3><p>Захиалгын хуудсанд (ахлах, админд): оператор бүр өнөөдөр 11, 13, 15, 18, 21 цаг хүртэл хэдэн захиалга.</p></div>
+</div></section>
+
+<section><h2>Захиалгын төлөв</h2>
+<div class="tablebox"><table><thead><tr><th>Төлөв</th><th>Хэзээ</th><th>Үлдэгдэл</th></tr></thead><tbody>
+<tr><td>Хүлээгдэж буй</td><td>Урьдчилгаа хүлээж буй (орон нутаг заавал, УБ сонголтоор)</td><td>Нөөцлөгдсөн (агуулахад «хүлээгдэж буйд» гэж харагдана)</td></tr>
+<tr><td>Он сар өдөртэй</td><td>Ирээдүйн өдөр хүргэх</td><td>Нөөцлөгдсөн</td></tr>
+<tr><td>Шинэ</td><td>УБ, бэлэн / мөнгө орсон — жолоочид хуваарилахад бэлэн</td><td>Нөөцлөгдсөн</td></tr>
+<tr><td>Хүргэлтэд бэлэн → гарсан → Хүргэсэн …</td><td>Модуль 4–5 (хуваарилалт, падаан, жолооч)</td><td>Падаанаар жолоочийн гарт шилжинэ (#3)</td></tr>
+<tr><td>Цуцлагдсан</td><td>Оператор цуцалсан / хугацаа хэтэрсэн</td><td>Нөөц суллагдана</td></tr>
+</tbody></table></div>
+<p class="note">Хуучин 4 ашиглагддаггүй төлөв (NOT_PAID, ISSUE_REPORTED, PAYMENT_RECEIVED, RESCHEDULED_BY_DRIVER) хасагдана. «Устгах» тусдаа байхгүй — цуцлах л байна (шалтгаантай, түүхтэй).</p>
+</section>
+
+<section><h2>Үлдэгдэл ба мөнгө — хамгаалалт</h2><ul>
+<li><strong>Захиалах боломжтой = бүх агуулахын нийт − нөөцлөгдсөн</strong> (#39). Хүрэлцэхгүй бол захиалга үүсэхгүй (2 оператор зэрэг сүүлийн барааг авбал нэг нь л).</li>
+<li>Захиалга үүсэх, засах (бараа нэмэх/хасах), цуцлах бүрт <strong>нөөц нэг гүйлгээнд</strong> өөрчлөгдөнө. Давхар дарахад нэг л захиалга.</li>
+<li>Нөөцлөлт бараа хөдөлгөхгүй — бараа зөвхөн падаанаар (Модуль 4) агуулахаас гарна. Үндсэн тавиурт дутвал <strong>дүүргэлтийн анхааруулга</strong> автоматаар (Модуль 2).</li>
+<li><strong>Дүнг сервер өөрөө тооцно</strong> (хуучинд браузерын илгээсэн дүнд итгэдэг байсан). Мөр бүр барааны хуулбартай (нэр, код, өнгө/хэмжээ, зураг, үнэ — #28).</li>
+<li>Оператор хэн болохыг сессээс авна (хуучинд нэрийг браузер илгээдэг байсан — хуурах боломжтой).</li>
+<li>Meta event давхардахгүй (event_id = захиалгын дугаар), бүтэлгүйтвэл дараалалд үлдэж дахин илгээгдэнэ.</li>
+</ul></section>
+
+<section><h2>Дэлгэцүүд</h2>
+<div class="grid">
+<div class="card"><h3>Захиалгын жагсаалт</h3><ul><li>Төлөв бүрийн тоо (таб), хайлт (утас, дугаар, нэр, хаяг, бараа)</li><li>Шүүлт: огноо, оператор, пэйж, дүүрэг/аймаг, мөнгө орсон, хороо тодорхойгүй</li><li>Мөр: дугаар, утас, бараа (зурагтай, томруулна), хаяг, дүн, төлөв, оператор, пэйж</li><li>50 мөр/хуудас — 1 сая захиалгад хурдан</li></ul></div>
+<div class="card"><h3>Захиалга үүсгэх</h3><ul><li>Утас бичихэд: давхардал, хар жагсаалт, дуудлагын бүртгэл шууд харагдана</li><li>Бараа хайх (зураг, өнгө, хэмжээ, тайлбар, үлдэгдэл)</li><li>Үнэ бууруулах — шалтгаан; хүргэлтийн төлбөр автомат</li><li>«Захиалга үүсгэх» (УБ) · «Хүлээгдэж буй» · «Он сар өдөртэй»</li></ul></div>
+<div class="card"><h3>Захиалгын дэлгэрэнгүй</h3><ul><li>Бараа зурагтай, тайлбартай (оператор утсаар тайлбарлахад)</li><li>Засах, цуцлах, «Мөнгө орсон», түүх (хэн юу хэзээ)</li></ul></div>
+<div class="card"><h3>Хянах (Супер админ)</h3><ul><li>Үнийн хөнгөлөлт, хүргэлтийн төлбөрийн өөрчлөлт — «Шалгасан» / «Бүгдийг шалгасан»</li><li>Цэсэнд шалгаагүй тоо</li></ul></div>
+<div class="card"><h3>Ахлах оператор</h3><ul><li>Давхар захиалга зөвшөөрөх, хар жагсаалт, пэйж хуваарилах</li><li>Цагийн мэдээ, хугацаа сунгах, «Мөнгө орсон»</li></ul></div>
+<div class="card"><h3>Тохиргоо (админ)</h3><ul><li>Хүргэлтийн төлбөр (УБ / орон нутаг), хүлээх хоног</li><li>Пэйжүүд, Meta Pixel (дугаар, түлхүүр — нууцлагдана), илгээлтийн лог</li></ul></div>
+<div class="card"><h3>Дуудлагын бүртгэл</h3><ul><li>Хуучин логикоор бүрэн (дээрх)</li></ul></div>
+<div class="card"><h3>Бараа (Модуль 1 нэмэлт)</h3><ul><li>Бараа бүрт «Үнэд хүргэлт багтсан» сонголт (анхдагч тийм)</li></ul></div>
+</div></section>
+
+<section><h2>Хэн юу хийх вэ</h2>
+<div class="tablebox"><table><thead><tr><th>Үйлдэл</th><th>Хэн</th></tr></thead><tbody>
+<tr><td>Захиалга харах, үүсгэх, засах, цуцлах</td><td>Супер админ, Админ, Ахлах оператор, Оператор (Торгуулийн ажилтан — зөвхөн харах)</td></tr>
+<tr><td>«Мөнгө орсон», буцаах; хүлээх хугацаа сунгах</td><td>Супер админ, Админ, Ахлах оператор</td></tr>
+<tr><td>Давхар захиалга зөвшөөрөх, хар жагсаалт удирдах, пэйж хуваарилах</td><td>Супер админ, Админ, Ахлах оператор</td></tr>
+<tr><td>Үнийн хөнгөлөлт / хүргэлтийн өөрчлөлтийг «Шалгасан»</td><td>Супер админ</td></tr>
+<tr><td>Хүргэлтийн төлбөр, хоног, пэйж, Pixel тохиргоо</td><td>Супер админ, Админ</td></tr>
+</tbody></table></div></section>
+
+<section><h2>Тест (MASTER §12)</h2>
+<div class="grid">
+<div class="card"><h3>Үлдэгдэл</h3><ul><li>Үүсгэх/засах/цуцлах/хугацаа хэтрэх бүрт нөөц зөв; журнал = үлдэгдэл</li><li>2 оператор зэрэг сүүлийн бараа → 1</li><li>Давхар «Үүсгэх» → 1 захиалга</li></ul></div>
+<div class="card"><h3>Мөнгө</h3><ul><li>Дүн серверт (хөнгөлөлт, хүргэлт), үнэ нэмэх оролдлого → татгалзана</li><li>Үнэ солигдоход хуучин захиалга хэвээр</li><li>«Мөнгө орсон» 2 удаа → 1</li></ul></div>
+<div class="card"><h3>Давхардал, хар жагсаалт, Meta</h3><ul><li>2 утасны аль нь ч, зэрэг 2 захиалга</li><li>Meta: зөвхөн баталгаажсан, нэг л удаа, алдаа → дахин илгээх</li></ul></div>
+<div class="card"><h3>Ачаалал (R1)</h3><ul><li><strong>1,000,000+ захиалга</strong>, 150 хэрэглэгч (60 оператор зэрэг үүсгэнэ)</li><li>Жагсаалт, хайлт, тоо гацахгүй</li></ul></div>
+</div></section>
+
+<section><h2>Бусад модульд нөлөө (MASTER §4–7)</h2>
+<div class="tablebox"><table><thead><tr><th>Зүйл</th><th>Нөлөө</th></tr></thead><tbody>
+<tr><td>Үлдэгдэл (Модуль 2)</td><td>Нөөцлөлт бичнэ; агуулахын «Захиалгад / Хүлээгдэж буйд» тоо, дүүргэлт бодит болно. Бараа хөдлөхгүй.</td></tr>
+<tr><td>Бараа (Модуль 1)</td><td>«Үнэд хүргэлт багтсан» талбар нэмэгдэнэ (анхдагч тийм — одоогийн бараа өөрчлөгдөхгүй).</td></tr>
+<tr><td>Мөнгө</td><td>Захиалгын дүн, хүргэлтийн төлбөр, урьдчилгаа. Банкны автомат тулгалт — Модуль 6 (банкны импорт); энд гараар «Мөнгө орсон».</td></tr>
+<tr><td>Meta CAPI</td><td>Шинээр, баталгаажсан захиалгад, давхардалгүй, логтой.</td></tr>
+<tr><td>Модуль 4–5</td><td>Хуваарилалт, падаан, «Маргааш» (огноо солих, дугаар хэвээр), буцаалт.</td></tr>
+<tr><td>Хуучин өгөгдөл</td><td>Эцсийн шилжилтэд таны зөвшөөрлөөр. Тэр хүртэл хуурамч өгөгдөл.</td></tr>
+</tbody></table></div></section>
+
+<section><h2>Ирээдүйд шинэчлэх (одоо хийхгүй)</h2><ul>
+<li>Дуудлагын бүртгэлийг хялбарчлах («Дараа залгах» нэг жагсаалт)</li>
+<li>Пэйж бүрт тусдаа Meta Pixel</li>
+<li>Банкны гүйлгээгээр автомат «Мөнгө орсон» — Модуль 6</li>
+</ul></section>
+
+<footer>Модуль 3 төлөвлөгөө · 2026.11.11 · Таны тодорхой зөвшөөрлийг хүлээж байна.</footer>
+</div>
