@@ -1,6 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import { formatPhone, isValidPhone, normalizePhone } from '@/lib/phone';
-import { generateTempPassword, passwordProblem } from '@/lib/password';
+import bcrypt from 'bcryptjs';
+import { generateTempPassword, hashPassword, needsRehash, passwordProblem, verifyPassword } from '@/lib/password';
+
+describe('нууц үгийн hash', () => {
+  it('scrypt: зөв/буруу', async () => {
+    const h = await hashPassword('Secret123');
+    expect(h.startsWith('scrypt$')).toBe(true);
+    expect(await verifyPassword('Secret123', h)).toBe(true);
+    expect(await verifyPassword('secret123', h)).toBe(false);
+    expect(needsRehash(h)).toBe(false);
+  });
+  it('хуучин системийн bcrypt hash ажиллана, шинэчлэх шаардлагатай', async () => {
+    const legacy = bcrypt.hashSync('OldPass1', 10);
+    expect(await verifyPassword('OldPass1', legacy)).toBe(true);
+    expect(await verifyPassword('wrong', legacy)).toBe(false);
+    expect(needsRehash(legacy)).toBe(true);
+  });
+  it('танихгүй хэлбэр → false', async () => {
+    expect(await verifyPassword('x', 'plaintext')).toBe(false);
+  });
+});
 
 describe('утас', () => {
   it('хэлбэржүүлнэ', () => {

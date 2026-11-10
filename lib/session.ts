@@ -14,6 +14,10 @@ export function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
+export function newSessionToken(): { token: string; expiresAt: Date } {
+  return { token: randomBytes(32).toString('base64url'), expiresAt: new Date(Date.now() + SESSION_DAYS * DAY) };
+}
+
 export async function createSession(
   userId: string,
   meta: { ip?: string | null; userAgent?: string | null },

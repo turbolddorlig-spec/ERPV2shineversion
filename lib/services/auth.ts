@@ -2,8 +2,8 @@ import type { Theme } from '@prisma/client';
 import { db } from '../db';
 import { writeAudit, SYSTEM_ACTOR } from '../audit';
 import { normalizePhone } from '../phone';
-import { dummyVerify, hashPassword, passwordProblem, verifyPassword } from '../password';
-import { createSession, revokeAllSessions, revokeSession } from '../session';
+import { dummyVerify, hashPassword, needsRehash, passwordProblem, verifyPassword } from '../password';
+import { hashToken, newSessionToken, revokeAllSessions, revokeSession } from '../session';
 import { AppError, badRequest } from '../errors';
 
 export const MAX_FAILED = 5;
@@ -56,12 +56,25 @@ export async function login(phoneInput: string, password: string, meta: ClientMe
     throw new AppError(401, GENERIC_FAIL, 'invalid_credentials');
   }
 
-  return db.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: null, lastLoginAt: new Date() } });
-    const session = await createSession(user.id, meta, tx);
-    await writeAudit(actor, 'auth.login', 'User', user.id, { userAgent: meta.userAgent?.slice(0, 120) ?? null }, tx);
-    return { ...session, user: { id: user.id, roles: user.roles, theme: user.theme, mustChangePassword: user.mustChangePassword } };
-  });
+  // Богино, нэг удаагийн гүйлгээ (interactive биш) — ачаалал ихтэй үед ч хугацаа хэтрэхгүй
+  const { token, expiresAt } = newSessionToken();
+  const rehash = needsRehash(user.passwordHash) ? await hashPassword(password) : null;
+  await db.$transaction([
+    db.user.update({
+      where: { id: user.id },
+      data: { failedLoginCount: 0, lockedUntil: null, lastLoginAt: new Date(), ...(rehash ? { passwordHash: rehash } : {}) },
+    }),
+    db.session.create({
+      data: { tokenHash: hashToken(token), userId: user.id, expiresAt, ip: meta.ip ?? null, userAgent: meta.userAgent?.slice(0, 300) ?? null },
+    }),
+    db.auditLog.create({
+      data: {
+        actorId: actor.id, actorName: actor.name, action: 'auth.login', entityType: 'User', entityId: user.id,
+        ip: actor.ip, details: { userAgent: meta.userAgent?.slice(0, 120) ?? null },
+      },
+    }),
+  ]);
+  return { token, expiresAt, user: { id: user.id, roles: user.roles, theme: user.theme, mustChangePassword: user.mustChangePassword } };
 }
 
 export async function logout(sessionId: string, actor: { id: string; name: string; ip?: string | null }) {

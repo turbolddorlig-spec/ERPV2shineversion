@@ -236,6 +236,17 @@ describe('үйлдлийн түүх', () => {
   });
 });
 
+describe('хуучин системээс шилжсэн нууц үг', () => {
+  it('bcrypt hash-тэй хэрэглэгч нэвтэрч, автоматаар scrypt болно', async () => {
+    const bcrypt = (await import('bcryptjs')).default;
+    const u = await db.user.create({ data: { phone: '77700001', name: 'Хуучин', roles: ['DRIVER'], passwordHash: bcrypt.hashSync('OldPass1', 10) } });
+    await login(u.phone, 'OldPass1', meta);
+    const fresh = await db.user.findUniqueOrThrow({ where: { id: u.id } });
+    expect(fresh.passwordHash.startsWith('scrypt$')).toBe(true);
+    expect((await login(u.phone, 'OldPass1', meta)).token).toBeTruthy();
+  });
+});
+
 describe('database хамгаалалт', () => {
   it('8 оронтой бус утас, role-гүй хэрэглэгчийг database өөрөө хориглоно', async () => {
     await expect(db.user.create({ data: { phone: '123', name: 'X', roles: ['DRIVER'], passwordHash: 'x' } })).rejects.toThrow();

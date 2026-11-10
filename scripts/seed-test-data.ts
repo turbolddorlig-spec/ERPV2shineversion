@@ -3,7 +3,7 @@
  * Хамгаалалт: ALLOW_TEST_SEED=1 байх ёстой. Бодит өгөгдлийг дарж бичихгүй — аль хэдийн байгаа утсыг алгасна.
  */
 import { PrismaClient, type Role } from '@prisma/client';
-import bcrypt from 'bcryptjs';
+import { hashPassword } from '../lib/password';
 
 if (process.env.ALLOW_TEST_SEED !== '1') {
   console.error('Татгалзлаа: ALLOW_TEST_SEED=1 тохируулаагүй байна (тестийн database-д л ашиглана).');
@@ -30,7 +30,7 @@ const PLAN: [Role[], number, string][] = [
 
 async function main() {
   const db = new PrismaClient();
-  const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
+  const passwordHash = await hashPassword(TEST_PASSWORD);
   let n = 0;
   const rows: { phone: string; name: string; roles: Role[]; passwordHash: string }[] = [];
   for (const [roles, count, label] of PLAN) {
