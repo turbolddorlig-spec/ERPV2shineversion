@@ -17,6 +17,14 @@ services:
       timeout: 5s
       retries: 10
 
+  # Зургийн хавтасны эрхийг апп-ын хэрэглэгч (UID 1001)-д олгоно. Аль контейнер түрүүлж асахаас үл хамааран.
+  uploads-init:
+    image: postgres:16-alpine
+    restart: "no"
+    entrypoint: ["sh", "-c", "chown -R 1001:1001 /data && echo uploads-ok"]
+    volumes:
+      - uploads:/data
+
   app:
     build: .
     restart: unless-stopped
@@ -31,6 +39,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      uploads-init:
+        condition: service_completed_successfully
 
   caddy:
     image: caddy:2.8-alpine
@@ -60,7 +70,7 @@ services:
     volumes:
       - ./backups:/backups
       - ./docker/backup.sh:/backup.sh:ro
-      - uploads:/media:ro
+      - uploads:/uploads:ro
     entrypoint: ["sh", "/backup.sh"]
     depends_on:
       db:

@@ -16,7 +16,8 @@ RUN npx prisma generate && npx next build
 
 FROM node:20-alpine AS run
 WORKDIR /app
-RUN addgroup -S app && adduser -S app -G app && mkdir -p /app/data/uploads && chown -R app:app /app/data
+# Тогтмол UID 1001 — зургийн volume-ийн эрхийг docker-compose дээр найдвартай тохируулахын тулд
+RUN addgroup -S -g 1001 app && adduser -S -u 1001 app -G app && mkdir -p /app/data/uploads && chown -R app:app /app/data
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 TZ=Asia/Ulaanbaatar PORT=3000 HOSTNAME=0.0.0.0 UPLOAD_DIR=/app/data/uploads \
     PRISMA_QUERY_ENGINE_LIBRARY=/app/node_modules/.prisma/client/libquery_engine-linux-musl-openssl-3.0.x.so.node \
     PRISMA_SCHEMA_ENGINE_BINARY=/app/node_modules/@prisma/engines/schema-engine-linux-musl-openssl-3.0.x
