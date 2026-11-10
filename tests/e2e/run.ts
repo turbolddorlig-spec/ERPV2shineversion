@@ -348,6 +348,75 @@ async function main() {
   const cl = await req('/api/calls', { cookie: opA.cookie, method: 'POST', body: { phones: `${ph} 12` } });
   check('дуудлагад буруу дугаар → 400', cl.status === 400, String(cl.status));
 
+  // ───────── Модуль 4: Падаан ─────────
+  const m4Pages = ['/driver-lead', '/handover', '/handover/history'];
+  for (const [roles, phone] of ROLE_PHONE) {
+    const l = await loginAs(phone);
+    if (!l.cookie) continue;
+    for (const path of m4Pages) {
+      const r = await req(path, { cookie: l.cookie });
+      const key = path === '/driver-lead' ? 'driver-lead' : 'handover';
+      check(`${roles.join('+')} ${path}`, accessTo(roles, key) !== 'none' ? r.status === 200 : r.status === 307, `${r.status} ${r.location}`);
+    }
+    const as = await req('/api/driver-lead/assign', { cookie: l.cookie, method: 'POST', body: { ids: [1], driverId: '00000000-0000-0000-0000-000000000000' } });
+    check(`${roles.join('+')} хуваарилах API эрх`, accessTo(roles, 'driver-lead') === 'edit' ? as.status === 400 : as.status === 403, `${as.status} ${as.text.slice(0, 60)}`);
+    const hv = await req('/api/handover', { cookie: l.cookie, method: 'POST', body: {} });
+    check(`${roles.join('+')} падаан үүсгэх API эрх`, accessTo(roles, 'handover') === 'edit' ? hv.status === 400 : hv.status === 403, `${hv.status} ${hv.text.slice(0, 60)}`);
+  }
+  {
+    const lead4 = await loginAs('80000026');
+    const wh4 = await loginAs('80000132');
+    const acc4 = await loginAs('80000129');
+    const op4 = await loginAs('80000006');
+    const ubToday = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+    const drivers = JSON.parse((await req(`/api/driver-lead/drivers?date=${ubToday}`, { cookie: lead4.cookie })).text).items as { id: string; name: string }[];
+    // Энэ ажиллуулалтад ашиглаагүй жолооч (өнөөдрийн падаангүй)
+    void drivers;
+    // Ажиллуулалт бүрт шинэ жолооч (тест өгөгдлийн захиалгагүй, OKEY-гүй) — давтан ажиллуулахад зөрөхгүй
+    const drvPhone = '7' + String(Date.now()).slice(-7);
+    const nd = await req('/api/users', { cookie: adm.cookie, method: 'POST', body: { phone: drvPhone, name: `E2E жолооч ${drvPhone}`, roles: ['DRIVER'] } });
+    const free = JSON.parse(nd.text).user as { id: string; name: string };
+    const pg4 = JSON.parse((await req('/api/orders/pages', { cookie: op4.cookie })).text);
+    const vs = JSON.parse((await req('/api/products/search?q=00&limit=40', { cookie: op4.cookie })).text).items as { variantId: number; available: number }[];
+    const vv = vs.find((h) => h.available >= 2)!;
+    await req('/api/stock/receipts', { cookie: wh4.cookie, method: 'POST', body: { warehouseId: 1, lines: [{ variantId: vv.variantId, qty: 4 }], idemKey: `e2e-m4-rc-${Date.now()}` } });
+    const mk4 = (n: number) => req('/api/orders', { cookie: op4.cookie, method: 'POST', body: { phone: '6' + String(Date.now() + n).slice(-7), province: 'Улаанбаатар', district: 'Хан-Уул', khoroo: 2, addressDetail: 'E2E падаан', pageId: pg4.pages[0].id, deliveryDate: ubToday, lines: [{ variantId: vv.variantId, qty: 1 }], idemKey: `e2e-m4-${Date.now()}-${n}` } });
+    const o1 = JSON.parse((await mk4(1)).text).order; const o2 = JSON.parse((await mk4(2)).text).order;
+    const asg = await req('/api/driver-lead/assign', { cookie: lead4.cookie, method: 'POST', body: { ids: [o1.id, o2.id], driverId: free.id } });
+    check('ахлах жолооч 2 захиалга хуваарилав', asg.status === 200 && JSON.parse(asg.text).assigned.length === 2, asg.text.slice(0, 120));
+    const noOk = await req('/api/handover', { cookie: wh4.cookie, method: 'POST', body: { driverId: free.id, date: ubToday, orderIds: [o1.id, o2.id] } });
+    check('OKEY-гүй жолоочид падаан үүсэхгүй → 409 not_approved', noOk.status === 409 && noOk.text.includes('not_approved'), noOk.text.slice(0, 100));
+    const okA = await req('/api/handover/approvals', { cookie: acc4.cookie, method: 'POST', body: { driverId: free.id, date: ubToday, approved: true } });
+    check('нягтлан OKEY өгөв', okA.status === 200, okA.text.slice(0, 80));
+    const okW = await req('/api/handover/approvals', { cookie: wh4.cookie, method: 'POST', body: { driverId: free.id, date: ubToday, approved: true } });
+    check('агуулах OKEY өгөхгүй → 403', okW.status === 403, String(okW.status));
+    const part = await req('/api/handover', { cookie: wh4.cookie, method: 'POST', body: { driverId: free.id, date: ubToday, orderIds: [o1.id] } });
+    check('бүх захиалгыг сонгоогүй → 400 not_all_selected', part.status === 400 && part.text.includes('not_all_selected'), part.text.slice(0, 100));
+    const cr = await Promise.all([1, 2].map(() => req('/api/handover', { cookie: wh4.cookie, method: 'POST', body: { driverId: free.id, date: ubToday, orderIds: [o1.id, o2.id] } })));
+    check('зэрэг 2 падаан үүсгэх → нэг л үүснэ', cr.filter((x) => x.status === 201).length === 1 && cr.some((x) => x.status === 409), cr.map((x) => x.status).join(','));
+    const created4 = cr.find((x) => x.status === 201);
+    if (!created4) { fails.push(`падаан үүсээгүй: ${cr.map((x) => x.text.slice(0, 120)).join(' | ')} · o1=${JSON.stringify(o1)?.slice(0, 80)} · asg=${asg.text.slice(0, 160)}`); }
+    else {
+    const hid = JSON.parse(created4.text).handover.id;
+    const ed = await req(`/api/orders/${o1.id}`, { cookie: op4.cookie, method: 'PATCH', body: { version: o1.version + 1, note: 'x' } });
+    check('падаанд орсон захиалгыг засахгүй → 409', ed.status === 409, ed.text.slice(0, 80));
+    await req(`/api/handover/${hid}/prepare`, { cookie: wh4.cookie, method: 'POST', body: {} });
+    const nc = await req(`/api/handover/${hid}/confirm`, { cookie: wh4.cookie, method: 'POST', body: {} });
+    check('Check хийгээгүй бол бараа өгөхгүй → 409 not_checked', nc.status === 409 && nc.text.includes('not_checked'), nc.text.slice(0, 80));
+    await req(`/api/handover/${hid}/check`, { cookie: wh4.cookie, method: 'POST', body: { variantId: vv.variantId, checked: true } });
+    const balBefore = (await balOf(vv.variantId)).byWarehouse['1'] ?? 0;
+    const cf = await Promise.all([1, 2].map(() => req(`/api/handover/${hid}/confirm`, { cookie: wh4.cookie, method: 'POST', body: {} })));
+    check('зэрэг 2 «Барааг бүрэн өгсөн» → нэг л удаа', cf.every((x) => x.status === 200) && cf.map((x) => JSON.parse(x.text).handover.duplicate).sort().join() === 'false,true', cf.map((x) => x.text.slice(0, 40)).join(' | '));
+    check('үндсэн агуулахаас 2 ширхэг хасагдав (жолоочид)', ((await balOf(vv.variantId)).byWarehouse['1'] ?? 0) === balBefore - 2);
+    const st = JSON.parse((await req(`/api/orders/${o1.id}`, { cookie: op4.cookie })).text).order.status;
+    check('захиалга «Хүргэлтэд гарсан»', st === 'OUT_FOR_DELIVERY', st);
+    const pr = await req(`/print/handover/${hid}`, { cookie: wh4.cookie });
+    check('падаан хэвлэх хуудас 200', pr.status === 200 && pr.text.includes('Падаан'), String(pr.status));
+    const rec4 = JSON.parse((await req('/api/stock/reconcile?fresh=1', { cookie: adm.cookie })).text);
+    check('Модуль 4-ийн дараа тулгалт: журнал = үлдэгдэл', rec4.ok === true, JSON.stringify(rec4).slice(0, 120));
+    }
+  }
+
   console.log(`\nE2E: ${pass} амжилттай, ${fails.length} алдаатай`);
   if (fails.length) { console.log(fails.map((f) => '  ✗ ' + f).join('\n')); process.exit(1); }
 }

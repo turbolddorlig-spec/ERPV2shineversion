@@ -71,7 +71,7 @@ export async function leadOrders(actor: UserActor, p: LeadParams) {
   const pageSize = PAGE_SIZES.includes(Number(p.pageSize)) ? Number(p.pageSize) : 50;
   const page = Math.max(1, Math.min(2000, Math.floor(p.page ?? 1)));
   const where: Prisma.OrderWhereInput = { AND: and };
-  const rows = await db.order.findMany({ where, orderBy: [{ deliveryDate: 'asc' }, { id: 'asc' }], skip: (page - 1) * pageSize, take: pageSize + 1, include: { lines: true } });
+  const rows = await db.order.findMany({ where, orderBy: { id: 'desc' }, skip: (page - 1) * pageSize, take: pageSize + 1, include: { lines: true } });
   const list = rows.slice(0, pageSize);
   const hs = await db.handover.findMany({ where: { id: { in: list.map((o) => o.handoverId).filter((x): x is number => !!x) } }, select: { id: true, number: true, status: true } });
   const hm = new Map(hs.map((h) => [h.id, h]));

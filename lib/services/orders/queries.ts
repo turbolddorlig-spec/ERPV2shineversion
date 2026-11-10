@@ -64,7 +64,8 @@ export async function searchIds(q: string): Promise<number[] | null> {
       UNION (SELECT "orderId" FROM "OrderLine" WHERE code ILIKE ${dl} ORDER BY "orderId" DESC LIMIT 300)`;
     return rows.map((r) => r.id);
   }
-  if (s.length < 2) return [];
+  // 1–2 тэмдэгт индекс ашиглаж чадахгүй (1 сая мөр уншина) — 3+ тэмдэгтээс хайна
+  if (s.length < 3) return [];
   // Түгээмэл үг (40k+ таарц) бол PK-аар буцаж уншина, ховор үг бол trigram индекс — үг бүрт тохирох төлөвлөгөө сонгуулна
   const [, rows] = await db.$transaction([db.$executeRaw`SET LOCAL plan_cache_mode = force_custom_plan`, db.$queryRaw<{ id: number }[]>`
     (SELECT id FROM "Order" WHERE "addressDetail" ILIKE ${like} ORDER BY id DESC LIMIT 500)
