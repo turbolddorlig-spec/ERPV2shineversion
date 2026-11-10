@@ -56,7 +56,9 @@ export async function pagesForActor(actor: UserActor) {
   ]);
   const allowed = !canSuperviseOperators(actor.roles) && assign?.pageIds.length ? pages.filter((p) => assign.pageIds.includes(p.id)) : pages;
   const last = allowed.some((p) => p.id === me?.lastPageId) ? me!.lastPageId : allowed[0]?.id ?? null;
-  return { pages: allowed.map((p) => ({ id: p.id, name: p.name })), lastPageId: last };
+  // Хүргэлтийн төлбөрийн дүнг маягтад урьдчилж харуулна (эцсийн дүнг сервер тооцно)
+  const { feeUB, feeRural } = await orderSettings();
+  return { pages: allowed.map((p) => ({ id: p.id, name: p.name })), lastPageId: last, fees: { feeUB, feeRural } };
 }
 
 export async function listAllPages(actor: UserActor) {
