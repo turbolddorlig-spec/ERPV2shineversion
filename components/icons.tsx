@@ -41,6 +41,8 @@ const PATHS: Record<string, string> = {
   check: 'M5 12l5 5L20 7',
   left: 'M15 6l-6 6 6 6',
   right: 'M9 6l6 6-6 6',
+  xcircle: 'M12 21a9 9 0 100-18 9 9 0 000 18zM15 9l-6 6M9 9l6 6',
+  cash: 'M3 7h18v10H3zM12 15a3 3 0 100-6 3 3 0 000 6zM6 10v4M18 10v4',
   phone: 'M5 4h4l2 5-2.5 1.5a11 11 0 005 5L15 13l5 2v4a2 2 0 01-2 2A16 16 0 013 6a2 2 0 012-2',
 };
 
