@@ -20,7 +20,8 @@ const assertLead = (a: UserActor) => { if (!canAssignDrivers(a.roles)) throw for
 const assertView = (a: UserActor) => { if (!canView(a.roles, 'driver-lead') && !canView(a.roles, 'handover')) throw forbidden(); };
 
 export async function driversList(actor: UserActor, dateInput?: string) {
-  assertView(actor);
+  // Захиалгын хуудасны «Жолооч» шүүлтүүрт ч хэрэглэнэ
+  if (!canView(actor.roles, 'driver-lead') && !canView(actor.roles, 'handover') && !canView(actor.roles, 'orders')) throw forbidden();
   const today = ubDay();
   const date = dateInput && isYmd(dateInput) ? dateInput : today;
   const [drivers, loads] = await Promise.all([

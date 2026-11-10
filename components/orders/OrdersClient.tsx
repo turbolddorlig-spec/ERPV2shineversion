@@ -67,11 +67,11 @@ function MoreMenu({ items }: { items: { href?: string; onClick?: () => void; lab
 }
 
 interface Filters {
-  statuses: string[]; operatorId: string; pageId: string; date: 'all' | 'today' | 'custom' | 'range'; day: string; from: string; to: string;
+  statuses: string[]; operatorId: string; pageId: string; driverId: string; date: 'all' | 'today' | 'custom' | 'range'; day: string; from: string; to: string;
   prepaid: boolean; noKhoroo: boolean; postponed: boolean; todayDelivery: boolean;
 }
-const EMPTY_FILTERS: Filters = { statuses: [], operatorId: '', pageId: '', date: 'all', day: '', from: '', to: '', prepaid: false, noKhoroo: false, postponed: false, todayDelivery: false };
-const activeCount = (f: Filters, advOnly = false) => [!advOnly && f.statuses.length > 0, !!f.operatorId, !!f.pageId, f.date !== 'all', f.prepaid, f.noKhoroo, f.postponed, f.todayDelivery].filter(Boolean).length;
+const EMPTY_FILTERS: Filters = { statuses: [], operatorId: '', pageId: '', driverId: '', date: 'all', day: '', from: '', to: '', prepaid: false, noKhoroo: false, postponed: false, todayDelivery: false };
+const activeCount = (f: Filters, advOnly = false) => [!advOnly && f.statuses.length > 0, !!f.operatorId, !!f.pageId, !!f.driverId, f.date !== 'all', f.prepaid, f.noKhoroo, f.postponed, f.todayDelivery].filter(Boolean).length;
 const fsel = 'h-9 w-full rounded-lg border border-line bg-surface2/60 px-2.5 text-[13px] text-ink outline-none focus:border-accent disabled:opacity-50';
 /** Хуучин ERP-ийн «Төлөв» товч: олон төлөв чагтлан сонгоно */
 const STATUS_OPTIONS: { v: string; l: string; dot: string }[] = [
@@ -139,6 +139,7 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
   const [advOpen, setAdvOpen] = useState(false);
   const [ops, setOps] = useState<{ id: string; name: string }[]>([]);
   const [pages, setPages] = useState<{ id: number; name: string }[]>([]);
+  const [drivers, setDrivers] = useState<{ id: string; name: string }[]>([]);
   const [page, setPage] = useState(1);
   const [data, setData] = useState<ListResp | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -167,6 +168,7 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
     if (sp.get('tab')) setF((x) => ({ ...x, statuses: [sp.get('tab')!] }));
     api<{ items: { id: string; name: string }[] }>('/api/calls/operators').then((r) => setOps(r.items)).catch(() => undefined);
     api<{ pages: { id: number; name: string }[] }>('/api/orders/pages').then((r) => setPages(r.pages)).catch(() => undefined);
+    api<{ items: { id: string; name: string }[] }>('/api/driver-lead/drivers').then((r) => setDrivers(r.items)).catch(() => undefined);
     if (initialModal?.kind === 'new') setOrderModal({ prefill: sp.get('phone') ? { phone: sp.get('phone')!, pageId: Number(sp.get('pageId')) || null, variantId: Number(sp.get('variantId')) || null, code: sp.get('code') } : undefined });
     if (initialModal?.kind === 'edit') openEdit(initialModal.id);
   }, [initialModal, openEdit]);
@@ -176,6 +178,7 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
     if (q.trim()) sp.set('q', q.trim());
     if (f.operatorId) sp.set('operatorId', f.operatorId);
     if (f.pageId) sp.set('pageId', f.pageId);
+    if (f.driverId) sp.set('driverId', f.driverId);
     const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
     if (f.date === 'today') { sp.set('from', today); sp.set('to', today); }
     if (f.date === 'custom' && f.day) { sp.set('from', f.day); sp.set('to', f.day); }
@@ -248,7 +251,10 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
                 <option value="">Бүх хуудас</option>
                 {pages.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
-              <select aria-label="Жолооч" disabled className={fsel} title="Модуль 4-т (падаан) нэмэгдэнэ"><option>Бүх жолооч</option></select>
+              <select aria-label="Жолооч" value={f.driverId} onChange={(e) => { setF((x) => ({ ...x, driverId: e.target.value })); setPage(1); }} className={fsel}>
+                <option value="">Бүх жолооч</option>
+                {drivers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
               <select aria-label="Огноо" value={f.date} onChange={(e) => { setF((x) => ({ ...x, date: e.target.value as Filters['date'] })); setPage(1); }} className={fsel}>
                 <option value="all">Бүх огноо</option>
                 <option value="today">Өнөөдөр</option>
