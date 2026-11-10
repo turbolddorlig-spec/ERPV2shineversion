@@ -208,23 +208,32 @@ export async function customerCard(actor: UserActor, phonesInput: string[]) {
 }
 
 /** Цагийн мэдээ (#52): бүх операторт — өнөөдөр 11, 13, 15, 18, 21 цаг хүртэл хэдэн баталгаажсан захиалга */
-export async function hourlyReport(actor: UserActor) {
+/**
+ * Цагийн мэдээ — хуучин ERP-ийн логикоор (эзний шаардлага 2026-11-11):
+ * тухайн өдөр ҮҮССЭН, «Цуцлагдсан» ба «Төлбөр хүлээж буй»-гаас бусад захиалга, ҮҮССЭН цагаар;
+ * 11, 13, 15, 18, 21 цаг хүртэлх нийлбэр; 21 цагаас хойш үүссэн нь «21:00»-д нэмэгдэнэ.
+ */
+export async function hourlyReport(actor: UserActor, dateInput?: string) {
   assertView(actor);
-  const today = ubDay();
+  const date = dateInput && isYmd(dateInput) ? dateInput : ubDay();
+  const start = ubDayStart(date);
+  const end = new Date(start.getTime() + 86_400_000);
   const rows = await db.$queryRaw<{ operatorId: string; operatorName: string; h: number; n: number }[]>`
-    SELECT "operatorId", max("operatorName") AS "operatorName", extract(hour FROM "confirmedAt" AT TIME ZONE 'Asia/Ulaanbaatar')::int AS h, count(*)::int AS n
-    FROM "Order" WHERE "confirmedAt" >= ${ubDayStart(today)} AND status <> 'CANCELLED'
+    SELECT "operatorId", max("operatorName") AS "operatorName", extract(hour FROM "createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Ulaanbaatar')::int AS h, count(*)::int AS n
+    FROM "Order" WHERE "createdAt" >= ${start} AND "createdAt" < ${end} AND status NOT IN ('CANCELLED', 'PENDING_PAYMENT')
     GROUP BY "operatorId", h`;
   const CUTS = [11, 13, 15, 18, 21];
-  const by = new Map<string, { operatorId: string; name: string; cum: number[]; total: number }>();
+  const by = new Map<string, { operatorId: string; name: string; per: number[]; total: number }>();
   for (const r of rows) {
-    const e = by.get(r.operatorId) ?? { operatorId: r.operatorId, name: r.operatorName, cum: CUTS.map(() => 0), total: 0 };
-    CUTS.forEach((c, i) => { if (r.h < c) e.cum[i]! += r.n; });
+    const e = by.get(r.operatorId) ?? { operatorId: r.operatorId, name: r.operatorName, per: CUTS.map(() => 0), total: 0 };
+    let idx = CUTS.findIndex((c) => r.h < c);
+    if (idx < 0) idx = CUTS.length - 1; // 21 цагаас хойш → «21:00»
+    e.per[idx]! += r.n;
     e.total += r.n;
     by.set(r.operatorId, e);
   }
-  const list = [...by.values()].sort((a, b) => b.total - a.total);
-  return { cuts: CUTS, rows: list.map((e, i) => ({ rank: i + 1, ...e, me: e.operatorId === actor.id })), total: list.reduce((a, e) => a + e.total, 0) };
+  const list = [...by.values()].map((e) => { let run = 0; return { ...e, cum: e.per.map((n) => (run += n)) }; }).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+  return { date, cuts: CUTS, rows: list.map((e, i) => ({ rank: i + 1, operatorId: e.operatorId, name: e.name, cum: e.cum, total: e.total, me: e.operatorId === actor.id })), total: list.reduce((a, e) => a + e.total, 0) };
 }
 
 /** Пэйжийн түгээмэл бараа (#50, туршилт): сүүлийн 7 хоногийн баталгаажсан захиалгаар хамгийн их зарагдсан 8 хувилбар */

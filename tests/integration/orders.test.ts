@@ -272,18 +272,38 @@ describe('хайлт, үйлчлүүлэгчийн карт, цагийн мэд
     expect(card.lastAddress?.district).toBe('Баянзүрх');
     expect(card.stats.total).toBe(1);
   });
-  it('цагийн мэдээ: «Шинэ» болон «Мөнгө орсон» захиалгыг л тоолно; төлбөр хүлээж буй, цуцлагдсан тоологдохгүй', async () => {
-    await O.createOrder(op, ub());                                                         // УБ → Шинэ → тоологдоно
-    const rural = (await O.createOrder(op, ub({ phone: '88001122', province: 'Дархан-Уул', district: null, khoroo: null, addressDetail: '3-р баг' }))).order;
-    await O.createOrder(op, ub({ phone: '88001133', prepaidWait: true }));                  // УБ урьдчилгаа хүлээх → тоологдохгүй
-    const c = (await O.createOrder(op, ub({ phone: '88001144' }))).order;
-    expect((await Q.hourlyReport(op)).total).toBe(2);
+  it('цагийн мэдээ хуучин ERP-ийн логикоор: тухайн өдөр үүссэн, цуцлагдсан/төлбөр хүлээж буйгаас бусад, Улаанбаатарын цагаар; 21-ээс хойш → 21:00', async () => {
+    const day0 = U.ubDayStart(U.ubDay()).getTime();
+    const at = async (phone: string, ubHour: number, over: Record<string, unknown> = {}) => {
+      const { order } = await O.createOrder(op, ub({ phone, ...over }));
+      await db.order.update({ where: { id: order.id }, data: { createdAt: new Date(day0 + ubHour * 3_600_000) } });
+      return order;
+    };
+    await at('88000001', 9.5);    // 09:30 → 11:00
+    await at('88000002', 13.25);  // 13:15 → 15:00
+    await at('88000003', 22.5);   // 22:30 → 21:00 (хуучин шиг)
+    await at('88000004', 12, { province: 'Дархан-Уул', district: null, khoroo: null, addressDetail: '3-р баг' }); // төлбөр хүлээж буй → тоологдохгүй
+    const c = await at('88000005', 10);
     await O.cancelOrder(op, c.id, { reason: 'CUSTOMER_CANCELLED', note: 'Тест цуцлалт', version: c.version });
-    expect((await Q.hourlyReport(op)).total).toBe(1);                                      // цуцлагдсан хасагдана
-    await O.markPaid(lead, rural.id);
     const h = await Q.hourlyReport(op);
-    expect(h.total).toBe(2);                                                               // мөнгө орсон → нэмэгдэнэ
-    expect(h.rows[0]!.cum.at(-1)).toBeLessThanOrEqual(2);
+    expect(h.cuts).toEqual([11, 13, 15, 18, 21]);
+    expect(h.rows).toHaveLength(1);
+    expect(h.rows[0]!.cum).toEqual([1, 1, 2, 2, 3]);
+    expect(h.total).toBe(3);
+    // Өчигдрийн мэдээ хоосон
+    expect((await Q.hourlyReport(op, U.ubDay(new Date(), -1))).total).toBe(0);
+    // Пэйжийн тайлан «өдрөөр» — шөнийн 22:30-ын захиалга тухайн өдөрт орно (UTC-ээр биш)
+    const rep = await R.pageReport(sa, { by: 'day' });
+    expect(rep.rows.find((r) => r.key === U.ubDay())?.created).toBe(5);
+  });
+  it('цагийн мэдээний баг: ахлах тохируулна, оператор харна; нэг оператор хоёр багт орохгүй', async () => {
+    await err(A.setOperatorTeams(op, { teams: [] }), 403);
+    const r = await A.setOperatorTeams(lead, { teams: [{ name: 'Баг А', color: 'blue', members: [op.id] }, { name: 'Баг Б', color: 'xx', members: [op2.id] }] });
+    expect(r.teams[1]!.color).toBe('slate');
+    expect((await A.getOperatorTeams(op)).teams.map((t) => t.name)).toEqual(['Баг А', 'Баг Б']);
+    expect((await A.getOperatorTeams(op)).canEdit).toBe(false);
+    await err(A.setOperatorTeams(lead, { teams: [{ name: 'А', members: [op.id] }, { name: 'Б', members: [op.id] }] }), 400);
+    await err(A.setOperatorTeams(lead, { teams: [{ name: 'А' }, { name: 'А' }] }), 400);
   });
   it('цагийн мэдээ бүх операторт, өөрийн мөр тодорсон; пэйжийн тайлан СА, маркетингт л', async () => {
     await O.createOrder(op, ub());

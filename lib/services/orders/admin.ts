@@ -133,3 +133,40 @@ export async function setOrderSettings(actor: UserActor, input: { feeUB?: unknow
   });
   return orderSettings();
 }
+
+// ───────────────────────── Цагийн мэдээний багууд (хуучин ERP шиг) ─────────────────────────
+
+const TEAMS_KEY = 'operatorTeams';
+export const TEAM_COLORS = ['blue', 'green', 'amber', 'rose', 'teal', 'slate'] as const;
+export interface OperatorTeam { name: string; color: (typeof TEAM_COLORS)[number]; members: string[] }
+
+/** Багууд — бүх оператор харна; хэрэглэгчийн id-аар хадгална */
+export async function getOperatorTeams(actor: UserActor): Promise<{ teams: OperatorTeam[]; canEdit: boolean }> {
+  if (!canView(actor.roles, 'orders')) throw forbidden();
+  const s = await db.appSetting.findUnique({ where: { key: TEAMS_KEY } });
+  const teams = Array.isArray(s?.value) ? (s!.value as unknown as OperatorTeam[]) : [];
+  return { teams, canEdit: canSuperviseOperators(actor.roles) };
+}
+
+/** Багийг ахлах оператор, админ тохируулна (audit-тай) */
+export async function setOperatorTeams(actor: UserActor, input: { teams?: unknown }) {
+  if (!canSuperviseOperators(actor.roles)) throw forbidden('Багийг ахлах оператор, админ тохируулна');
+  if (!Array.isArray(input.teams) || input.teams.length > 30) throw badRequest('Баг буруу');
+  const seen = new Set<string>();
+  const memberSeen = new Set<string>();
+  const teams: OperatorTeam[] = (input.teams as Record<string, unknown>[]).map((t) => {
+    const name = String(t.name ?? '').trim().replace(/\s+/g, ' ');
+    if (name.length < 1 || name.length > 40) throw badRequest('Багийн нэр 1–40 тэмдэгт');
+    if (seen.has(name)) throw badRequest('Энэ нэртэй баг байна', 'team_exists');
+    seen.add(name);
+    const color = TEAM_COLORS.includes(t.color as OperatorTeam['color']) ? (t.color as OperatorTeam['color']) : 'slate';
+    const members = (Array.isArray(t.members) ? t.members : []).map(String).filter((m) => /^[0-9a-f-]{36}$/i.test(m));
+    for (const m of members) { if (memberSeen.has(m)) throw badRequest('Нэг оператор хоёр багт байж болохгүй'); memberSeen.add(m); }
+    return { name, color, members };
+  });
+  await db.$transaction(async (tx) => {
+    await tx.appSetting.upsert({ where: { key: TEAMS_KEY }, create: { key: TEAMS_KEY, value: teams as never, updatedById: actor.id }, update: { value: teams as never, updatedById: actor.id } });
+    await writeAudit(actor, 'teams.updated', 'AppSetting', TEAMS_KEY, { teams: teams.map((t) => ({ name: t.name, members: t.members.length })) }, tx, ['order']);
+  });
+  return { teams, canEdit: true };
+}

@@ -5,9 +5,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Notice } from '@/components/ui/Notice';
-import { Modal } from '@/components/ui/Modal';
 import { OrderModal, type EditOrder, type FormLine, type OrderPrefill } from './OrderForm';
 import { CallsModal } from './CallsClient';
+import { HourlyModal } from './HourlyModal';
 import { CancelOrderModal, HistoryDrawer, PaidConfirmModal } from './OrderActions';
 import { Icon } from '@/components/icons';
 import { api, ApiError } from '@/components/ui/api';
@@ -26,7 +26,6 @@ export interface OItem {
   total: number; discount: number; deliveryFee: number; postponeCount: number; lines: OLine[]; cancelLabel: string | null; inHandover: boolean; version: number; driverName?: string | null;
 }
 interface ListResp { items: OItem[]; hasMore: boolean; matched: number | null; matchedCapped: boolean; counts: Record<string, number>; can: { edit: boolean; markPaid: boolean; supervise: boolean; review: boolean } }
-interface Hourly { cuts: number[]; rows: { rank: number; name: string; cum: number[]; total: number; me: boolean }[]; total: number }
 
 
 export function StatusChip({ o }: { o: Pick<OItem, 'displayStatus' | 'statusLabel' | 'deliveryDate' | 'isToday' | 'prepaid' | 'postponeCount' | 'noKhoroo'> }) {
@@ -38,40 +37,6 @@ export function StatusChip({ o }: { o: Pick<OItem, 'displayStatus' | 'statusLabe
       {o.postponeCount ? <Badge tone="warn">Хойшилсон</Badge> : null}
       {o.noKhoroo ? <Badge tone="neutral">Хороо?</Badge> : null}
     </span>
-  );
-}
-
-/** Цагийн мэдээ (#52): бүх операторт — хуучин ERP шиг товч дарахад цонхоор нээгдэнэ */
-function HourlyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [h, setH] = useState<Hourly | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    const load = () => api<Hourly>('/api/orders/hourly').then(setH).catch(() => undefined);
-    load();
-    const t = setInterval(load, 60_000);
-    return () => clearInterval(t);
-  }, [open]);
-  const medal = ['🥇', '🥈', '🥉'];
-  return (
-    <Modal open={open} onClose={onClose} size="xl" title={`⏱ Цагийн мэдээ${h ? ` · өнөөдөр ${h.total}` : ''}`} subtitle="Операторуудын өнөөдөр «Шинэ» төлөвтэй үүссэн болон «Мөнгө орсон» захиалга (цаг хүртэлх нийлбэр). Төлбөр хүлээж буй, цуцлагдсан тоологдохгүй.">
-      {!h ? <p className="py-6 text-center text-muted">Ачаалж байна…</p> : h.rows.length ? (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[480px] text-[13px]">
-            <thead><tr className="border-b border-line text-left text-[11.5px] uppercase text-muted"><th className="px-2 py-1.5">#</th><th className="px-2 py-1.5">Оператор</th>{h.cuts.map((c) => <th key={c} className="px-2 py-1.5 text-right">{c}:00 хүртэл</th>)}<th className="px-2 py-1.5 text-right">Нийт</th></tr></thead>
-            <tbody>
-              {h.rows.map((r) => (
-                <tr key={r.name} className={clsx('border-b border-line/60', r.me && 'bg-accent-soft font-bold')}>
-                  <td className="px-2 py-1.5">{medal[r.rank - 1] ?? r.rank}</td>
-                  <td className="px-2 py-1.5">{r.name}{r.me ? ' (та)' : ''}</td>
-                  {r.cum.map((n, i) => <td key={i} className="px-2 py-1.5 text-right text-muted">{n}</td>)}
-                  <td className="px-2 py-1.5 text-right text-[14px] font-extrabold">{r.total}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : <p className="py-6 text-center text-muted">Өнөөдөр баталгаажсан захиалга алга</p>}
-    </Modal>
   );
 }
 

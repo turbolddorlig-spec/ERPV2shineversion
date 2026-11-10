@@ -26,7 +26,7 @@ export async function pageReport(actor: UserActor, p: { from?: string; to?: stri
   assertReports(actor);
   const r = range(p.from, p.to);
   const pf = p.pageId ? Prisma.sql`AND "pageId" = ${p.pageId}` : Prisma.empty;
-  const groupCol = p.by === 'operator' ? Prisma.sql`"operatorName"` : p.by === 'day' ? Prisma.sql`to_char("ts" AT TIME ZONE 'Asia/Ulaanbaatar', 'YYYY-MM-DD')` : Prisma.sql`"pageId"::text`;
+  const groupCol = p.by === 'operator' ? Prisma.sql`"operatorName"` : p.by === 'day' ? Prisma.sql`to_char("ts" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Ulaanbaatar', 'YYYY-MM-DD')` : Prisma.sql`"pageId"::text`;
   const rows = await db.$queryRaw<{ k: string; metric: string; n: number }[]>`
     WITH ev AS (
       SELECT "pageId", "operatorName", 'created' AS metric, "createdAt" AS ts FROM "Order" WHERE "createdAt" >= ${r.start} AND "createdAt" < ${r.end} ${pf}

@@ -7,6 +7,6 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   try {
     const ctx = await requireApiUser(req, { page: 'orders' });
-    return json(await hourlyReport(ctx.actor));
+    return json(await hourlyReport(ctx.actor, req.nextUrl.searchParams.get('date') ?? undefined));
   } catch (e) { return errorResponse(e); }
 }
