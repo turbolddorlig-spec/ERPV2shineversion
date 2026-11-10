@@ -53,7 +53,7 @@ function HourlyModal({ open, onClose }: { open: boolean; onClose: () => void }) 
   }, [open]);
   const medal = ['🥇', '🥈', '🥉'];
   return (
-    <Modal open={open} onClose={onClose} size="xl" title={`⏱ Цагийн мэдээ${h ? ` · өнөөдөр ${h.total}` : ''}`} subtitle="Операторуудын өнөөдрийн баталгаажсан захиалга (цаг хүртэлх нийлбэр)">
+    <Modal open={open} onClose={onClose} size="xl" title={`⏱ Цагийн мэдээ${h ? ` · өнөөдөр ${h.total}` : ''}`} subtitle="Операторуудын өнөөдөр «Шинэ» төлөвтэй үүссэн болон «Мөнгө орсон» захиалга (цаг хүртэлх нийлбэр). Төлбөр хүлээж буй, цуцлагдсан тоологдохгүй.">
       {!h ? <p className="py-6 text-center text-muted">Ачаалж байна…</p> : h.rows.length ? (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[480px] text-[13px]">

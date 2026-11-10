@@ -272,6 +272,19 @@ describe('хайлт, үйлчлүүлэгчийн карт, цагийн мэд
     expect(card.lastAddress?.district).toBe('Баянзүрх');
     expect(card.stats.total).toBe(1);
   });
+  it('цагийн мэдээ: «Шинэ» болон «Мөнгө орсон» захиалгыг л тоолно; төлбөр хүлээж буй, цуцлагдсан тоологдохгүй', async () => {
+    await O.createOrder(op, ub());                                                         // УБ → Шинэ → тоологдоно
+    const rural = (await O.createOrder(op, ub({ phone: '88001122', province: 'Дархан-Уул', district: null, khoroo: null, addressDetail: '3-р баг' }))).order;
+    await O.createOrder(op, ub({ phone: '88001133', prepaidWait: true }));                  // УБ урьдчилгаа хүлээх → тоологдохгүй
+    const c = (await O.createOrder(op, ub({ phone: '88001144' }))).order;
+    expect((await Q.hourlyReport(op)).total).toBe(2);
+    await O.cancelOrder(op, c.id, { reason: 'CUSTOMER_CANCELLED', note: 'Тест цуцлалт', version: c.version });
+    expect((await Q.hourlyReport(op)).total).toBe(1);                                      // цуцлагдсан хасагдана
+    await O.markPaid(lead, rural.id);
+    const h = await Q.hourlyReport(op);
+    expect(h.total).toBe(2);                                                               // мөнгө орсон → нэмэгдэнэ
+    expect(h.rows[0]!.cum.at(-1)).toBeLessThanOrEqual(2);
+  });
   it('цагийн мэдээ бүх операторт, өөрийн мөр тодорсон; пэйжийн тайлан СА, маркетингт л', async () => {
     await O.createOrder(op, ub());
     await O.createOrder(op, ub({ phone: '88001122' }));
