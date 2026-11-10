@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
     const b = (k: string) => sp.get(k) === '1';
     return json(await listOrders(ctx.actor, {
       tab: sp.get('tab') ?? undefined, q: sp.get('q') ?? undefined, from: sp.get('from') || undefined, to: sp.get('to') || undefined,
-      operatorId: sp.get('operatorId') || undefined, pageId: Number(sp.get('pageId')) || undefined, province: sp.get('province') || undefined,
+      operatorId: sp.get('operatorId') || undefined, driverId: sp.get('driverId') || undefined, pageId: Number(sp.get('pageId')) || undefined, province: sp.get('province') || undefined,
       district: sp.get('district') || undefined, prepaid: b('prepaid'), noKhoroo: b('noKhoroo'), postponed: b('postponed'), todayDelivery: b('todayDelivery'),
       page: Number(sp.get('page')) || 1, statuses: sp.has('statuses') ? sp.get('statuses') ?? '' : undefined,
     }));

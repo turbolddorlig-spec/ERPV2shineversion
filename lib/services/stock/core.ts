@@ -30,6 +30,8 @@ export const MOVE_LABEL: Record<MoveType, string> = {
   LOAN_OUT: 'Зээл олгосон',
   LOAN_RETURN: 'Зээл буцаасан',
   LOAN_CHARGE: 'Зээл — цалингаас суутгал',
+  HANDOVER: 'Жолоочид өгсөн (падаан)',
+  HANDOVER_BACK: 'Падаан буцаасан (жолоочоос)',
 };
 
 export const ISSUE_REASON_LABEL = { DAMAGE: 'Гэмтэл', SAMPLE: 'Дээж, бэлэг, реклам', SUPPLIER_RETURN: 'Нийлүүлэгчид буцаасан' } as const;

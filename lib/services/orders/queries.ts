@@ -25,6 +25,7 @@ export function serializeOrder(o: OrderWithLines, pageName?: string | null) {
     confirmedAt: o.confirmedAt, paymentDeadline: o.paymentDeadline, createdAt: o.createdAt,
     subtotal: o.subtotal, discount: o.discount, deliveryFee: o.deliveryFee, total: o.total, deliveryFeeEdited: o.deliveryFeeEdited,
     blacklistNote: o.blacklistNote, postponeCount: o.postponeCount, inHandover: !!o.handoverId,
+    driverId: o.driverId, driverName: o.driverName, outForDeliveryAt: o.outForDeliveryAt,
     cancelReason: o.cancelReason, cancelLabel: o.cancelReason ? CANCEL_LABEL[o.cancelReason] : null, cancelNote: o.cancelNote, cancelledAt: o.cancelledAt, cancelledByName: o.cancelledByName,
     version: o.version,
     lines: o.lines.map((l) => ({
@@ -43,13 +44,13 @@ async function pageNames(ids: number[]) {
 export type Tab = 'today' | 'PENDING_PAYMENT' | 'SCHEDULED' | 'NEW' | 'ASSIGNED' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELLED' | 'all';
 export interface ListParams {
   tab?: string; q?: string; from?: string; to?: string; operatorId?: string; pageId?: number; province?: string; district?: string;
-  prepaid?: boolean; noKhoroo?: boolean; postponed?: boolean; todayDelivery?: boolean; page?: number;
+  prepaid?: boolean; noKhoroo?: boolean; postponed?: boolean; todayDelivery?: boolean; page?: number; driverId?: string;
   /** Хуучин ERP шиг «Төлөв» олон сонголт (таслалаар): PENDING_PAYMENT, NEW, SCHEDULED, ASSIGNED, OUT_FOR_DELIVERY, DELIVERED, CANCELLED */
   statuses?: string;
 }
 
 /** Хайлт (#43): утас (хэсэг), дугаар, хаяг, тэмдэглэл, барааны нэр/код — trigram индексээр, 1 сая захиалгад хурдан */
-async function searchIds(q: string): Promise<number[] | null> {
+export async function searchIds(q: string): Promise<number[] | null> {
   const s = q.trim();
   if (!s) return null;
   const digits = s.replace(/[\s-]/g, '');
@@ -108,6 +109,7 @@ export async function listOrders(actor: UserActor, p: ListParams) {
   if (p.to) { if (!isYmd(p.to)) throw badRequest('Огноо буруу'); and.push({ createdAt: { lt: new Date(ubDayStart(p.to).getTime() + 86_400_000) } }); }
   if (p.operatorId) { if (!/^[0-9a-f-]{36}$/i.test(p.operatorId)) throw badRequest('Оператор буруу'); and.push({ operatorId: p.operatorId }); }
   if (p.pageId) and.push({ pageId: p.pageId });
+  if (p.driverId) { if (!/^[0-9a-f-]{36}$/i.test(p.driverId)) throw badRequest('Жолооч буруу'); and.push({ driverId: p.driverId }); }
   if (p.province) and.push({ province: p.province });
   if (p.district) and.push({ district: p.district });
   if (p.prepaid) and.push({ prepaid: true });

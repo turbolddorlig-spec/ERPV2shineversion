@@ -200,7 +200,7 @@ describe('захиалга үүсгэх', () => {
 });
 
 describe('засвар (#48)', () => {
-  it('бараа солих → нөөц зөрүүгээр; хүрэлцэхгүй бол юу ч өөрчлөгдөхгүй; хуучин version → stale; падаанд орсон → бараа засахгүй', async () => {
+  it('бараа солих → нөөц зөрүүгээр; хүрэлцэхгүй бол юу ч өөрчлөгдөхгүй; хуучин version → stale; падаанд орсон → засахгүй (#66)', async () => {
     const { order } = await O.createOrder(op, ub({ lines: [{ variantId: v1, qty: 2 }] }));
     const r = await O.updateOrder(op2, order.id, { version: order.version, lines: [{ variantId: v2, qty: 2 }, { variantId: v1, qty: 1 }] });
     expect(r.changed).toBe(true);
@@ -217,7 +217,8 @@ describe('засвар (#48)', () => {
     await err(O.updateOrder(op, order.id, { version: r2.order.version + 1, lines: [{ variantId: v1, qty: 1 }] }), 409);
     const fresh = await db.order.findUniqueOrThrow({ where: { id: order.id } });
     await err(O.updateOrder(op, order.id, { version: fresh.version, lines: [{ variantId: v1, qty: 1 }] }), 409, 'in_handover');
-    await O.updateOrder(op, order.id, { version: fresh.version, note: 'Орой 6-аас хойш' });
+    // #66: падаан үүссэн захиалгыг огт засахгүй (хуучин ERP шиг) — тэмдэглэл ч
+    await err(O.updateOrder(op, order.id, { version: fresh.version, note: 'Орой 6-аас хойш' }), 409, 'in_handover');
   });
 
   it('зэрэг засвар + цуцлах → нэг нь; нөөц таарна', async () => {

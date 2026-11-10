@@ -128,3 +128,10 @@ export const canSuperviseOperators = (roles: Role[]) => has(roles, [...SA_A, 'OP
 export const canReviewDiscounts = (roles: Role[]) => has(roles, ['SUPER_ADMIN']);
 /** Хүргэлтийн төлбөр, хүлээх хоног, пэйж, Meta Pixel тохиргоо */
 export const canManageOrderSettings = (roles: Role[]) => has(roles, SA_A);
+// ───── Модуль 4: падаан ─────
+/** Жолоочид захиалга хуваарилах, огноо солих (ахлах жолооч, админ) */
+export const canAssignDrivers = (roles: Role[]) => canEdit(roles, 'driver-lead');
+/** Падаан үүсгэх, бэлтгэх, бараа өгөх (агуулах, админ) */
+export const canOperateHandover = (roles: Role[]) => canEdit(roles, 'handover');
+/** Нягтлангийн OKEY / ХОРИГ (хуучин ERP шиг) */
+export const canApproveDrivers = (roles: Role[]) => has(roles, [...SA_A, 'ACCOUNTING']);

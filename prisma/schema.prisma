@@ -278,6 +278,9 @@ enum MoveType {
   LOAN_OUT
   LOAN_RETURN
   LOAN_CHARGE
+  /// Модуль 4: агуулах → жолооч (падаан «Барааг бүрэн өгсөн»), буцаах
+  HANDOVER
+  HANDOVER_BACK
 }
 
 /// Журнал: нэг мөр = нэг хувилбарын нэг хөдөлгөөн (хаанаас → хаашаа). fromId/toId хоосон = гаднаас / гадагш.
@@ -577,8 +580,14 @@ model Order {
   blacklistNote     String?
   /// Жолооч «Маргааш» дарсан тоо (Модуль 5)
   postponeCount     Int           @default(0)
-  /// Падаанд орсон (Модуль 4) — бараа засахгүй
+  /// Падаанд орсон (Модуль 4) — захиалга засахгүй (хуучин шиг)
   handoverId        Int?
+  /// Хуваарилсан жолооч (Модуль 4, ахлах жолооч). Хүргэх өдөр = deliveryDate
+  driverId          String?       @db.Uuid
+  driverName        String?
+  assignedAt        DateTime?
+  /// Агуулах «Барааг бүрэн өгсөн» дарсан мөч (бараа жолоочид шилжсэн)
+  outForDeliveryAt  DateTime?
   cancelReason      CancelReason?
   cancelNote        String?
   cancelledAt       DateTime?
@@ -592,6 +601,7 @@ model Order {
   lines             OrderLine[]
 
   @@index([status, deliveryDate])
+  @@index([driverId, deliveryDate])
   @@index([status, createdAt])
   @@index([confirmedAt])
   @@index([createdAt])
@@ -729,4 +739,87 @@ model MetaEvent {
   createdAt     DateTime        @default(now())
 
   @@index([status, nextAttemptAt])
+}
+
+// ───────────────────────── Модуль 4: Падаан ─────────────────────────
+
+/// Хуучин ERP шиг: Ноорог → Бэлтгэсэн → Өгсөн (жолоочийн хүлээн авалт Модуль 5-д)
+enum HandoverStatus {
+  DRAFT
+  PREPARED
+  HANDED_OVER
+}
+
+/// Падаан — нэг жолоочид нэг өдөрт нэг (database-ээр хамгаална)
+model Handover {
+  id            Int             @id @default(autoincrement())
+  /// П-000001 — хүний унших дугаар
+  number        String          @unique
+  date          DateTime        @db.Date
+  driverId      String          @db.Uuid
+  driverName    String
+  /// Бараа гарах агуулах (үндсэн)
+  warehouseId   Int
+  status        HandoverStatus  @default(DRAFT)
+  createdById   String          @db.Uuid
+  createdByName String
+  preparedAt    DateTime?
+  preparedBy    String?
+  handedOverAt  DateTime?
+  handedOverBy  String?
+  version       Int             @default(1)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  orders        HandoverOrder[]
+  checks        HandoverCheck[]
+
+  @@unique([driverId, date])
+  @@index([date])
+  @@index([status, date])
+}
+
+/// Падааны захиалга. orderId давхардахгүй — нэг захиалга нэг падаанд. removedAt: өгөхөөс өмнө цуцлагдсан/шилжсэн (агуулахад улаанаар)
+model HandoverOrder {
+  id           Int       @id @default(autoincrement())
+  handoverId   Int
+  handover     Handover  @relation(fields: [handoverId], references: [id], onDelete: Cascade)
+  orderId      Int
+  position     Int
+  addedAt      DateTime  @default(now())
+  removedAt    DateTime?
+  removeReason String?
+
+  @@unique([handoverId, orderId])
+  @@index([orderId])
+}
+
+/// Агуулахын Check — нэгтгэсэн бараа (хувилбар) бүрээр
+model HandoverCheck {
+  handoverId Int
+  handover   Handover @relation(fields: [handoverId], references: [id], onDelete: Cascade)
+  variantId  Int
+  checkedAt  DateTime @default(now())
+  checkedBy  String
+
+  @@id([handoverId, variantId])
+}
+
+/// Нягтлангийн өдрийн зөвшөөрөл (хуучин ERP-ийн OKEY / ХОРИГ). Итгэлтэй жолоочид автоматаар OKEY
+model DriverApproval {
+  driverId String   @db.Uuid
+  date     DateTime @db.Date
+  approved Boolean
+  note     String?
+  byName   String
+  at       DateTime @default(now())
+
+  @@id([driverId, date])
+}
+
+model DriverSetting {
+  userId    String   @id @db.Uuid
+  /// Итгэлтэй жолооч — нягтлан тэмдэглэхгүй ч өдөр бүр OKEY
+  trusted   Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+  updatedBy String?
 }

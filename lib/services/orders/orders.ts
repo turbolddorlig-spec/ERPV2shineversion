@@ -12,6 +12,7 @@ import {
   lockOrder, lockPhones, lockVariants, nextOrderNumber, orderSettings, requireReason, staleError, uniqueViolation, type Tx, type UserActor, NO_PAGE_NAME, noPageId,
 } from './core';
 import { enqueueMeta, skipMeta } from './meta';
+import { addToHandover, lockDelivery, removeFromHandover } from '../delivery/core';
 
 /**
  * Захиалга (Модуль 3, шийдвэр #43–#54).
@@ -230,12 +231,16 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
   const settings = await orderSettings();
 
   return inTx(async (tx) => {
+    // Жолоочид оноосон захиалгын огноо өөрчлөгдвөл падаантай уялдана — хүргэлтийн түгжээг эхэлж авна
+    const pre = await tx.order.findUnique({ where: { id }, select: { status: true } });
+    if (pre?.status === 'ASSIGNED') await lockDelivery(tx);
     if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
     const o = await tx.order.findUniqueOrThrow({ where: { id }, include: { lines: true } });
     if (o.version !== version) throw staleError();
     if (!ACTIVE.includes(o.status)) throw conflict('Хүргэлтэд гарсан / дууссан / цуцлагдсан захиалгыг засахгүй', 'order_locked');
     const linesChanging = input.lines !== undefined;
-    if (linesChanging && o.handoverId) throw conflict('Энэ захиалга падаанд орсон тул барааг нь засах боломжгүй', 'in_handover');
+    // Хуучин ERP шиг: падаан үүссэн захиалгыг огт засахгүй (#66)
+    if (o.handoverId) throw conflict('Падаан үүссэн захиалгыг засах боломжгүй', 'in_handover');
 
     const changes: Record<string, { from: unknown; to: unknown }> = {};
     const data: Prisma.OrderUpdateInput = {};
@@ -270,7 +275,14 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
     }
     if (input.deliveryDate !== undefined) {
       const d = cleanDeliveryDate(input.deliveryDate);
-      if (d !== ymdOf(o.deliveryDate)) { data.deliveryDate = dateOnly(d); changes.deliveryDate = { from: ymdOf(o.deliveryDate), to: d }; }
+      if (d !== ymdOf(o.deliveryDate)) {
+        // Тэр өдрийн падаан өгөгдсөн бол оруулахгүй (ахлах жолооч өөр өдөр/жолооч сонгоно)
+        if (o.status === 'ASSIGNED' && o.driverId) {
+          const h = await tx.handover.findUnique({ where: { driverId_date: { driverId: o.driverId, date: dateOnly(d) } }, select: { status: true } });
+          if (h?.status === 'HANDED_OVER') throw conflict(`${o.driverName}-ийн ${d}-ны падаан аль хэдийн өгөгдсөн — өөр өдөр сонгоно уу`, 'handed_over');
+        }
+        data.deliveryDate = dateOnly(d); changes.deliveryDate = { from: ymdOf(o.deliveryDate), to: d };
+      }
     }
 
     // Бараа ба дүн
@@ -307,6 +319,10 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
     }
     if (!Object.keys(changes).length) return { order: o, changed: false };
     const u = await tx.order.update({ where: { id }, data: { ...data, version: { increment: 1 } } });
+    if (changes.deliveryDate && o.status === 'ASSIGNED' && o.driverId) {
+      const h = await tx.handover.findUnique({ where: { driverId_date: { driverId: o.driverId, date: u.deliveryDate } }, select: { id: true, status: true } });
+      if (h && h.status !== 'HANDED_OVER') await addToHandover(tx, h.id, id);
+    }
     const discountNow = lines.some((l) => l.unitPrice < l.listPrice && existing.get(l.variantId)?.unitPrice !== l.unitPrice) || !!t.feeReason;
     await writeAudit(actor, 'order.updated', 'Order', String(id), { number: o.number, changes, ...(t.feeReason ? { feeReason: t.feeReason } : {}) } as unknown as Prisma.InputJsonValue, tx,
       discountNow ? ['order', 'discount'] : ['order']);
@@ -325,6 +341,9 @@ export async function cancelOrder(actor: UserActor | typeof SYSTEM_ACTOR & { rol
   if (!opts.system && !CANCEL_REASONS.includes(reason)) throw badRequest('Цуцлах шалтгаанаа сонгоно уу', 'cancel_reason');
   const note = opts.system ? 'Төлбөрийн хугацаа дууссан (автомат)' : requireReason(input.note, 'reason_required');
   return inTx(async (tx) => {
+    // Модуль 4: хуваарилсан/падаанд орсон захиалгыг цуцлахад падааны түгжээг эхэлж авна (deadlock-гүй дараалал)
+    const pre = await tx.order.findUnique({ where: { id }, select: { status: true } });
+    if (pre && (pre.status === 'NEW' || pre.status === 'ASSIGNED')) await lockDelivery(tx);
     if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
     const o = await tx.order.findUniqueOrThrow({ where: { id } });
     if (o.status === 'CANCELLED') return { order: o, duplicate: true };
@@ -334,6 +353,8 @@ export async function cancelOrder(actor: UserActor | typeof SYSTEM_ACTOR & { rol
     if (input.version !== undefined && Number(input.version) !== o.version) throw staleError();
     const u = await tx.order.update({ where: { id }, data: { status: 'CANCELLED', cancelReason: reason, cancelNote: note, cancelledAt: new Date(), cancelledByName: actor.name, version: { increment: 1 } } });
     await tx.stockReservation.deleteMany({ where: { orderId: id } });
+    // Падаанд (өгөхөөс өмнө) байсан бол хасагдана — агуулахад улаанаар «тавиурт буцаа» гэж харагдана
+    if (o.handoverId) await removeFromHandover(tx, id, 'Цуцлагдсан');
     await skipMeta(tx, id);
     await writeAudit(actor, 'order.cancelled', 'Order', String(id), { number: o.number, from: o.status, reason, note }, tx, ['order', 'cancel']);
     return { order: u, duplicate: false };
