@@ -116,12 +116,12 @@ export function OrdersClient() {
     <div className="flex flex-col gap-4">
       {flash ? <Notice tone="ok">{flash}</Notice> : null}
       <div className="flex flex-wrap gap-2">
-        {can?.edit ? <Link href="/orders/new" className="inline-flex h-11 items-center gap-2 rounded-[11px] bg-accent px-4 text-[14px] font-bold text-on-accent"><Icon name="plus" size={16} strokeWidth={2.4} />Захиалга</Link> : null}
         <Link href="/orders/calls" className="inline-flex h-11 items-center gap-2 rounded-[11px] border border-line bg-surface px-4 text-[14px] font-semibold">📞 Дуудлагын бүртгэл</Link>
         <Link href="/loans" className="inline-flex h-11 items-center gap-2 rounded-[11px] border border-line bg-surface px-4 text-[14px] font-semibold"><Icon name="hand" size={16} />Барааны хүсэлт</Link>
         <Link href="/orders/blacklist" className="inline-flex h-11 items-center gap-2 rounded-[11px] border border-line bg-surface px-4 text-[14px] font-semibold">⚠️ Хар жагсаалт</Link>
         {can?.supervise ? <Link href="/orders/pages" className="inline-flex h-11 items-center rounded-[11px] border border-line bg-surface px-4 text-[14px] font-semibold">Пэйж хуваарилах</Link> : null}
         {can?.review ? <Link href="/orders/review" className="inline-flex h-11 items-center rounded-[11px] border border-line bg-surface px-4 text-[14px] font-semibold">Хөнгөлөлт шалгах</Link> : null}
+        {can?.edit ? <Link href="/orders/new" className="ml-auto inline-flex h-11 items-center gap-2 rounded-[11px] bg-accent px-5 text-[14px] font-bold text-on-accent"><Icon name="plus" size={16} strokeWidth={2.4} />Захиалга</Link> : null}
       </div>
 
       <HourlyBoard />
