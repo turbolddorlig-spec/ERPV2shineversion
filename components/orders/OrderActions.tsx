@@ -7,6 +7,7 @@ import { api, ApiError } from '@/components/ui/api';
 import { Thumb } from '@/components/products/ProductsClient';
 import { money, ubDateTime } from '@/lib/format';
 import { formatPhone } from '@/lib/phone';
+import { OperatorNote } from './OrdersClient';
 
 export const ACTION_LABEL: Record<string, string> = {
   'order.created': 'Үүсгэсэн', 'order.updated': 'Засварласан', 'order.cancelled': 'Цуцалсан', 'order.paid': 'Мөнгө орсон', 'order.paid_undone': '«Мөнгө орсон» буцаасан', 'order.deadline_extended': 'Төлбөрийн хугацаа сунгасан',
@@ -60,7 +61,7 @@ export function HistoryDrawer({ orderId, onClose }: { orderId: number | null; on
           <div className="flex flex-col gap-1 rounded-lg bg-surface2/70 p-3">
             <p><span className="text-muted">Утас: </span><b className="select-text">{formatPhone(o.phone)}</b>{o.extraPhone ? <> · <b className="select-text">{formatPhone(o.extraPhone)}</b></> : null}</p>
             <p className="select-text"><span className="text-muted">📍 </span>{o.fullAddress}</p>
-            {o.note ? <p><span className="text-muted">Санамж: </span>{o.note}</p> : null}
+            {o.note ? <div><OperatorNote text={o.note} className="text-[12.5px]" /></div> : null}
             <p><span className="text-muted">Үүссэн: </span>{ubDateTime(o.createdAt)} · <span className="text-muted">Хүргэх: </span>{o.deliveryDate}</p>
             {o.cancelLabel ? <p className="text-bad-ink">Цуцалсан: {o.cancelLabel}{o.cancelNote ? ` — ${o.cancelNote}` : ''}</p> : null}
           </div>

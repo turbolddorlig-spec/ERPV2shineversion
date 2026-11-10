@@ -1,6 +1,5 @@
 import { redirect } from 'next/navigation';
 import { requirePage } from '@/lib/current-user';
-import { PageHeader } from '@/components/shell/AppShell';
 import { OrdersClient } from '@/components/orders/OrdersClient';
 
 export const dynamic = 'force-dynamic';
@@ -12,7 +11,6 @@ export default async function NewOrderPage() {
   if (access !== 'edit') redirect('/forbidden');
   return (
     <>
-      <PageHeader title="Захиалга" />
       <OrdersClient initialModal={{ kind: 'new' }} />
     </>
   );

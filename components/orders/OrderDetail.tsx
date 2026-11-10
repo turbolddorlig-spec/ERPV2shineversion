@@ -13,7 +13,7 @@ import { Thumb } from '@/components/products/ProductsClient';
 import { ZoomButton } from '@/components/ui/Lightbox';
 import { money, ubDateTime } from '@/lib/format';
 import { formatPhone } from '@/lib/phone';
-import { StatusChip, type OItem } from './OrdersClient';
+import { OperatorNote, StatusChip, type OItem } from './OrdersClient';
 import { OrderModal, type EditOrder } from './OrderForm';
 
 interface Detail extends OItem {
@@ -67,7 +67,7 @@ export function OrderDetail({ id }: { id: number }) {
             <p className="select-text"><span className="text-muted">Утас: </span><a href={`tel:${o.phone}`} className="font-bold">{formatPhone(o.phone)}</a>{o.extraPhone ? <> · <a href={`tel:${o.extraPhone}`} className="font-bold">{formatPhone(o.extraPhone)}</a></> : null}</p>
             <p><span className="text-muted">Хүргэх өдөр: </span><span className="font-bold">{o.deliveryDate}</span></p>
             <p className="select-text sm:col-span-2"><span className="text-muted">📍 </span>{o.fullAddress}</p>
-            {o.note ? <p className="sm:col-span-2"><span className="text-muted">Тэмдэглэл: </span>{o.note}</p> : null}
+            {o.note ? <div className="sm:col-span-2"><OperatorNote text={o.note} className="text-[13px]" /></div> : null}
             <p><span className="text-muted">Оператор: </span>{o.operatorName}{o.pageName ? ` · ${o.pageName}` : ''}</p>
             <p><span className="text-muted">Үүссэн: </span>{ubDateTime(o.createdAt)}{o.confirmedAt ? ` · баталгаажсан ${ubDateTime(o.confirmedAt)}` : ''}</p>
             {o.paymentDeadline && o.status === 'PENDING_PAYMENT' ? <p className="text-warn sm:col-span-2">Төлбөрийн хугацаа: {ubDateTime(o.paymentDeadline)} хүртэл (дараа нь автоматаар цуцлагдана)</p> : null}

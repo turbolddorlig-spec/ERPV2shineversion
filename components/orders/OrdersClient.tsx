@@ -25,13 +25,9 @@ export interface OItem {
   note: string | null; pageName: string | null; operatorName: string; deliveryDate: string; isToday: boolean; prepaid: boolean; createdAt: string;
   total: number; discount: number; deliveryFee: number; postponeCount: number; lines: OLine[]; cancelLabel: string | null; inHandover: boolean; version: number;
 }
-interface ListResp { items: OItem[]; hasMore: boolean; counts: Record<string, number>; can: { edit: boolean; markPaid: boolean; supervise: boolean; review: boolean } }
+interface ListResp { items: OItem[]; hasMore: boolean; matched: number | null; matchedCapped: boolean; counts: Record<string, number>; can: { edit: boolean; markPaid: boolean; supervise: boolean; review: boolean } }
 interface Hourly { cuts: number[]; rows: { rank: number; name: string; cum: number[]; total: number; me: boolean }[]; total: number }
 
-const TABS: { v: string; l: string }[] = [
-  { v: 'today', l: 'Өнөөдөр үүссэн' }, { v: 'PENDING_PAYMENT', l: 'Төлбөр хүлээж буй' }, { v: 'NEW', l: 'Шинэ' }, { v: 'SCHEDULED', l: 'Он сар өдөртэй' },
-  { v: 'ASSIGNED', l: 'Жолоочид оноосон' }, { v: 'OUT_FOR_DELIVERY', l: 'Хүргэлтэд гарсан' }, { v: 'DELIVERED', l: 'Хүргэсэн' }, { v: 'CANCELLED', l: 'Цуцлагдсан' }, { v: 'all', l: 'Бүгд' },
-];
 
 export function StatusChip({ o }: { o: Pick<OItem, 'displayStatus' | 'statusLabel' | 'deliveryDate' | 'isToday' | 'prepaid' | 'postponeCount' | 'noKhoroo'> }) {
   return (
@@ -105,6 +101,55 @@ function MoreMenu({ items }: { items: { href?: string; onClick?: () => void; lab
   );
 }
 
+interface Filters {
+  statuses: string[]; operatorId: string; pageId: string; date: 'all' | 'today' | 'custom' | 'range'; day: string; from: string; to: string;
+  prepaid: boolean; noKhoroo: boolean; postponed: boolean; todayDelivery: boolean;
+}
+const EMPTY_FILTERS: Filters = { statuses: [], operatorId: '', pageId: '', date: 'all', day: '', from: '', to: '', prepaid: false, noKhoroo: false, postponed: false, todayDelivery: false };
+const activeCount = (f: Filters, advOnly = false) => [!advOnly && f.statuses.length > 0, !!f.operatorId, !!f.pageId, f.date !== 'all', f.prepaid, f.noKhoroo, f.postponed, f.todayDelivery].filter(Boolean).length;
+const fsel = 'h-9 w-full rounded-lg border border-line bg-surface2/60 px-2.5 text-[13px] text-ink outline-none focus:border-accent disabled:opacity-50';
+/** Хуучин ERP-ийн «Төлөв» товч: олон төлөв чагтлан сонгоно */
+const STATUS_OPTIONS: { v: string; l: string; dot: string }[] = [
+  { v: 'NEW', l: 'Шинэ', dot: 'bg-accent' }, { v: 'PENDING_PAYMENT', l: 'Төлбөр хүлээж буй', dot: 'bg-warn' }, { v: 'SCHEDULED', l: 'Он сар өдөртэй', dot: 'bg-info' },
+  { v: 'ASSIGNED', l: 'Жолоочид оноосон', dot: 'bg-subtle' }, { v: 'OUT_FOR_DELIVERY', l: 'Хүргэлтэд гарсан', dot: 'bg-info' }, { v: 'DELIVERED', l: 'Хүргэсэн', dot: 'bg-ok' }, { v: 'CANCELLED', l: 'Цуцлагдсан', dot: 'bg-bad' },
+];
+function StatusPicker({ value, onChange, counts }: { value: string[]; onChange: (v: string[]) => void; counts?: Record<string, number> }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent | KeyboardEvent) => { if (e instanceof KeyboardEvent ? e.key === 'Escape' : !ref.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', close); document.addEventListener('keydown', close);
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', close); };
+  }, [open]);
+  return (
+    <div ref={ref} className="relative">
+      <button type="button" aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(!open)} className="relative inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2">
+        <Icon name="sliders" size={14} /><span className="hidden sm:inline">Төлөв</span>
+        {value.length ? <span className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full bg-accent text-[11px] text-on-accent">{value.length}</span> : null}
+      </button>
+      {open ? (
+        <div className="absolute left-0 top-full z-40 mt-1.5 w-60 rounded-xl border border-line bg-surface p-2 shadow-pop">
+          <p className="mb-1 border-b border-line px-1.5 pb-1.5 text-[12.5px] font-semibold text-muted">Төлөв сонгох</p>
+          {STATUS_OPTIONS.map((s) => (
+            <label key={s.v} className="flex cursor-pointer items-center gap-2.5 rounded-md px-1.5 py-1.5 text-[13px] hover:bg-surface2">
+              <input type="checkbox" className="h-4 w-4" checked={value.includes(s.v)} onChange={(e) => onChange(e.target.checked ? [...value, s.v] : value.filter((x) => x !== s.v))} />
+              <span className={clsx('h-2 w-2 rounded-full', s.dot)} />{s.l}
+              {counts?.[s.v] !== undefined ? <span className="ml-auto text-[11.5px] text-subtle">{counts[s.v]}</span> : null}
+            </label>
+          ))}
+          {value.length ? <button type="button" onClick={() => onChange([])} className="mt-1 w-full rounded-md py-1.5 text-[12px] font-semibold text-muted hover:bg-surface2">Бүгдийг арилгах</button> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Оператор санамж — хуучин ERP шиг хаягийн доор улаан шошго (бүх хуудсанд ялгарч харагдана) */
+export function OperatorNote({ text, className }: { text: string; className?: string }) {
+  return <div className={clsx('mt-1 inline-flex max-w-full items-start gap-1 rounded-md border border-bad/30 bg-bad-soft px-2 py-0.5 text-[11.5px] font-semibold text-bad-ink [overflow-wrap:anywhere]', className)}>{text}</div>;
+}
+
 /** Хуучин ERP шиг мөрийн төгсгөлийн жижиг icon товч (хулгана аваачихад нэр нь гарна) */
 function IconBtn({ icon, label, onClick, tone, disabled }: { icon: string; label: string; onClick?: () => void; tone: 'ok' | 'info' | 'warn' | 'muted'; disabled?: boolean }) {
   const c = { ok: 'text-ok-ink hover:bg-ok-soft', info: 'text-info hover:bg-info-soft', warn: 'text-warn hover:bg-warn-soft', muted: 'text-subtle hover:bg-surface2 hover:text-ink' }[tone];
@@ -123,9 +168,12 @@ const th = 'px-2.5 py-2 text-left text-[11px] font-semibold uppercase tracking-w
  * «+ Захиалга», «Дуудлагын бүртгэл», «Цагийн мэдээ» нь цонхоор (ард тал бүдгэрнэ) нээгдэнэ.
  */
 export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } | { kind: 'edit'; id: number } | { kind: 'calls' } } = {}) {
-  const [tab, setTab] = useState('today');
+  // Хуучин ERP шиг: анхдагч — бүх төлөв, бүх огноо, шинэ нь эхэндээ
   const [q, setQ] = useState('');
-  const [filters, setFilters] = useState({ prepaid: false, noKhoroo: false, postponed: false, todayDelivery: false });
+  const [f, setF] = useState<Filters>(EMPTY_FILTERS);
+  const [advOpen, setAdvOpen] = useState(false);
+  const [ops, setOps] = useState<{ id: string; name: string }[]>([]);
+  const [pages, setPages] = useState<{ id: number; name: string }[]>([]);
   const [page, setPage] = useState(1);
   const [data, setData] = useState<ListResp | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -151,38 +199,43 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
   useEffect(() => {
     const sp = new URLSearchParams(window.location.search);
     if (sp.get('done')) setFlash(sp.get('done'));
-    if (sp.get('tab')) setTab(sp.get('tab')!);
+    if (sp.get('tab')) setF((x) => ({ ...x, statuses: [sp.get('tab')!] }));
+    api<{ items: { id: string; name: string }[] }>('/api/calls/operators').then((r) => setOps(r.items)).catch(() => undefined);
+    api<{ pages: { id: number; name: string }[] }>('/api/orders/pages').then((r) => setPages(r.pages)).catch(() => undefined);
     if (initialModal?.kind === 'new') setOrderModal({ prefill: sp.get('phone') ? { phone: sp.get('phone')!, pageId: Number(sp.get('pageId')) || null, variantId: Number(sp.get('variantId')) || null, code: sp.get('code') } : undefined });
     if (initialModal?.kind === 'edit') openEdit(initialModal.id);
   }, [initialModal, openEdit]);
   const load = useCallback(async () => {
     const id = ++reqId.current;
-    const sp = new URLSearchParams({ page: String(page) });
-    if (q.trim()) sp.set('q', q.trim()); else sp.set('tab', tab);
-    if (q.trim() && tab !== 'today') sp.set('tab', tab);
-    for (const [k, v] of Object.entries(filters)) if (v) sp.set(k, '1');
+    const sp = new URLSearchParams({ page: String(page), statuses: f.statuses.join(',') });
+    if (q.trim()) sp.set('q', q.trim());
+    if (f.operatorId) sp.set('operatorId', f.operatorId);
+    if (f.pageId) sp.set('pageId', f.pageId);
+    const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+    if (f.date === 'today') { sp.set('from', today); sp.set('to', today); }
+    if (f.date === 'custom' && f.day) { sp.set('from', f.day); sp.set('to', f.day); }
+    if (f.date === 'range') { if (f.from) sp.set('from', f.from); if (f.to) sp.set('to', f.to); }
+    for (const k of ['prepaid', 'noKhoroo', 'postponed', 'todayDelivery'] as const) if (f[k]) sp.set(k, '1');
     try {
       const r = await api<ListResp>(`/api/orders?${sp}`);
       if (id === reqId.current) { setData(r); setError(null); }
     } catch (e) { if (id === reqId.current) setError(e instanceof ApiError ? e.message : 'Ачаалж чадсангүй'); }
-  }, [tab, q, filters, page]);
+  }, [f, q, page]);
   useEffect(() => { const t = setTimeout(load, q ? 300 : 0); return () => clearTimeout(t); }, [load, q]);
 
   // Цонх хаагдахад URL-ийг /orders болгоно (/orders/new, /orders/calls-оос орсон бол)
   const resetUrl = () => { if (window.location.pathname !== '/orders') window.history.replaceState(null, '', '/orders'); };
 
   const can = data?.can;
-  const chip = (on: boolean) => clsx('inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[12.5px] font-semibold', on ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface text-ink');
   return (
     <div className="full-bleed flex flex-col gap-3 text-[13px]">
       {flash ? <Notice tone="ok">{flash}</Notice> : null}
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="relative min-w-[220px] max-w-[420px] flex-1">
-          <span className="sr-only">Хайх</span>
-          <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-subtle"><Icon name="search" size={15} /></span>
-          <input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Утас, дугаар, хаяг, бараа, тэмдэглэл…" className="h-9 w-full rounded-lg border border-line bg-surface pl-8 pr-3 text-[13px] outline-none focus:border-accent" />
-        </label>
-        <div className="ml-auto flex items-center gap-2">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h1 className="text-[24px] font-extrabold tracking-tight">Захиалга</h1>
+          <p className="text-[12.5px] text-muted">Захиалгууд удирдах, хянах</p>
+        </div>
+        <div className="flex items-center gap-2">
           <MoreMenu items={[
             { onClick: () => setHourlyOpen(true), label: 'Цагийн мэдээ', icon: 'history' },
             { href: '/loans?from=orders', label: 'Барааны хүсэлт', icon: 'hand' },
@@ -192,22 +245,66 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
           ]} />
           <button type="button" onClick={() => setHourlyOpen(true)} className="hidden h-9 items-center gap-1.5 whitespace-nowrap rounded-lg border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2 md:inline-flex">⏱ Цагийн мэдээ</button>
           <button type="button" onClick={() => setCallsOpen(true)} className="inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-lg border border-warn/40 bg-warn-soft px-3 text-[13px] font-bold text-warn hover:brightness-95">📞 <span className="sm:hidden">Дуудлага</span><span className="hidden sm:inline">Дуудлагын бүртгэл</span></button>
-          {can?.edit ? <button type="button" onClick={() => setOrderModal({})} className="inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-lg bg-accent px-3.5 text-[13px] font-bold text-on-accent"><Icon name="plus" size={15} strokeWidth={2.4} />Захиалга</button> : null}
+          {can?.edit ? <button type="button" onClick={() => setOrderModal({})} className="inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-lg bg-accent px-3.5 text-[13px] font-bold text-on-accent"><Icon name="plus" size={15} strokeWidth={2.4} />Шинэ захиалга</button> : null}
         </div>
       </div>
 
-      <div className="-mx-4 overflow-x-auto px-4 md:mx-0 md:px-0">
-        <div className="flex w-max gap-1.5">
-          {TABS.map((t) => (
-            <button key={t.v} type="button" aria-pressed={tab === t.v} onClick={() => { setTab(t.v); setPage(1); }} className={chip(tab === t.v)}>
-              {t.l}{data?.counts[t.v] !== undefined ? <span className={clsx('rounded-full px-1.5 text-[11px]', tab === t.v ? 'bg-on-ink/20' : 'bg-surface2')}>{data.counts[t.v]}</span> : null}
-            </button>
-          ))}
-          <span className="mx-1 w-px self-stretch bg-line" />
-          {([['todayDelivery', `🔴 Өнөөдөр хүргэх${data?.counts.todayDelivery ? ` ${data.counts.todayDelivery}` : ''}`], ['prepaid', 'Мөнгө орсон'], ['noKhoroo', 'Хороо тодорхойгүй'], ['postponed', 'Хойшилсон']] as const).map(([k, l]) => (
-            <button key={k} type="button" aria-pressed={filters[k]} onClick={() => { setFilters((f) => ({ ...f, [k]: !f[k] })); setPage(1); }} className={chip(filters[k])}>{l}</button>
-          ))}
+      {/* Хуучин шиг жижиг статистик */}
+      <div className="flex flex-wrap items-center gap-2 text-[12px]">
+        {data?.matched !== null && data?.matched !== undefined ? <span className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface2 px-2.5 py-1"><Icon name="search" size={13} /><span className="text-muted">Үр дүн:</span><b>{data.matchedCapped ? '10,000+' : data.matched.toLocaleString('en-US')}</b></span> : null}
+        <span className="inline-flex items-center gap-1.5 rounded-lg border border-info/20 bg-info-soft px-2.5 py-1"><span className="text-muted">🛒 Өнөөдөр:</span><b className="text-info">{data?.counts.today ?? '…'}</b></span>
+        <span className="inline-flex items-center gap-1.5 rounded-lg border border-warn/20 bg-warn-soft px-2.5 py-1"><span className="text-muted">📅 Маргааш:</span><b className="text-warn">{data?.counts.postponed ?? 0}</b></span>
+      </div>
+
+      {/* Шүүлтүүр — хуучин ERP-ийн бүтэц */}
+      <div className="rounded-xl border border-line bg-surface">
+        <div className="flex flex-wrap gap-2 p-3">
+          <label className="relative min-w-[200px] flex-1">
+            <span className="sr-only">Хайх</span>
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-subtle"><Icon name="search" size={15} /></span>
+            <input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} onKeyDown={(e) => { if (e.key === 'Enter') load(); }}
+              placeholder="Утас, хаяг, барааны нэр/код хайх..." className="h-9 w-full rounded-lg border border-line bg-surface2/60 pl-9 pr-3 text-[13px] outline-none focus:border-accent focus:bg-surface" />
+          </label>
+          <StatusPicker value={f.statuses} counts={data?.counts} onChange={(statuses) => { setF((x) => ({ ...x, statuses })); setPage(1); }} />
+          <button type="button" onClick={() => load()} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-ink px-3.5 text-[13px] font-semibold text-on-ink"><Icon name="search" size={14} /><span className="hidden sm:inline">Хайх</span></button>
+          {activeCount(f) || q ? <button type="button" onClick={() => { setF(EMPTY_FILTERS); setQ(''); setPage(1); }} className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-[13px] font-semibold text-muted hover:text-ink"><Icon name="close" size={14} /><span className="hidden sm:inline">Цэвэрлэх</span></button> : null}
         </div>
+        <button type="button" aria-expanded={advOpen} onClick={() => setAdvOpen(!advOpen)} className="flex w-full items-center gap-1.5 border-t border-line px-3 py-2 text-[12.5px] font-semibold text-muted hover:bg-surface2/50">
+          <Icon name={advOpen ? 'up' : 'down'} size={13} />Нэмэлт шүүлтүүр{activeCount(f, true) ? <span className="rounded-full bg-accent px-1.5 text-[11px] text-on-accent">{activeCount(f, true)}</span> : null}
+        </button>
+        {advOpen ? (
+          <div className="border-t border-line p-3">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+              <select aria-label="Оператор" value={f.operatorId} onChange={(e) => { setF((x) => ({ ...x, operatorId: e.target.value })); setPage(1); }} className={fsel}>
+                <option value="">Бүх оператор</option>
+                {ops.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </select>
+              <select aria-label="Хуудас" value={f.pageId} onChange={(e) => { setF((x) => ({ ...x, pageId: e.target.value })); setPage(1); }} className={fsel}>
+                <option value="">Бүх хуудас</option>
+                {pages.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+              <select aria-label="Жолооч" disabled className={fsel} title="Модуль 4-т (падаан) нэмэгдэнэ"><option>Бүх жолооч</option></select>
+              <select aria-label="Огноо" value={f.date} onChange={(e) => { setF((x) => ({ ...x, date: e.target.value as Filters['date'] })); setPage(1); }} className={fsel}>
+                <option value="all">Бүх огноо</option>
+                <option value="today">Өнөөдөр</option>
+                <option value="custom">Огноо сонгох</option>
+                <option value="range">Хугацаа сонгох</option>
+              </select>
+              {f.date === 'custom' ? <input type="date" aria-label="Огноо" value={f.day} onChange={(e) => { setF((x) => ({ ...x, day: e.target.value })); setPage(1); }} className={fsel} /> : null}
+              {f.date === 'range' ? <>
+                <input type="date" aria-label="Эхлэх" value={f.from} onChange={(e) => { setF((x) => ({ ...x, from: e.target.value })); setPage(1); }} className={fsel} />
+                <input type="date" aria-label="Дуусах" value={f.to} onChange={(e) => { setF((x) => ({ ...x, to: e.target.value })); setPage(1); }} className={fsel} />
+              </> : null}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line pt-3 text-[13px]">
+              {([['postponed', 'Маргааш товчоор үүссэн', 'text-warn'], ['prepaid', 'Мөнгө орсон', 'text-ok-ink'], ['noKhoroo', 'Хороо тодорхойгүй', 'text-muted'], ['todayDelivery', `🔴 Өнөөдөр хүргэх${data?.counts.todayDelivery ? ` (${data.counts.todayDelivery})` : ''}`, 'text-bad-ink']] as const).map(([k, l, c]) => (
+                <label key={k} className={clsx('flex cursor-pointer items-center gap-2', c)}>
+                  <input type="checkbox" className="h-4 w-4" checked={f[k]} onChange={(e) => { setF((x) => ({ ...x, [k]: e.target.checked })); setPage(1); }} />{l}
+                </label>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
       {error ? <Notice>{error}</Notice> : null}
 
@@ -229,7 +326,7 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
                       {o.lines.length > 3 ? <span className="text-[11.5px] text-subtle">+{o.lines.length - 3} бараа</span> : null}
                     </div>
                   </td>
-                  <td className="max-w-[280px] select-text px-2.5 py-2"><div className="line-clamp-2 text-[12.5px]">{o.fullAddress}</div>{o.note ? <div className="line-clamp-1 text-[11.5px] text-muted">📝 {o.note}</div> : null}</td>
+                  <td className="max-w-[280px] select-text px-2.5 py-2"><div className="line-clamp-2 text-[12.5px]">{o.fullAddress}</div>{o.note ? <OperatorNote text={o.note} /> : null}</td>
                   <td className="px-2.5 py-2"><StatusChip o={o} /></td>
                   <td className="px-2.5 py-2 text-right font-bold">{money(o.total)}</td>
                   <td className="px-2.5 py-2"><div className="line-clamp-1">{o.operatorName}</div>{o.pageName ? <div className="line-clamp-1 text-[11.5px] text-subtle">{o.pageName}</div> : null}</td>

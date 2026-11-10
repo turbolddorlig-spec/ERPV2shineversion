@@ -44,6 +44,8 @@ export type Tab = 'today' | 'PENDING_PAYMENT' | 'SCHEDULED' | 'NEW' | 'ASSIGNED'
 export interface ListParams {
   tab?: string; q?: string; from?: string; to?: string; operatorId?: string; pageId?: number; province?: string; district?: string;
   prepaid?: boolean; noKhoroo?: boolean; postponed?: boolean; todayDelivery?: boolean; page?: number;
+  /** Хуучин ERP шиг «Төлөв» олон сонголт (таслалаар): PENDING_PAYMENT, NEW, SCHEDULED, ASSIGNED, OUT_FOR_DELIVERY, DELIVERED, CANCELLED */
+  statuses?: string;
 }
 
 /** Хайлт (#43): утас (хэсэг), дугаар, хаяг, тэмдэглэл, барааны нэр/код — trigram индексээр, 1 сая захиалгад хурдан */
@@ -82,7 +84,17 @@ export async function listOrders(actor: UserActor, p: ListParams) {
   const today = ubDay();
   const tomorrow = ubDay(new Date(), 1);
   const and: Prisma.OrderWhereInput[] = [];
-  const tab = (p.tab ?? (p.q ? 'all' : 'today')) as Tab;
+  const tab = (p.statuses !== undefined ? 'all' : p.tab ?? (p.q ? 'all' : 'today')) as Tab;
+  if (p.statuses) {
+    const or: Prisma.OrderWhereInput[] = [];
+    for (const st of [...new Set(p.statuses.split(',').map((x) => x.trim()).filter(Boolean))]) {
+      if (st === 'SCHEDULED') or.push({ status: 'NEW', deliveryDate: { gt: dateOnly(tomorrow) } });
+      else if (st === 'NEW') or.push({ status: 'NEW', deliveryDate: { lte: dateOnly(tomorrow) } });
+      else if (['PENDING_PAYMENT', 'ASSIGNED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED'].includes(st)) or.push({ status: st as OrderStatus });
+      else throw badRequest('Төлөв буруу');
+    }
+    if (or.length) and.push({ OR: or });
+  }
   switch (tab) {
     case 'today': and.push({ createdAt: { gte: ubDayStart(today) } }); break;
     case 'SCHEDULED': and.push({ status: 'NEW', deliveryDate: { gt: dateOnly(tomorrow) } }); break;
@@ -94,7 +106,7 @@ export async function listOrders(actor: UserActor, p: ListParams) {
   }
   if (p.from) { if (!isYmd(p.from)) throw badRequest('Огноо буруу'); and.push({ createdAt: { gte: ubDayStart(p.from) } }); }
   if (p.to) { if (!isYmd(p.to)) throw badRequest('Огноо буруу'); and.push({ createdAt: { lt: new Date(ubDayStart(p.to).getTime() + 86_400_000) } }); }
-  if (p.operatorId) and.push({ operatorId: p.operatorId });
+  if (p.operatorId) { if (!/^[0-9a-f-]{36}$/i.test(p.operatorId)) throw badRequest('Оператор буруу'); and.push({ operatorId: p.operatorId }); }
   if (p.pageId) and.push({ pageId: p.pageId });
   if (p.province) and.push({ province: p.province });
   if (p.district) and.push({ district: p.district });
@@ -106,18 +118,25 @@ export async function listOrders(actor: UserActor, p: ListParams) {
   if (ids) and.push({ id: { in: ids.length ? ids : [-1] } });
   const where: Prisma.OrderWhereInput = and.length ? { AND: and } : {};
   const page = Math.max(1, Math.min(2000, Math.floor(p.page ?? 1)));
-  const rows = await db.order.findMany({ where, orderBy: { id: 'desc' }, skip: (page - 1) * ORDER_PAGE_SIZE, take: ORDER_PAGE_SIZE + 1, include: { lines: true } });
+  // Огноогоор шүүсэн бол (createdAt) индексээр, бусад үед дугаараар — хоёулаа «шинэ нь эхэндээ»
+  const orderBy: Prisma.OrderOrderByWithRelationInput[] = p.from || p.to ? [{ createdAt: 'desc' }, { id: 'desc' }] : [{ id: 'desc' }];
+  const rows = await db.order.findMany({ where, orderBy, skip: (page - 1) * ORDER_PAGE_SIZE, take: ORDER_PAGE_SIZE + 1, include: { lines: true } });
   const hasMore = rows.length > ORDER_PAGE_SIZE;
   const list = rows.slice(0, ORDER_PAGE_SIZE);
-  const pn = await pageNames(list.map((o) => o.pageId));
+  const [pn, matched] = await Promise.all([
+    pageNames(list.map((o) => o.pageId)),
+    // «Үр дүн: N» (хуучин шиг) — 10,000-аас олон бол «10,000+» (1 сая мөрийг тоолж удаашруулахгүй)
+    and.length ? db.order.count({ where, take: RESULT_CAP + 1 }) : Promise.resolve(null),
+  ]);
   return {
-    tab, page, pageSize: ORDER_PAGE_SIZE, hasMore,
+    tab, page, pageSize: ORDER_PAGE_SIZE, hasMore, matched, matchedCapped: matched !== null && matched > RESULT_CAP,
     counts: await tabCounts(),
     can: { edit: canEditOrders(actor.roles), markPaid: canMarkPaid(actor.roles), supervise: canSuperviseOperators(actor.roles), review: canReviewDiscounts(actor.roles) },
     items: list.map((o) => serializeOrder(o, pn.get(o.pageId))),
   };
 }
 
+const RESULT_CAP = 10_000;
 let countsCache: { at: number; data: Record<string, number> } | null = null;
 /** Таб бүрийн тоо (идэвхтэй төлвүүд + өнөөдөр) — индексээр, 5 сек санана */
 export async function tabCounts(): Promise<Record<string, number>> {
@@ -130,6 +149,7 @@ export async function tabCounts(): Promise<Record<string, number>> {
     UNION ALL SELECT 'SCHEDULED', count(*)::int FROM "Order" WHERE status = 'NEW' AND "deliveryDate" > ${dateOnly(tomorrow)}
     UNION ALL SELECT 'ASSIGNED', count(*)::int FROM "Order" WHERE status = 'ASSIGNED'
     UNION ALL SELECT 'OUT_FOR_DELIVERY', count(*)::int FROM "Order" WHERE status = 'OUT_FOR_DELIVERY'
+    UNION ALL SELECT 'postponed', count(*)::int FROM "Order" WHERE "postponeCount" > 0 AND status IN ('NEW','ASSIGNED')
     UNION ALL SELECT 'todayDelivery', count(*)::int FROM "Order" WHERE status IN ('NEW','ASSIGNED') AND "deliveryDate" = ${dateOnly(today)}`;
   const data = Object.fromEntries(rows.map((r) => [r.k, r.n]));
   countsCache = { at: Date.now(), data };
