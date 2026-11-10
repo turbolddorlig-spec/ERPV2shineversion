@@ -15,7 +15,7 @@ import { CATEGORY_DOT, money } from '@/lib/format';
 interface Item {
   id: number; code: string; name: string; price: number; costPrice?: number | null; status: 'ACTIVE' | 'DISCONTINUED' | 'ARCHIVED';
   statusLabel: string; category: { id: number; name: string; color: string } | null; season: { id: number; name: string } | null;
-  variantCount: number; hasVariants: boolean; thumb: string | null; variants: Variant[];
+  variantCount: number; hasVariants: boolean; attrs: string | null; thumb: string | null; variants: Variant[];
 }
 interface Variant { id: number; code: string; color: string; size: string; label: string; isActive: boolean; price: number; priceOverride: boolean; thumb: string | null }
 interface ListResp { items: Item[]; total: number; page: number; pageSize: number }
@@ -165,7 +165,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
                 <th scope="col" className="border-b border-line px-3 py-2.5 font-bold">Ангилал</th>
                 <th scope="col" className="border-b border-line px-3 py-2.5 text-right font-bold">Үнэ</th>
                 {showCost ? <th scope="col" className="border-b border-line px-3 py-2.5 text-right font-bold">Өртөг</th> : null}
-                <th scope="col" className="border-b border-line px-3 py-2.5 font-bold">Хувилбар</th>
+                <th scope="col" className="border-b border-line px-3 py-2.5 font-bold">Өнгө / хэмжээ</th>
                 <th scope="col" className="border-b border-line px-3 py-2.5 font-bold">Төлөв</th>
                 <th scope="col" className="border-b border-line px-3 py-2.5"><span className="sr-only">Үйлдэл</span></th>
               </tr>
@@ -192,7 +192,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
                     <button type="button" aria-expanded={!collapsed.has(p.id)} onClick={() => toggleOpen(p.id)} className="inline-flex items-center gap-1 rounded-lg px-1.5 py-1 font-semibold text-ink hover:bg-surface2">
                       {p.variantCount} хувилбар <Icon name={collapsed.has(p.id) ? 'right' : 'down'} size={14} />
                     </button>
-                  ) : 'Үндсэн'}</td>
+                  ) : p.attrs ? <span className="font-semibold text-ink">{p.attrs}</span> : 'Үндсэн'}</td>
                   <td className="border-b border-line px-3 py-2"><StatusBadge status={p.status} label={p.statusLabel} /></td>
                   <td className="border-b border-line px-3 py-2 text-right"><OpenBtn id={p.id} code={p.code} canEdit={canEdit} /></td>
                 </tr>
@@ -230,7 +230,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
               <Thumb src={p.thumb} alt={p.name} size={56} />
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="truncate text-[15px] font-bold">{p.name}</span>
-                <span className="text-[12.5px] text-subtle">{p.code} · {p.hasVariants ? `${p.variantCount} хувилбар` : 'Үндсэн'}</span>
+                <span className="text-[12.5px] text-subtle">{p.code} · {p.hasVariants ? `${p.variantCount} хувилбар` : p.attrs ?? 'Үндсэн'}</span>
                 <span className="flex items-center gap-2"><span className="text-[14.5px] font-extrabold">{money(p.price)}</span><StatusBadge status={p.status} label={p.statusLabel} /></span>
               </span>
             </div>

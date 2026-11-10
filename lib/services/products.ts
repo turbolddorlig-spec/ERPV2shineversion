@@ -160,11 +160,13 @@ export async function listProducts(actor: UserActor, params: ListParams) {
     items: rows.map((r) => ({
       id: r.id, code: r.code, name: r.name, price: r.price, ...(showCost ? { costPrice: r.costPrice } : {}),
       status: r.status, statusLabel: STATUS_LABEL[r.status], category: r.category, season: r.season,
-      variantCount: r.variants.filter((v) => v.isActive).length, hasVariants: r.colors.length + r.sizes.length > 0,
+      // Ганц өнгө/хэмжээтэй бол энгийн бараа: доор нь хувилбарын мөр гаргахгүй, өнгө/хэмжээг өөр дээр нь харуулна (#34)
+      variantCount: r.variants.filter((v) => v.isActive).length, hasVariants: r.variants.length > 1,
+      attrs: r.variants.length === 1 && r.colors.length + r.sizes.length > 0 ? variantLabel(r.variants[0]!) : null,
       thumb: (() => { const m = r.images.find((i) => i.isMain) ?? r.images[0]; return m ? mediaUrl(m.fileKey, 'sm') : null; })(),
       updatedAt: r.updatedAt,
       // Жагсаалтад бараа бүрийн доор догол мөрөөр харуулах хувилбарууд (#32)
-      variants: r.colors.length + r.sizes.length > 0 ? r.variants.map((v) => {
+      variants: r.variants.length > 1 ? r.variants.map((v) => {
         const img = v.color ? r.images.find((i) => i.color === v.color) : undefined;
         return {
           id: v.id, code: v.code, color: v.color, size: v.size, label: variantLabel(v), isActive: v.isActive,
@@ -500,6 +502,8 @@ export async function searchVariants(actor: UserActor, qInput: string, limit = 2
     return {
       variantId: v.id, variantCode: v.code, productId: v.product.id, productCode: v.product.code, name: v.product.name,
       color: v.color, size: v.size, label: variantLabel(v), price: v.priceOverride ?? v.product.price,
+      // Захиалгад харагдах нэг мөр: «Жигнүүрийн цаас · Улаан · 38см» (#34)
+      fullName: v.color || v.size ? `${v.product.name} · ${variantLabel(v)}` : v.product.name,
       status: v.product.status, discontinued: v.product.status === 'DISCONTINUED',
       thumb: img ? mediaUrl(img.fileKey, 'sm') : null,
     };

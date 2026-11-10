@@ -212,6 +212,22 @@ describe('хайлт (Модуль 3-т)', () => {
     expect(JSON.stringify(r)).not.toMatch(/cost|100000/);
     await err(P.searchVariants(await actor(['DRIVER']), 'пүүз'), 403);
   });
+  it('ганц өнгө, ганц хэмжээтэй бараа энгийн бараа шиг нэг мөр (#34)', async () => {
+    const mk = await actor(['MARKETING']);
+    await P.createProduct(mk, { code: 'JC1', name: 'Жигнүүрийн цаас', price: 5000, colors: ['Улаан'], sizes: ['38см'] });
+    await P.createProduct(mk, { code: 'JC2', name: 'Жигнүүрийн цаас олон', price: 5000, sizes: ['28см', '32см'] });
+    await P.createProduct(mk, { code: 'JC3', name: 'Энгийн', price: 5000 });
+    const items = (await P.listProducts(mk, {})).items;
+    const one = items.find((i) => i.code === 'JC1')!;
+    expect(one).toMatchObject({ hasVariants: false, attrs: 'Улаан · 38см', variants: [] });
+    const many = items.find((i) => i.code === 'JC2')!;
+    expect(many.hasVariants).toBe(true);
+    expect(many.variants.map((v) => v.label)).toEqual(['28см', '32см']);
+    expect(items.find((i) => i.code === 'JC3')).toMatchObject({ hasVariants: false, attrs: null, variants: [] });
+    const r = await P.searchVariants(await actor(['OPERATOR']), 'Жигнүүр');
+    expect(r.find((x) => x.productCode === 'JC1')!.fullName).toBe('Жигнүүрийн цаас · Улаан · 38см');
+    expect(r.filter((x) => x.productCode === 'JC1')).toHaveLength(1);
+  });
 });
 
 describe('ангилал, улирал', () => {

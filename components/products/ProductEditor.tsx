@@ -317,7 +317,7 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
           <section className="flex flex-col gap-4 rounded-[18px] border border-line bg-surface p-5 shadow-card">
             <div>
               <h2 className="text-[16px] font-extrabold">Хувилбар (өнгө / хэмжээ)</h2>
-              <p className="text-[13px] text-muted">Хувилбар бүр тусдаа үлдэгдэлтэй. Өнгө, хэмжээгүй бол нэг «Үндсэн» хувилбартай.</p>
+              <p className="text-[13px] text-muted">Ганц өнгө, ганц хэмжээтэй бол (жишээ: Улаан, 38см) энгийн бараа хэвээр — жагсаалт, захиалгад нэг мөр болж харагдана. Олон өнгө эсвэл олон хэмжээтэй бол хувилбар бүр тусдаа үнэ, үлдэгдэлтэй.</p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <ChipsInput id="p-colors" label="Өнгө" values={colors} onChange={setColors} placeholder="Хар, Цагаан…" disabled={ro} />
