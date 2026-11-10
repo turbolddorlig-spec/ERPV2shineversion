@@ -232,7 +232,7 @@ async function main() {
       check(`${roles.join('+')} ${path}`, allowed ? r.status === 200 : r.status === 307, `${r.status} ${r.location}`);
     }
     // API: орлого оруулах эрх (зөвхөн СА, А, Агуулах)
-    const rc = await req('/api/stock/receipts', { cookie: l.cookie, method: 'POST', body: { warehouseId: 1, lines: [{ variantId: 1, qty: 1 }], idemKey: `e2e-${phone}-x1` } });
+    const rc = await req('/api/stock/receipts', { cookie: l.cookie, method: 'POST', body: { warehouseId: 1, lines: [{ variantId: 1, qty: 1 }], idemKey: `e2e-${phone}-x1-${Date.now()}` } });
     check(`${roles.join('+')} орлого API`, operate(roles) ? rc.status === 201 : rc.status === 403, `${rc.status} ${rc.text.slice(0, 80)}`);
     const sl = await req('/api/stock?page=1', { cookie: l.cookie });
     check(`${roles.join('+')} үлдэгдэл API`, accessTo(roles, 'warehouse') !== 'none' ? sl.status === 200 : sl.status === 403, String(sl.status));
@@ -281,6 +281,71 @@ async function main() {
   check('тулгалт: журнал = үлдэгдэл', rec.ok === true, JSON.stringify(rec).slice(0, 120));
   const recWh = await req('/api/stock/reconcile?fresh=1', { cookie: whU.cookie });
   check('тулгалтыг шууд ажиллуулах — зөвхөн админ', recWh.status === 403, String(recWh.status));
+
+  // ───────── Модуль 3: Захиалга ─────────
+  const ordPages = ['/orders', '/orders/new', '/orders/calls', '/orders/blacklist', '/orders/review', '/orders/pages', '/settings', '/reports'];
+  const expectOrd: Record<string, (r: Role[]) => boolean> = {
+    '/orders/new': (r) => accessTo(r, 'orders') === 'edit',
+    '/orders/review': (r) => r.includes('SUPER_ADMIN'),
+    '/orders/pages': (r) => ['SUPER_ADMIN', 'ADMIN', 'OPERATOR_LEAD'].some((x) => r.includes(x as Role)),
+    '/settings': (r) => accessTo(r, 'settings') !== 'none',
+    '/reports': (r) => accessTo(r, 'reports') !== 'none',
+  };
+  for (const [roles, phone] of ROLE_PHONE) {
+    const l = await loginAs(phone);
+    if (!l.cookie) continue;
+    for (const path of ordPages) {
+      const r = await req(path, { cookie: l.cookie });
+      const allowed = (expectOrd[path] ?? ((x: Role[]) => accessTo(x, 'orders') !== 'none'))(roles);
+      check(`${roles.join('+')} ${path}`, allowed ? r.status === 200 : r.status === 307, `${r.status} ${r.location}`);
+    }
+    const lo = await req('/api/orders?tab=today', { cookie: l.cookie });
+    check(`${roles.join('+')} захиалгын API`, accessTo(roles, 'orders') !== 'none' ? lo.status === 200 : lo.status === 403, String(lo.status));
+    const rp = await req('/api/reports/pages', { cookie: l.cookie });
+    check(`${roles.join('+')} пэйжийн тайлан (зөвхөн СА, маркетинг)`, accessTo(roles, 'reports') !== 'none' ? rp.status === 200 : rp.status === 403, String(rp.status));
+    if (rp.status === 200) check('пэйжийн тайланд мөнгөн дүн байхгүй', !/total"?:\s*\{[^}]*(amount|money|sum)/.test(rp.text) && !rp.text.includes('"amount"'));
+  }
+  const opA = await loginAs('80000006');
+  const opB = await loginAs('80000007');
+  const pg = JSON.parse((await req('/api/orders/pages', { cookie: opA.cookie })).text);
+  const hits = JSON.parse((await req('/api/products/search?q=00&limit=40', { cookie: opA.cookie })).text).items as { variantId: number; price: number; available: number }[];
+  const v = hits.find((h) => h.available >= 3)!;
+  const ph = '9' + String(Date.now()).slice(-7);
+  const body = (extra: Record<string, unknown> = {}) => ({ phone: ph, province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 13, addressDetail: 'E2E 45-р байр, 56 тоот', pageId: pg.pages[0].id, lines: [{ variantId: v.variantId, qty: 1 }], ...extra });
+  const avail = async () => JSON.parse((await req(`/api/products/search?q=00&limit=40`, { cookie: opA.cookie })).text).items.find((h: { variantId: number }) => h.variantId === v.variantId).available as number;
+  const a0 = await avail();
+  const ik = `e2e-ord-${Date.now()}`;
+  const dbl = await Promise.all([1, 2, 3].map(() => req('/api/orders', { cookie: opA.cookie, method: 'POST', body: body({ idemKey: ik }) })));
+  const ids = new Set(dbl.map((x) => JSON.parse(x.text).order?.id));
+  check('3 удаа зэрэг дарахад нэг л захиалга', ids.size === 1 && dbl.every((x) => x.status === 201 || x.status === 200), dbl.map((x) => x.status).join(','));
+  const oid = [...ids][0];
+  check('захиалга нөөц үүсгэсэн (боломжтой −1)', (await avail()) === a0 - 1);
+  const dup = await req('/api/orders', { cookie: opB.cookie, method: 'POST', body: body({ idemKey: `${ik}-b` }) });
+  check('өөр оператор ижил утсаар → 409 duplicate_order', dup.status === 409 && dup.text.includes('duplicate_order'), dup.text.slice(0, 100));
+  const upO = await req('/api/orders', { cookie: opA.cookie, method: 'POST', body: body({ phone: '8' + ph.slice(1), idemKey: `${ik}-c`, lines: [{ variantId: v.variantId, qty: 1, unitPrice: v.price + 1000 }] }) });
+  check('үнэ нэмэх → 400 price_increase', upO.status === 400 && upO.text.includes('price_increase'), upO.text.slice(0, 100));
+  const lowNo = await req('/api/orders', { cookie: opA.cookie, method: 'POST', body: body({ phone: '8' + ph.slice(1), idemKey: `${ik}-d`, lines: [{ variantId: v.variantId, qty: 1, unitPrice: v.price - 1000 }] }) });
+  check('шалтгаангүй хямдруулах → 400 discount_reason', lowNo.status === 400 && lowNo.text.includes('discount_reason'), lowNo.text.slice(0, 100));
+  const badPh = await req('/api/orders', { cookie: opA.cookie, method: 'POST', body: body({ phone: '1234', idemKey: `${ik}-e` }) });
+  check('буруу утас → 400', badPh.status === 400, String(badPh.status));
+  const mkO = await req('/api/orders', { cookie: mk.cookie, method: 'POST', body: body({ phone: '7' + ph.slice(1), idemKey: `${ik}-f` }) });
+  check('маркетинг захиалга үүсгэхгүй → 403', mkO.status === 403, String(mkO.status));
+  const det = JSON.parse((await req(`/api/orders/${oid}`, { cookie: opB.cookie })).text).order;
+  const staleO = await req(`/api/orders/${oid}`, { cookie: opB.cookie, method: 'PATCH', body: { version: det.version - 1, note: 'хуучин хувилбар' } });
+  check('хуучин хувилбараар засах → 409 stale', staleO.status === 409, staleO.text.slice(0, 80));
+  const cnNo = await req(`/api/orders/${oid}/cancel`, { cookie: opB.cookie, method: 'POST', body: { reason: 'CUSTOMER_CANCELLED', note: '', version: det.version } });
+  check('тайлбаргүй цуцлах → 400', cnNo.status === 400, String(cnNo.status));
+  const cn = await Promise.all([1, 2].map(() => req(`/api/orders/${oid}/cancel`, { cookie: opB.cookie, method: 'POST', body: { reason: 'CUSTOMER_CANCELLED', note: 'E2E үйлчлүүлэгч болилоо', version: det.version } })));
+  check('зэрэг 2 цуцлалт → алдаагүй, нэг л удаа', cn.some((x) => x.status === 200) && cn.every((x) => x.status === 200 || x.status === 409), cn.map((x) => x.status).join(','));
+  check('цуцалсны дараа нөөц суллагдсан', (await avail()) === a0);
+  const paidOp = await req(`/api/orders/${oid}/paid`, { cookie: opA.cookie, method: 'POST', body: {} });
+  check('оператор «Мөнгө орсон» дарахгүй → 403', paidOp.status === 403, String(paidOp.status));
+  const st = await req('/api/settings/orders', { cookie: adm.cookie });
+  check('Meta токен API хариунд гарахгүй', st.status === 200 && !/"token"\s*:/.test(st.text), st.text.slice(0, 80));
+  const stOp = await req('/api/settings/orders', { cookie: opA.cookie, method: 'POST', body: { kind: 'fees', feeUB: 0 } });
+  check('оператор тохиргоо өөрчлөхгүй → 403', stOp.status === 403, String(stOp.status));
+  const cl = await req('/api/calls', { cookie: opA.cookie, method: 'POST', body: { phones: `${ph} 12` } });
+  check('дуудлагад буруу дугаар → 400', cl.status === 400, String(cl.status));
 
   console.log(`\nE2E: ${pass} амжилттай, ${fails.length} алдаатай`);
   if (fails.length) { console.log(fails.map((f) => '  ✗ ' + f).join('\n')); process.exit(1); }
