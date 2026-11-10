@@ -16,9 +16,9 @@ import { CATEGORY_DOT, money } from '@/lib/format';
 interface Item {
   id: number; code: string; name: string; price: number; costPrice?: number | null; status: 'ACTIVE' | 'DISCONTINUED' | 'ARCHIVED';
   statusLabel: string; category: { id: number; name: string; color: string } | null; season: { id: number; name: string } | null;
-  variantCount: number; hasVariants: boolean; attrs: string | null; thumb: string | null; variants: Variant[];
+  variantCount: number; hasVariants: boolean; attrs: string | null; thumb: string | null; variants: Variant[]; stock: { total: number; available: number };
 }
-interface Variant { id: number; code: string; color: string; size: string; label: string; isActive: boolean; price: number; priceOverride: boolean; thumb: string | null }
+interface Variant { id: number; code: string; color: string; size: string; label: string; isActive: boolean; price: number; priceOverride: boolean; thumb: string | null; stock: { total: number; available: number } }
 interface ListResp { items: Item[]; total: number; page: number; pageSize: number }
 interface Opt { id: number; name: string; color: string; isActive: boolean }
 
@@ -38,6 +38,12 @@ export function Thumb({ src, alt, size = 44, zoom }: { src: string | null; alt: 
   return src
     ? <img src={src} alt={alt} loading="lazy" width={size} height={size} className="shrink-0 rounded-[10px] bg-surface2 object-cover" style={{ width: size, height: size }} />
     : <span aria-hidden="true" className="grid shrink-0 place-items-center rounded-[10px] bg-surface2 text-subtle" style={{ width: size, height: size }}><Icon name="image" size={Math.round(size / 2.4)} /></span>;
+}
+
+/** Үлдэгдэл: агуулахуудын нийт; захиалгад нөөцлөгдсөн бол «боломжтой»-г хамт */
+function StockCell({ s }: { s: { total: number; available: number } }) {
+  if (!s.total && !s.available) return <span className="text-subtle">0</span>;
+  return <span className={clsx('font-bold', s.available <= 0 ? 'text-bad-ink' : 'text-ink')} title={`Агуулахад ${s.total}, захиалах боломжтой ${s.available}`}>{s.total}{s.available !== s.total ? <span className="font-normal text-muted"> ({s.available})</span> : null}</span>;
 }
 
 /** Барааг нээх цорын ганц товч: засах эрхтэй бол «Засах», үгүй бол «Харах» */
@@ -171,6 +177,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
                 <th scope="col" className="border-b border-line px-3 py-2.5 text-right font-bold">Үнэ</th>
                 {showCost ? <th scope="col" className="border-b border-line px-3 py-2.5 text-right font-bold">Өртөг</th> : null}
                 <th scope="col" className="border-b border-line px-3 py-2.5 font-bold">Өнгө / хэмжээ</th>
+                <th scope="col" className="border-b border-line px-3 py-2.5 text-right font-bold">Үлдэгдэл</th>
                 <th scope="col" className="border-b border-line px-3 py-2.5 font-bold">Төлөв</th>
                 <th scope="col" className="border-b border-line px-3 py-2.5"><span className="sr-only">Үйлдэл</span></th>
               </tr>
@@ -198,6 +205,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
                       {p.variantCount} хувилбар <Icon name={collapsed.has(p.id) ? 'right' : 'down'} size={14} />
                     </button>
                   ) : p.attrs ? <span className="font-semibold text-ink">{p.attrs}</span> : 'Үндсэн'}</td>
+                  <td className="border-b border-line px-3 py-2 text-right"><StockCell s={p.stock} /></td>
                   <td className="border-b border-line px-3 py-2"><StatusBadge status={p.status} label={p.statusLabel} /></td>
                   <td className="border-b border-line px-3 py-2 text-right"><OpenBtn id={p.id} code={p.code} canEdit={canEdit} /></td>
                 </tr>
@@ -215,6 +223,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
                     <td className={clsx('border-b border-line/60 px-3 py-1.5 text-right font-semibold', v.priceOverride && 'text-accent-ink')}>{money(v.price)}</td>
                     {showCost ? <td className="border-b border-line/60 px-3 py-1.5 text-right text-subtle">{money(p.costPrice)}</td> : null}
                     <td className="border-b border-line/60 px-3 py-1.5 text-[12px] text-subtle">{v.priceOverride ? 'Тусдаа үнэ' : ''}</td>
+                    <td className="border-b border-line/60 px-3 py-1.5 text-right"><StockCell s={v.stock} /></td>
                     <td className="border-b border-line/60 px-3 py-1.5">{v.isActive ? null : <Badge tone="neutral">Идэвхгүй</Badge>}</td>
                     <td className="border-b border-line/60" />
                   </tr>
@@ -236,7 +245,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="truncate text-[15px] font-bold">{p.name}</span>
                 <span className="text-[12.5px] text-subtle">{p.code} · {p.hasVariants ? `${p.variantCount} хувилбар` : p.attrs ?? 'Үндсэн'}</span>
-                <span className="flex items-center gap-2"><span className="text-[14.5px] font-extrabold">{money(p.price)}</span><StatusBadge status={p.status} label={p.statusLabel} /></span>
+                <span className="flex flex-wrap items-center gap-2"><span className="text-[14.5px] font-extrabold">{money(p.price)}</span><StatusBadge status={p.status} label={p.statusLabel} /><span className="text-[12.5px] text-muted">Үлдэгдэл <StockCell s={p.stock} /></span></span>
               </span>
             </div>
             <OpenBtn id={p.id} code={p.code} canEdit={canEdit} mobile />
@@ -255,7 +264,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
                           <span className="truncate text-[14px] font-semibold">{v.label}</span>
                           <span className="truncate text-[11.5px] text-subtle">{v.code}{v.isActive ? '' : ' · Идэвхгүй'}</span>
                         </span>
-                        <span className={clsx('text-[14px] font-bold', v.priceOverride && 'text-accent-ink')}>{money(v.price)}</span>
+                        <span className="flex flex-col items-end"><span className={clsx('text-[14px] font-bold', v.priceOverride && 'text-accent-ink')}>{money(v.price)}</span><span className="text-[12px] text-muted"><StockCell s={v.stock} /> ш</span></span>
                       </li>
                     ))}
                   </ul>

@@ -39,33 +39,40 @@ export async function balancesFor(variantIds: number[]) {
 }
 
 /** Агуулахын үлдэгдлийн жагсаалт — хувилбар бүр нэг мөр, агуулах тус бүрийн багана */
-export async function stockList(actor: UserActor, params: { q?: string; categoryId?: number; warehouseId?: number; inStock?: boolean; sort?: string; page?: number }) {
+export async function stockList(actor: UserActor, params: { q?: string; categoryId?: number; warehouseId?: number; inStock?: boolean; sort?: string; page?: number; ids?: number[] }) {
   requireRole(canView(actor.roles, 'warehouse'));
   const whs = await warehousesWithLoc();
-  const and: Prisma.ProductVariantWhereInput[] = [{ product: { status: { not: 'ARCHIVED' } } }];
+  // Гараар бичсэн SQL: барааны кодын индексээр алхаж эхний 51 мөрийг авна (Prisma-ийн хувилбар 60,000 мөрийг эрэмбэлдэг байсан)
+  const conds: Prisma.Sql[] = [];
+  if (params.ids?.length) conds.push(Prisma.sql`v.id IN (${Prisma.join(params.ids.slice(0, STOCK_PAGE_SIZE))})`);
+  else conds.push(Prisma.sql`p.status <> 'ARCHIVED'`);
   const q = params.q?.trim();
-  if (q) and.push({ OR: [{ code: { contains: q, mode: 'insensitive' } }, { product: { name: { contains: q, mode: 'insensitive' } } }, { product: { code: { contains: q, mode: 'insensitive' } } }, { color: { contains: q, mode: 'insensitive' } }] });
-  if (params.categoryId) and.push({ product: { categoryId: params.categoryId } });
+  if (q) {
+    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    conds.push(Prisma.sql`(p.name ILIKE ${like} OR p.code ILIKE ${like} OR v.code ILIKE ${like} OR v.color ILIKE ${like})`);
+  }
+  if (params.categoryId) conds.push(Prisma.sql`p."categoryId" = ${params.categoryId}`);
   const locIds = params.warehouseId ? whs.filter((w) => w.id === params.warehouseId).map((w) => w.locationId) : whs.map((w) => w.locationId);
-  if (params.inStock || params.warehouseId) and.push({ balances: { some: { locationId: { in: locIds.length ? locIds : [-1] }, qty: { gt: 0 } } } });
-  const where: Prisma.ProductVariantWhereInput = { AND: and };
+  if (params.inStock || params.warehouseId) {
+    conds.push(Prisma.sql`EXISTS (SELECT 1 FROM "StockBalance" b WHERE b."variantId" = v.id AND b."locationId" IN (${Prisma.join(locIds.length ? locIds : [-1])}) AND b.qty > 0)`);
+  }
   const page = Math.max(1, Math.min(10000, Math.floor(params.page ?? 1)));
-  const orderBy: Prisma.ProductVariantOrderByWithRelationInput[] = params.sort === 'shelf'
-    ? [{ product: { shelfCode: { sort: 'asc', nulls: 'last' } } }, { product: { code: 'asc' } }, { sortOrder: 'asc' }]
-    : [{ product: { code: 'asc' } }, { sortOrder: 'asc' }];
-  const [total, rows] = await Promise.all([
-    db.productVariant.count({ where }),
-    db.productVariant.findMany({ where, orderBy, skip: (page - 1) * STOCK_PAGE_SIZE, take: STOCK_PAGE_SIZE, select: { id: true, isActive: true, product: { select: { status: true } } } }),
-  ]);
+  const order = params.sort === 'shelf' ? Prisma.sql`p."shelfCode" ASC NULLS LAST, p.code, v."sortOrder", v.id` : Prisma.sql`p.code, v."sortOrder", v.id`;
+  const fetched = await db.$queryRaw<{ id: number; isActive: boolean; status: string }[]>`
+    SELECT v.id, v."isActive", p.status::text AS status FROM "ProductVariant" v JOIN "Product" p ON p.id = v."productId"
+    WHERE ${Prisma.join(conds, ' AND ')} ORDER BY ${order}
+    LIMIT ${STOCK_PAGE_SIZE + 1} OFFSET ${(page - 1) * STOCK_PAGE_SIZE}`;
+  const hasMore = fetched.length > STOCK_PAGE_SIZE;
+  const rows = fetched.slice(0, STOCK_PAGE_SIZE);
   const ids = rows.map((r) => r.id);
   const [info, bal] = await Promise.all([variantInfo(ids), balancesFor(ids)]);
   return {
-    total, page, pageSize: STOCK_PAGE_SIZE, warehouses: whs.map(({ id, name, isPrimary }) => ({ id, name, isPrimary })),
+    page, pageSize: STOCK_PAGE_SIZE, hasMore, warehouses: whs.map(({ id, name, isPrimary }) => ({ id, name, isPrimary })),
     canOperate: canOperateStock(actor.roles),
     items: rows.map((r) => {
       const b = bal.get(r.id)!;
       return {
-        variantId: r.id, ...info.get(r.id)!, isActive: r.isActive, productStatus: r.product.status,
+        variantId: r.id, ...info.get(r.id)!, isActive: r.isActive, productStatus: r.status,
         byWarehouse: Object.fromEntries(whs.map((w) => [w.id, b.byLocation.get(w.locationId) ?? 0])),
         transit: b.transit, staff: b.staff, driver: b.driver, total: b.warehouses, reserved: b.reserved, available: b.warehouses - b.reserved,
       };
@@ -102,14 +109,15 @@ function ubDay(ymd: string, add = 0): Date {
   return d;
 }
 
-async function moveWhere(f: MoveFilter): Promise<Prisma.StockMoveWhereInput> {
+async function moveWhere(f: MoveFilter): Promise<{ where: Prisma.StockMoveWhereInput; locationId: number | null }> {
   const and: Prisma.StockMoveWhereInput[] = [];
+  let locationId: number | null = null;
   if (f.variantId) and.push({ variantId: f.variantId });
   else if (f.productId) and.push({ variant: { productId: f.productId } });
   if (f.warehouseId) {
     const w = await db.warehouse.findUnique({ where: { id: f.warehouseId }, include: { location: true } });
     if (!w?.location) throw notFound('Агуулах олдсонгүй');
-    and.push({ OR: [{ fromId: w.location.id }, { toId: w.location.id }] });
+    locationId = w.location.id;
   }
   if (f.type && f.type !== 'all') {
     const groups: Record<string, MoveType[]> = {
@@ -124,16 +132,28 @@ async function moveWhere(f: MoveFilter): Promise<Prisma.StockMoveWhereInput> {
   if (f.to) and.push({ at: { lt: ubDay(f.to, 1) } });
   if (f.docType) and.push({ docType: f.docType });
   if (f.docId) and.push({ docId: f.docId });
-  return and.length ? { AND: and } : {};
+  return { where: and.length ? { AND: and } : {}, locationId };
 }
 
 /** Хөдөлгөөний түүх — бүх хөдөлгөөн, шүүлттэй, хуудаслана (1 сая+ мөрт индексээр) */
 export async function moveHistory(actor: UserActor, f: MoveFilter) {
   requireRole(canView(actor.roles, 'warehouse'));
-  const where = await moveWhere(f);
+  const { where, locationId } = await moveWhere(f);
   const page = Math.max(1, Math.min(2000, Math.floor(f.page ?? 1)));
   // Нийт тоог хэт их мөрөнд тоолохгүй — дараагийн хуудас байгаа эсэхийг нэг мөр илүү авч мэднэ
-  const rows = await db.stockMove.findMany({ where, orderBy: { id: 'desc' }, skip: (page - 1) * MOVE_PAGE_SIZE, take: MOVE_PAGE_SIZE + 1 });
+  let rows;
+  if (locationId) {
+    // «fromId = X OR toId = X» нь 1 сая мөрийг ухраан шүүдэг — хоёр индекстэй хайлт болгож нийлүүлнэ
+    const k = page * MOVE_PAGE_SIZE + 1;
+    const [a, b] = await Promise.all([
+      db.stockMove.findMany({ where: { AND: [where, { fromId: locationId }] }, orderBy: { id: 'desc' }, take: k, select: { id: true } }),
+      db.stockMove.findMany({ where: { AND: [where, { toId: locationId }] }, orderBy: { id: 'desc' }, take: k, select: { id: true } }),
+    ]);
+    const ids = [...new Set([...a, ...b].map((x) => x.id))].sort((x, y) => (x < y ? 1 : x > y ? -1 : 0)).slice((page - 1) * MOVE_PAGE_SIZE, page * MOVE_PAGE_SIZE + 1);
+    rows = ids.length ? await db.stockMove.findMany({ where: { id: { in: ids } }, orderBy: { id: 'desc' } }) : [];
+  } else {
+    rows = await db.stockMove.findMany({ where, orderBy: { id: 'desc' }, skip: (page - 1) * MOVE_PAGE_SIZE, take: MOVE_PAGE_SIZE + 1 });
+  }
   const hasMore = rows.length > MOVE_PAGE_SIZE;
   const list = rows.slice(0, MOVE_PAGE_SIZE);
   const [info, locs] = await Promise.all([

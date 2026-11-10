@@ -216,6 +216,72 @@ async function main() {
   const trav = await req('/media/../../.env');
   check('media замаар хавтаснаас гарахгүй', trav.status === 404 || trav.status === 400 || trav.status === 307, String(trav.status));
 
+  // ───────── Модуль 2: Агуулах, үлдэгдэл ─────────
+  const whPages = ['/warehouse', '/warehouse/refill', '/warehouse/transfers', '/warehouse/counts', '/warehouse/moves', '/warehouse/settings', '/warehouse/products/1', '/warehouse/receipt', '/warehouse/issue', '/warehouse/transfers/new', '/loans'];
+  const operate = (r: Role[]) => ['SUPER_ADMIN', 'ADMIN', 'WAREHOUSE'].some((x) => r.includes(x as Role));
+  const expectWh: Record<string, (r: Role[]) => boolean> = {
+    '/warehouse/receipt': operate, '/warehouse/issue': operate, '/warehouse/transfers/new': operate,
+    '/loans': (r) => accessTo(r, 'loans') !== 'none',
+  };
+  for (const [roles, phone] of ROLE_PHONE) {
+    const l = await loginAs(phone);
+    if (!l.cookie) continue;
+    for (const path of whPages) {
+      const r = await req(path, { cookie: l.cookie });
+      const allowed = (expectWh[path] ?? ((x: Role[]) => accessTo(x, 'warehouse') !== 'none'))(roles);
+      check(`${roles.join('+')} ${path}`, allowed ? r.status === 200 : r.status === 307, `${r.status} ${r.location}`);
+    }
+    // API: орлого оруулах эрх (зөвхөн СА, А, Агуулах)
+    const rc = await req('/api/stock/receipts', { cookie: l.cookie, method: 'POST', body: { warehouseId: 1, lines: [{ variantId: 1, qty: 1 }], idemKey: `e2e-${phone}-x1` } });
+    check(`${roles.join('+')} орлого API`, operate(roles) ? rc.status === 201 : rc.status === 403, `${rc.status} ${rc.text.slice(0, 80)}`);
+    const sl = await req('/api/stock?page=1', { cookie: l.cookie });
+    check(`${roles.join('+')} үлдэгдэл API`, accessTo(roles, 'warehouse') !== 'none' ? sl.status === 200 : sl.status === 403, String(sl.status));
+  }
+  const whU = await loginAs('80000132'); // Агуулах
+  const balOf = async (variantId: number) => JSON.parse((await req(`/api/stock?ids=${variantId}`, { cookie: whU.cookie })).text).items[0];
+  const b0 = (await balOf(2)).byWarehouse['1'] ?? 0;
+  const key = `e2e-receipt-${Date.now()}`;
+  const r1 = await req('/api/stock/receipts', { cookie: whU.cookie, method: 'POST', body: { warehouseId: 1, lines: [{ variantId: 2, qty: 5 }], idemKey: key } });
+  const r2 = await req('/api/stock/receipts', { cookie: whU.cookie, method: 'POST', body: { warehouseId: 1, lines: [{ variantId: 2, qty: 5 }], idemKey: key } });
+  check('орлого 201, давхар дарахад 200 (нэг л удаа)', r1.status === 201 && r2.status === 200, `${r1.status} ${r2.status}`);
+  check('орлого үлдэгдэлд нэмэгдсэн (+5)', ((await balOf(2)).byWarehouse['1'] ?? 0) === b0 + 5);
+  const big = await req('/api/stock/issues', { cookie: whU.cookie, method: 'POST', body: { warehouseId: 1, reason: 'DAMAGE', note: 'E2E хэт их зарлага', lines: [{ variantId: 2, qty: 100000 }], idemKey: `e2e-big-${Date.now()}` } });
+  check('байгаагаас их зарлага → 409 insufficient_stock', big.status === 409 && big.text.includes('insufficient_stock'), big.text.slice(0, 100));
+  const noNote = await req('/api/stock/issues', { cookie: whU.cookie, method: 'POST', body: { warehouseId: 1, reason: 'DAMAGE', note: '', lines: [{ variantId: 2, qty: 1 }], idemKey: `e2e-nn-${Date.now()}` } });
+  check('тайлбаргүй зарлага → 400 reason_required', noNote.status === 400 && noNote.text.includes('reason_required'), noNote.text.slice(0, 100));
+  // Зэрэг 5 зарлага (тус бүр 3), байгаа 10 → хоёр л амжилттай
+  const vZ = 9;
+  const zBefore = (await balOf(vZ)).byWarehouse['1'] ?? 0;
+  if (zBefore > 10) await req('/api/stock/issues', { cookie: whU.cookie, method: 'POST', body: { warehouseId: 1, reason: 'SAMPLE', note: 'E2E бэлтгэл зарлага', lines: [{ variantId: vZ, qty: zBefore - 10 }], idemKey: `e2e-prep-${Date.now()}` } });
+  else await req('/api/stock/receipts', { cookie: whU.cookie, method: 'POST', body: { warehouseId: 1, lines: [{ variantId: vZ, qty: 10 - zBefore }], idemKey: `e2e-prep-${Date.now()}` } });
+  const conc = await Promise.all(Array.from({ length: 5 }, (_, i) => req('/api/stock/issues', { cookie: whU.cookie, method: 'POST', body: { warehouseId: 1, reason: 'SAMPLE', note: 'E2E зэрэг зарлага', lines: [{ variantId: vZ, qty: 3 }], idemKey: `e2e-c${i}-${Date.now()}` } })));
+  check('зэрэг 5 зарлага (3 ш), байгаа 10 → 3 амжилттай, 2 татгалзсан', conc.filter((x) => x.status === 201).length === 3 && conc.filter((x) => x.status === 409).length === 2, conc.map((x) => x.status).join(','));
+  check('зэрэг зарлагын дараа үлдэгдэл 1 (сөрөг биш)', ((await balOf(vZ)).byWarehouse['1'] ?? 0) === 1);
+  // Шилжүүлэг 2 алхам
+  const tr = await req('/api/stock/transfers', { cookie: whU.cookie, method: 'POST', body: { fromWarehouseId: 2, toWarehouseId: 1, lines: [{ variantId: 3, qty: 2 }], idemKey: `e2e-tr-${Date.now()}` } });
+  const tid = JSON.parse(tr.text).transfer?.id;
+  check('шилжүүлэг илгээх → 201', tr.status === 201, tr.text.slice(0, 100));
+  check('илгээсэн бараа «замдаа»', (await balOf(3)).transit >= 2);
+  const [rv1, rv2] = await Promise.all([1, 2].map(() => req(`/api/stock/transfers/${tid}/receive`, { cookie: whU.cookie, method: 'POST', body: { lines: [{ variantId: 3, receivedQty: 2 }] } })));
+  check('зэрэг 2 хүлээн авалт → нэг л нөлөөтэй', [JSON.parse(rv1.text).duplicate, JSON.parse(rv2.text).duplicate].sort().join() === 'false,true', `${rv1.text.slice(0, 60)} | ${rv2.text.slice(0, 60)}`);
+  const mkL = await req('/api/stock/transfers', { cookie: mk.cookie, method: 'POST', body: { fromWarehouseId: 2, toWarehouseId: 1, lines: [{ variantId: 3, qty: 1 }], idemKey: `e2e-mk-${Date.now()}` } });
+  check('маркетинг шилжүүлэг хийхгүй → 403', mkL.status === 403, String(mkL.status));
+  // Бараа зээл
+  const ln = await req('/api/loans', { cookie: mk.cookie, method: 'POST', body: { lines: [{ variantId: 4, qty: 1 }], idemKey: `e2e-loan-${Date.now()}` } });
+  check('маркетинг зээл хүснэ → 201', ln.status === 201, ln.text.slice(0, 100));
+  const lnWh = await req('/api/loans', { cookie: whU.cookie, method: 'POST', body: { lines: [{ variantId: 4, qty: 1 }], idemKey: `e2e-loan2-${Date.now()}` } });
+  check('агуулахын ажилтан өөрөө зээл хүсэхгүй → 403', lnWh.status === 403, String(lnWh.status));
+  const op = await loginAs('80000006');
+  const opView = JSON.parse((await req('/api/loans', { cookie: op.cookie })).text);
+  check('оператор бусдын зээлийг харахгүй', opView.items.every((x: { staffName: string }) => !x.staffName.startsWith('Маркетинг')), String(opView.items.length));
+  const disc = await req('/api/loans/settings', { cookie: whU.cookie, method: 'POST', body: { loanDiscount: 1 } });
+  check('агуулах хямдрал засахгүй → 403', disc.status === 403, String(disc.status));
+  // Журнал засах боломжгүй — тулгалт
+  const rec = JSON.parse((await req('/api/stock/reconcile?fresh=1', { cookie: adm.cookie })).text);
+  check('тулгалт: журнал = үлдэгдэл', rec.ok === true, JSON.stringify(rec).slice(0, 120));
+  const recWh = await req('/api/stock/reconcile?fresh=1', { cookie: whU.cookie });
+  check('тулгалтыг шууд ажиллуулах — зөвхөн админ', recWh.status === 403, String(recWh.status));
+
   console.log(`\nE2E: ${pass} амжилттай, ${fails.length} алдаатай`);
   if (fails.length) { console.log(fails.map((f) => '  ✗ ' + f).join('\n')); process.exit(1); }
 }
