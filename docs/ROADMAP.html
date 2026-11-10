@@ -1,0 +1,210 @@
+<title>ERP V2 Ажлын жагсаалт</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap">
+<style>
+/* Layout: one column checklist; each module = card with status pill; done items green + struck through */
+:root{
+  --bg:#F5F4F0; --surface:#FFFFFF; --surface2:#EFEDE7; --line:#E1DED6;
+  --ink:#16181D; --muted:#4D525C; --subtle:#5F646E; --accent:#C2410C; --accent-soft:#FFF1E8;
+  --done:#15803D; --done-bg:#E6F4EA; --now:#C2410C; --now-bg:#FFEBDD;
+  --font:"Onest",Inter,system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0E1014; --surface:#171A20; --surface2:#1D2028; --line:#2A2E38;
+  --ink:#ECEDEF; --muted:#B0B4BD; --subtle:#9A9FA9; --accent:#FF8A4C; --accent-soft:rgba(255,122,61,.14);
+  --done:#86EFAC; --done-bg:rgba(74,222,128,.13); --now:#FDBA74; --now-bg:rgba(251,146,60,.15); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0E1014; --surface:#171A20; --surface2:#1D2028; --line:#2A2E38;
+  --ink:#ECEDEF; --muted:#B0B4BD; --subtle:#9A9FA9; --accent:#FF8A4C; --accent-soft:rgba(255,122,61,.14);
+  --done:#86EFAC; --done-bg:rgba(74,222,128,.13); --now:#FDBA74; --now-bg:rgba(251,146,60,.15); color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.55;font-variant-numeric:tabular-nums;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:860px;margin:0 auto;padding-block:36px 64px;display:flex;flex-direction:column;gap:20px}
+h1{font-size:clamp(28px,4vw,38px);font-weight:800;letter-spacing:-.03em;line-height:1.1;margin:0}
+h2{font-size:19px;font-weight:800;letter-spacing:-.015em;margin:0}
+p{margin:0}
+.eyebrow{font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--subtle)}
+.brand{font-weight:800;letter-spacing:-.03em}.brand span{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:13.5px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.mod{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 20px;display:flex;flex-direction:column;gap:12px}
+.mod.is-done{border-color:var(--done)}
+.mod.is-now{border:2px solid var(--now)}
+.head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}
+.mod.is-done h2{color:var(--done);text-decoration:line-through;text-decoration-thickness:2px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:8px;font-size:12px;font-weight:800;white-space:nowrap}
+.p-done{background:var(--done-bg);color:var(--done)}.p-now{background:var(--now-bg);color:var(--now)}.p-todo{background:var(--surface2);color:var(--muted)}
+ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+li{display:flex;gap:10px;align-items:flex-start;font-size:14.5px;color:var(--ink)}
+li::before{content:"";flex:0 0 auto;width:18px;height:18px;margin-top:2px;border-radius:5px;border:2px solid var(--line);background:var(--surface)}
+li.d{color:var(--done);text-decoration:line-through}
+li.d::before{border-color:var(--done);background:var(--done)}
+li.n{color:var(--now);font-weight:700}
+li.n::before{border-color:var(--now)}
+.sub{font-size:13px;color:var(--subtle)}
+.progress{height:10px;border-radius:999px;background:var(--surface2);overflow:hidden}
+.progress span{display:block;height:100%;background:var(--done);border-radius:999px}
+footer{font-size:13px;color:var(--subtle)}
+</style>
+
+<div class="wrap">
+  <header style="display:flex;flex-direction:column;gap:10px">
+    <span class="eyebrow"><span class="brand">zahialga<span>•</span></span> · ERP V2</span>
+    <h1>Ажлын жагсаалт</h1>
+    <p class="sub">Дууссан ажил <strong style="color:var(--done)">ногоон, зураастай</strong>. Одоо хийж буй нь <strong style="color:var(--now)">улбар шар</strong>. Шинэчлэгдсэн: 2026.11.10 · Модуль 1 батлагдсан</p>
+    <div class="legend">
+      <span><span class="pill p-done">ДУУССАН</span></span>
+      <span><span class="pill p-now">ОДОО</span></span>
+      <span><span class="pill p-todo">ХҮЛЭЭГДЭЖ БУЙ</span></span>
+    </div>
+  </header>
+
+  <div class="mod is-done">
+    <div class="head"><h2>Бэлтгэл шат</h2><span class="pill p-done">ДУУССАН</span></div>
+    <ul>
+      <li class="d">Хуучин ERP-ийн кодыг судлах</li>
+      <li class="d">Ажлын дүрэм (MASTER_RULES) батлах</li>
+      <li class="d">Өгөгдлийн шилжилтийн шийдвэр батлах</li>
+      <li class="d">Дизайны шаардлага батлах</li>
+      <li class="d">Design Prototype 2 (zahialga•) батлах</li>
+      <li class="d">28 хуудасны аудит</li>
+      <li class="d">Архитектурын зураглал (ноорог 1)</li>
+    </ul>
+  </div>
+
+  <div class="mod is-done">
+    <div class="head"><h2>Модуль 0 · Суурь</h2><span class="pill p-done">ДУУССАН · БАТЛАГДСАН</span></div>
+    <p class="sub">Нэвтрэх, хэрэглэгч, эрх, дизайны бүтэц. 248 + 299 тест, 150 хэрэглэгчийн ачаалал — бүгд амжилттай.</p>
+    <ul>
+      <li class="d">Хуучин нэвтрэх, эрхийн логикийг судлах</li>
+      <li class="d">Танаас асуух: role-ууд (12 role батлагдсан)</li>
+      <li class="d">Төлөвлөгөө ба тестийн төлөвлөгөөг батлуулах</li>
+      <li class="d">Шинэ repository ба тусдаа database үүсгэх</li>
+      <li class="d">Нэвтрэх / гарах (утас + нууц үг, түгжээ, админ тайлна)</li>
+      <li class="d">Хэрэглэгч нэмэх, засах, хаах, нууц үг сэргээх, олон role</li>
+      <li class="d">Эрхийн систем: хүсэлт бүрт сервер тал шалгана</li>
+      <li class="d">zahialga• дизайны бүтэц: цэс, толгой хэсэг, Light / Dark, гар утас</li>
+      <li class="d">Үйлдлийн түүх (хэн юу хийсэн)</li>
+      <li class="d">Тест өгөгдөл үүсгэгч (150 хэрэглэгч)</li>
+      <li class="d">Docker, өдөр бүрийн backup, health check, install.sh, update.sh</li>
+      <li class="d">Тест: эрх, давхар хүсэлт, буруу өгөгдөл, ачаалал</li>
+      <li class="d">Тайлан</li>
+      <li class="d">Таны баталгаа (2026.11.10)</li>
+      <li>Cloud.mn дээр суулгах (та · http://103.153.141.29)</li>
+    </ul>
+  </div>
+
+  <div class="mod is-done">
+    <div class="head"><h2>Модуль 1 · Бараа</h2><span class="pill p-done">ДУУССАН · БАТЛАГДСАН</span></div>
+    <p class="sub">Бараа, хувилбар, зураг (өнгө тус бүрээр, томруулах, татах), засварын хяналт. 294 + 438 тест, 150 хэрэглэгчийн ачаалал — бүгд амжилттай.</p>
+    <ul>
+      <li class="d">Логик ярилцах ба таны асуултууд</li>
+      <li class="d">Код, нэр, ангилал, улирал, үнэ, хэмжээ, өнгө (хувилбар/SKU)</li>
+      <li class="d">Ганц өнгө/хэмжээтэй бараа нэг мөрөөр, олон бол хувилбар догол мөрөөр</li>
+      <li class="d">Зураг өнгө тус бүрээр, бараа бүртгэхэд хамт оруулах</li>
+      <li class="d">Зураг томруулах, татаж авах (бүх модульд мөрдөнө)</li>
+      <li class="d">Идэвхтэй / зогсоосон / архив төлөв</li>
+      <li class="d">Засварын тайлбар ба «Барааны засвар» хуудас, «Бүгдийг шалгасан»</li>
+      <li class="d">Өртөг: зөвхөн админ засна, тайлбаргүй</li>
+      <li class="d">Харах горим, «Засах» товч, нэрийг хуулах</li>
+      <li class="d">Excel экспорт</li>
+      <li class="d">Docker: зургийн хадгалалт ба backup</li>
+      <li class="d">Тест ба тайлан</li>
+      <li class="d">Таны баталгаа (2026.11.10)</li>
+    </ul>
+  </div>
+
+  <div class="mod">
+    <div class="head"><h2>Модуль 2 · Үлдэгдлийн журнал (Агуулах)</h2><span class="pill p-now">ДАРААГИЙН · ЗӨВШӨӨРӨЛ ХҮЛЭЭЖ БУЙ</span></div>
+    <ul>
+      <li>Логик ярилцах ба таны асуултууд (Q4 зээл)</li>
+      <li>Агуулахууд, байршил</li>
+      <li>Бараа орлого авах</li>
+      <li>Агуулах хооронд шилжүүлэх</li>
+      <li>Гэмтэл, хорогдол</li>
+      <li>Тооллого ба засвар</li>
+      <li>Барааны хөдөлгөөний түүх</li>
+      <li>Үлдэгдлийн тулгалт (зөрүү илрүүлэх)</li>
+      <li>Тест: давхар хасалт, сөрөг үлдэгдэл, зэрэг гаргалт</li>
+      <li>Таны зөвшөөрөл</li>
+    </ul>
+  </div>
+
+  <div class="mod">
+    <div class="head"><h2>Модуль 3 · Захиалга</h2><span class="pill p-todo">ХҮЛЭЭГДЭЖ БУЙ</span></div>
+    <ul>
+      <li>Логик ярилцах ба таны асуултууд (Q1, Q7, Q8)</li>
+      <li>Нэг дэлгэцээр захиалга авах</li>
+      <li>Нөөцлөх, цуцлах, засах</li>
+      <li>Давхардал ба хар жагсаалт</li>
+      <li>Хүлээгдэж буй ба он сар өдөртэй захиалга</li>
+      <li>Урсгалын самбар ба хүснэгт харагдац</li>
+      <li>Meta CAPI Purchase event (Q5)</li>
+      <li>Тест ба таны зөвшөөрөл</li>
+    </ul>
+  </div>
+
+  <div class="mod">
+    <div class="head"><h2>Модуль 4 · Падаан (Жолоочид бараа өгөх)</h2><span class="pill p-todo">ХҮЛЭЭГДЭЖ БУЙ</span></div>
+    <ul>
+      <li>Логик ярилцах</li>
+      <li>Жолоочид захиалга хуваарилах (Жолооч удирдлага)</li>
+      <li>Падаан үүсгэх, бараа шалгах, бэлтгэх</li>
+      <li>Хүлээлгэж өгөх → бараа жолоочийн гарт</li>
+      <li>Падаан хэвлэх ба түүх</li>
+      <li>Тест ба таны зөвшөөрөл</li>
+    </ul>
+  </div>
+
+  <div class="mod">
+    <div class="head"><h2>Модуль 5 · Жолооч</h2><span class="pill p-todo">ХҮЛЭЭГДЭЖ БУЙ</span></div>
+    <ul>
+      <li>Логик ярилцах (Q3 маргааш болгох)</li>
+      <li>Гар утасны апп</li>
+      <li>Хүргэх, цуцлах, хойшлуулах, асуудал мэдэгдэх</li>
+      <li>Буцаалт хүлээн авах (агуулах)</li>
+      <li>Нэмэлт бараа</li>
+      <li>Жолоочийн хяналт (админ)</li>
+      <li>Тест ба таны зөвшөөрөл</li>
+    </ul>
+  </div>
+
+  <div class="mod">
+    <div class="head"><h2>Модуль 6 · Нягтлан</h2><span class="pill p-todo">ХҮЛЭЭГДЭЖ БУЙ</span></div>
+    <ul>
+      <li>Логик ярилцах (B1: хүргэсэн өдрөөр)</li>
+      <li>Жолоочийн өдрийн тооцоо</li>
+      <li>Жолоочийн цалин (нэг томъёо)</li>
+      <li>Өрийн бүртгэл</li>
+      <li>Банкны импорт ба тулгалт</li>
+      <li>Тест ба таны зөвшөөрөл</li>
+    </ul>
+  </div>
+
+  <div class="mod">
+    <div class="head"><h2>Модуль 7+ · Бусад</h2><span class="pill p-todo">ХҮЛЭЭГДЭЖ БУЙ</span></div>
+    <ul>
+      <li>Хянах самбар</li>
+      <li>Асуудал (жолоочийн мэдэгдэл)</li>
+      <li>Торгууль (Алдаа удирдлага, Миний торгууль)</li>
+      <li>Ажилтны цалин</li>
+      <li>Нийлүүлэгч</li>
+      <li>Барааны гарц (маркетинг)</li>
+      <li>Тохиргоо</li>
+    </ul>
+  </div>
+
+  <div class="mod">
+    <div class="head"><h2>Эцсийн шат</h2><span class="pill p-todo">ХҮЛЭЭГДЭЖ БУЙ</span></div>
+    <ul>
+      <li>Дизайны нарийн засвар (нэр, өнгө)</li>
+      <li>Бүх системийн эцсийн тест</li>
+      <li>Бодит өгөгдөл шилжүүлэх (таны тусгай зөвшөөрлөөр)</li>
+      <li>Cloud.mn дээр ашиглалтад оруулах (таны тусгай зөвшөөрлөөр)</li>
+    </ul>
+  </div>
+
+  <footer>Энэ жагсаалтыг ажил урагшлах бүрд шинэчилнэ.</footer>
+</div>
