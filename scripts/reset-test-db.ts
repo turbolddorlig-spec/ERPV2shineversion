@@ -1,6 +1,6 @@
 /** ЗӨВХӨН ТЕСТИЙН database-ийг бүрэн цэвэрлэнэ (seed-ийн өмнө). ALLOW_TEST_SEED=1 ба DATABASE_URL-д "test" заавал. */
 import { PrismaClient } from '@prisma/client';
-import { resetDb } from '../tests/helpers/reset';
+import { resetDb } from './lib/test-db';
 
 if (process.env.ALLOW_TEST_SEED !== '1' || !/test/.test(process.env.DATABASE_URL ?? '')) {
   console.error('Татгалзлаа: зөвхөн тест database (ALLOW_TEST_SEED=1, нэрэнд "test").');
