@@ -2,7 +2,7 @@ import { db } from '../../db';
 import { badRequest, conflict, forbidden, notFound } from '../../errors';
 import { writeAudit } from '../../audit';
 import { canEditOrders, canManageOrderSettings, canSuperviseOperators, canView } from '../../permissions';
-import { SETTINGS, cleanPhone, orderSettings, requireReason, uniqueViolation, type UserActor } from './core';
+import { NO_PAGE_NAME, SETTINGS, cleanPhone, orderSettings, requireReason, uniqueViolation, type UserActor } from './core';
 
 // ───────────────────────── хар жагсаалт (#43 4) ─────────────────────────
 
@@ -50,7 +50,7 @@ export async function removeBlacklist(actor: UserActor, idInput: unknown, input:
 export async function pagesForActor(actor: UserActor) {
   if (!canView(actor.roles, 'orders') && !canView(actor.roles, 'reports')) throw forbidden();
   const [pages, assign, me] = await Promise.all([
-    db.page.findMany({ where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] }),
+    db.page.findMany({ where: { isActive: true, name: { not: NO_PAGE_NAME } }, orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] }),
     db.pageAssignment.findUnique({ where: { userId: actor.id } }),
     db.user.findUnique({ where: { id: actor.id }, select: { lastPageId: true } }),
   ]);
@@ -63,13 +63,15 @@ export async function pagesForActor(actor: UserActor) {
 
 export async function listAllPages(actor: UserActor) {
   if (!canManageOrderSettings(actor.roles) && !canSuperviseOperators(actor.roles)) throw forbidden();
-  return db.page.findMany({ orderBy: [{ isActive: 'desc' }, { sortOrder: 'asc' }, { id: 'asc' }] });
+  return db.page.findMany({ where: { name: { not: NO_PAGE_NAME } }, orderBy: [{ isActive: 'desc' }, { sortOrder: 'asc' }, { id: 'asc' }] });
 }
 
 export async function savePage(actor: UserActor, input: { id?: unknown; name?: unknown; isActive?: unknown; sortOrder?: unknown }) {
   if (!canManageOrderSettings(actor.roles)) throw forbidden('Пэйжийг Супер админ, Админ удирдана');
   const name = String(input.name ?? '').trim().replace(/\s+/g, ' ');
   if (name.length < 2 || name.length > 80) throw badRequest('Пэйжийн нэр 2–80 тэмдэгт');
+  if (name === NO_PAGE_NAME) throw badRequest('Энэ нэр системд хадгалагдсан');
+  if (input.id && (await db.page.findUnique({ where: { id: Number(input.id) } }))?.name === NO_PAGE_NAME) throw badRequest('«Пэйж сонгоогүй»-г өөрчлөх боломжгүй');
   try {
     return await db.$transaction(async (tx) => {
       const id = input.id ? Number(input.id) : null;

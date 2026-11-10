@@ -162,7 +162,7 @@ export function OrderForm({ edit }: { edit?: EditOrder }) {
     if (badDisc) return setError(`«${badDisc.name}» үнийг бууруулсан шалтгаанаа бичнэ үү (5+ тэмдэгт)`);
     const body = {
       phone, extraPhone: extraPhone || null, province, district: ub ? district : null, khoroo: ub && khoroo ? Number(khoroo) : null, addressDetail: detail,
-      note, pageId: Number(pageId), deliveryDate, lines: lines.map((l) => ({ variantId: l.variantId, qty: l.qty, unitPrice: l.unitPrice, discountReason: l.discountReason || undefined })),
+      note, pageId: pages.some((p) => String(p.id) === pageId) ? Number(pageId) : edit && pageId === String(edit.pageId) ? Number(pageId) : 0, deliveryDate, lines: lines.map((l) => ({ variantId: l.variantId, qty: l.qty, unitPrice: l.unitPrice, discountReason: l.discountReason || undefined })),
       ...(feeOverride !== null && feeOverride !== '' ? { deliveryFee: Number(feeOverride), feeReason } : {}),
       ...(card?.blacklist.length ? { blacklistNote } : {}),
     };
@@ -243,8 +243,8 @@ export function OrderForm({ edit }: { edit?: EditOrder }) {
         <section className={sec}>
           <div className="flex flex-wrap items-end justify-between gap-2">
             <h2 className="text-[16px] font-extrabold">Бараа</h2>
-            <Select id="page" className="min-w-[200px]" label="Пэйж" value={pageId} onChange={(e) => setPageId(e.target.value)}>
-              <option value="">— Сонгох —</option>
+            <Select id="page" className="min-w-[200px]" label="Пэйж" value={pages.some((p) => String(p.id) === pageId) ? pageId : ''} onChange={(e) => setPageId(e.target.value)}>
+              <option value="">Пэйж сонгоогүй</option>
               {pages.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </Select>
           </div>

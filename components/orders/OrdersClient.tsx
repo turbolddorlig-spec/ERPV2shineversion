@@ -82,6 +82,33 @@ function HourlyBoard() {
   );
 }
 
+/** «⋯» товч: бага хэрэглэдэг хуудсууд */
+function MoreMenu({ items }: { items: { href: string; label: string; icon: string }[] }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent | KeyboardEvent) => { if (e instanceof KeyboardEvent ? e.key === 'Escape' : !ref.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', close); document.addEventListener('keydown', close);
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', close); };
+  }, [open]);
+  return (
+    <div ref={ref} className="relative">
+      <button type="button" aria-label="Бусад" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}
+        className="inline-flex h-11 w-11 items-center justify-center rounded-[11px] border border-line bg-surface text-ink hover:bg-surface2"><Icon name="more" size={22} strokeWidth={2.6} /></button>
+      {open ? (
+        <div role="menu" className="absolute left-0 top-full z-40 md:left-auto md:right-0 mt-1.5 flex min-w-[220px] flex-col rounded-xl border border-line bg-surface p-1 shadow-pop">
+          {items.map((it) => (
+            <Link key={it.href} role="menuitem" href={it.href} onClick={() => setOpen(false)} className="flex h-11 items-center gap-2.5 rounded-lg px-3 text-[14px] font-semibold hover:bg-surface2">
+              <Icon name={it.icon} size={17} />{it.label}
+            </Link>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function OrdersClient() {
   const [tab, setTab] = useState('today');
   const [q, setQ] = useState('');
@@ -115,13 +142,15 @@ export function OrdersClient() {
   return (
     <div className="flex flex-col gap-4">
       {flash ? <Notice tone="ok">{flash}</Notice> : null}
-      <div className="flex flex-wrap gap-2">
-        <Link href="/orders/calls" className="inline-flex h-11 items-center gap-2 rounded-[11px] border border-line bg-surface px-4 text-[14px] font-semibold">📞 Дуудлагын бүртгэл</Link>
-        <Link href="/loans?from=orders" className="inline-flex h-11 items-center gap-2 rounded-[11px] border border-line bg-surface px-4 text-[14px] font-semibold"><Icon name="hand" size={16} />Барааны хүсэлт</Link>
-        <Link href="/orders/blacklist" className="inline-flex h-11 items-center gap-2 rounded-[11px] border border-line bg-surface px-4 text-[14px] font-semibold">⚠️ Хар жагсаалт</Link>
-        {can?.supervise ? <Link href="/orders/pages" className="inline-flex h-11 items-center rounded-[11px] border border-line bg-surface px-4 text-[14px] font-semibold">Пэйж хуваарилах</Link> : null}
-        {can?.review ? <Link href="/orders/review" className="inline-flex h-11 items-center rounded-[11px] border border-line bg-surface px-4 text-[14px] font-semibold">Хөнгөлөлт шалгах</Link> : null}
-        {can?.edit ? <Link href="/orders/new" className="ml-auto inline-flex h-11 items-center gap-2 rounded-[11px] bg-accent px-5 text-[14px] font-bold text-on-accent"><Icon name="plus" size={16} strokeWidth={2.4} />Захиалга</Link> : null}
+      <div className="flex items-center justify-end gap-2">
+        <MoreMenu items={[
+          { href: '/loans?from=orders', label: 'Барааны хүсэлт', icon: 'hand' },
+          { href: '/orders/blacklist', label: 'Хар жагсаалт', icon: 'alert' },
+          ...(can?.supervise ? [{ href: '/orders/pages', label: 'Пэйж хуваарилах', icon: 'users' }] : []),
+          ...(can?.review ? [{ href: '/orders/review', label: 'Хөнгөлөлт шалгах', icon: 'check' }] : []),
+        ]} />
+        <Link href="/orders/calls" className="inline-flex whitespace-nowrap h-11 items-center gap-2 rounded-[11px] border border-line bg-surface px-4 text-[14px] font-semibold">📞 <span className="sm:hidden">Дуудлага</span><span className="hidden sm:inline">Дуудлагын бүртгэл</span></Link>
+        {can?.edit ? <Link href="/orders/new" className="inline-flex h-11 items-center gap-2 rounded-[11px] bg-accent px-5 text-[14px] font-bold text-on-accent"><Icon name="plus" size={16} strokeWidth={2.4} />Захиалга</Link> : null}
       </div>
 
       <HourlyBoard />

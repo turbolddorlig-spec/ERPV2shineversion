@@ -161,3 +161,10 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
 }
 
 export const staleError = () => conflict('Энэ захиалгыг өөр хүн дөнгөж сая өөрчилсөн байна. Дахин ачаалаад өөрчлөлтөө хийнэ үү.', 'stale');
+
+/** Пэйж сонгоогүй захиалга энэ системийн пэйжээр хадгалагдана (тайланд тусдаа мөр). Сонгох жагсаалт, тохиргоонд харагдахгүй. */
+export const NO_PAGE_NAME = 'Пэйж сонгоогүй';
+export async function noPageId(tx: Tx | typeof db): Promise<number> {
+  const p = await tx.page.upsert({ where: { name: NO_PAGE_NAME }, create: { name: NO_PAGE_NAME, sortOrder: 9999 }, update: {} });
+  return p.id;
+}

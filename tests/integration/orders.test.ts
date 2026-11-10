@@ -112,6 +112,28 @@ describe('захиалга үүсгэх', () => {
     expect(u.status).toBe('PENDING_PAYMENT');
   });
 
+  it('пэйж сонгоогүй (#58) → «Пэйж сонгоогүй» нэрээр хадгална; сонгох жагсаалт, тохиргоонд харагдахгүй; сүүлийн пэйж өөрчлөгдөхгүй', async () => {
+    const a = await O.createOrder(op, ub({ pageId: undefined }));
+    const b = await O.createOrder(op2, ub({ phone: '88112233', pageId: '' }));
+    const np = await db.page.findUniqueOrThrow({ where: { id: a.order.pageId } });
+    expect(np.name).toBe('Пэйж сонгоогүй');
+    expect(b.order.pageId).toBe(np.id); // нэг л систем пэйж
+    expect((await db.user.findUniqueOrThrow({ where: { id: op.id } })).lastPageId).toBeNull();
+    const mine = await A.pagesForActor(op);
+    expect(mine.pages.map((x) => x.name)).not.toContain('Пэйж сонгоогүй');
+    expect((await A.listAllPages(sa)).map((x) => x.name)).not.toContain('Пэйж сонгоогүй');
+    await err(A.savePage(sa, { name: 'Пэйж сонгоогүй' }), 400);
+    await err(A.savePage(sa, { id: np.id, name: 'Шинэ нэр' }), 400);
+    // Хуваарилалттай оператор ч пэйжгүй захиалга үүсгэж чадна; дараа нь пэйж сонгож засна
+    await A.setAssignment(lead, { userId: op.id, pageIds: [page2] });
+    await O.createOrder(op, ub({ phone: '77112233', pageId: 0 }));
+    const d = await Q.getOrder(op, a.order.id);
+    const u = await O.updateOrder(op, a.order.id, { version: d.version, pageId: page2 });
+    expect(u.order.pageId).toBe(page2);
+    const rep = await R.pageReport(sa, {});
+    expect(rep.rows.find((r) => r.label === 'Пэйж сонгоогүй')?.created).toBe(2);
+  });
+
   it('давхар дарах / сүлжээ тасрах: нэг түлхүүрээр зэрэг 5 → 1 захиалга, 1 нөөц', async () => {
     const k = key();
     const rs = await Promise.all(Array.from({ length: 5 }, () => O.createOrder(op, ub({ idemKey: k }))));

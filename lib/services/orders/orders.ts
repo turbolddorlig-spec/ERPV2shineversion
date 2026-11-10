@@ -9,7 +9,7 @@ import { variantLabel } from '../../catalog/variants';
 import { cleanIdemKey } from '../stock/core';
 import {
   ACTIVE, activeBlacklist, availableFor, cleanAddress, cleanDeliveryDate, cleanOptPhone, cleanPhone, findActiveDuplicate, inTx,
-  lockOrder, lockPhones, lockVariants, nextOrderNumber, orderSettings, requireReason, staleError, uniqueViolation, type Tx, type UserActor,
+  lockOrder, lockPhones, lockVariants, nextOrderNumber, orderSettings, requireReason, staleError, uniqueViolation, type Tx, type UserActor, NO_PAGE_NAME, noPageId,
 } from './core';
 import { enqueueMeta, skipMeta } from './meta';
 
@@ -127,6 +127,7 @@ async function replaceReservations(tx: Tx, orderId: number, lines: { variantId: 
 async function assertPage(tx: Tx | typeof db, actor: UserActor, pageId: number) {
   const p = await tx.page.findUnique({ where: { id: pageId } });
   if (!p || !p.isActive) throw badRequest('Пэйжээ сонгоно уу', 'bad_page');
+  if (p.name === NO_PAGE_NAME) return p;
   if (!canSuperviseOperators(actor.roles)) {
     const a = await tx.pageAssignment.findUnique({ where: { userId: actor.id } });
     if (a && a.pageIds.length && !a.pageIds.includes(pageId)) throw forbidden('Энэ пэйж танд хуваарилагдаагүй');
@@ -156,8 +157,11 @@ export async function createOrder(actor: UserActor, input: CreateInput) {
   const extraPhone = cleanOptPhone(input.extraPhone);
   if (extraPhone === phone) throw badRequest('Нэмэлт утас үндсэн утастай ижил байна', 'bad_phone');
   const addr = cleanAddress(input);
-  const pageId = Number(input.pageId);
-  if (!Number.isInteger(pageId) || pageId <= 0) throw badRequest('Пэйжээ сонгоно уу', 'bad_page');
+  // Пэйж сонгоогүй бол «Пэйж сонгоогүй» нэрээр хадгална (эзний шийдвэр #58)
+  const pageInput = input.pageId === undefined || input.pageId === null || input.pageId === '' ? 0 : Number(input.pageId);
+  if (!Number.isInteger(pageInput) || pageInput < 0) throw badRequest('Пэйж буруу', 'bad_page');
+  const noPage = pageInput === 0;
+  const pageId = noPage ? await noPageId(db) : pageInput;
   const deliveryDate = cleanDeliveryDate(input.deliveryDate);
   const note = String(input.note ?? '').trim().slice(0, 500) || null;
   const lineIn = cleanLineInputs(input.lines);
@@ -199,7 +203,7 @@ export async function createOrder(actor: UserActor, input: CreateInput) {
       if (!pending) await enqueueMeta(tx, o.id);
       // Дуудлагын бүртгэлийг автоматаар холбоно (хуучин логик)
       await tx.callNote.updateMany({ where: { phone: { in: phones }, status: { in: ['PENDING', 'CONTACTED'] } }, data: { status: 'ORDERED', orderId: o.id, closedAt: now } });
-      await tx.user.update({ where: { id: actor.id }, data: { lastPageId: pageId } });
+      if (!noPage) await tx.user.update({ where: { id: actor.id }, data: { lastPageId: pageId } });
       await writeAudit(actor, 'order.created', 'Order', String(o.id), {
         number: o.number, status: o.status, phone, total: o.total, discount: t.discount, deliveryFee: t.deliveryFee,
         lines: lines.map((l) => ({ code: l.code, qty: l.qty, unitPrice: l.unitPrice, listPrice: l.listPrice, discountReason: l.discountReason })),
@@ -261,7 +265,7 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
     }
     if (input.note !== undefined) { const n = String(input.note ?? '').trim().slice(0, 500) || null; if (n !== o.note) { data.note = n; changes.note = { from: o.note, to: n }; } }
     if (input.pageId !== undefined) {
-      const pid = Number(input.pageId);
+      const pid = input.pageId === null || input.pageId === '' || Number(input.pageId) === 0 ? await noPageId(tx) : Number(input.pageId);
       if (pid !== o.pageId) { await assertPage(tx, actor, pid); data.pageId = pid; changes.pageId = { from: o.pageId, to: pid }; }
     }
     if (input.deliveryDate !== undefined) {
