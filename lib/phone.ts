@@ -7,6 +7,7 @@ export function isValidPhone(phone: string): boolean {
   return /^[0-9]{8}$/.test(phone);
 }
 
+/** Эзний шийдвэр: утсыг зураасгүй, 8 оронтойгоор (91335599) харуулна */
 export function formatPhone(phone: string): string {
-  return isValidPhone(phone) ? `${phone.slice(0, 4)}-${phone.slice(4)}` : phone;
+  return phone;
 }

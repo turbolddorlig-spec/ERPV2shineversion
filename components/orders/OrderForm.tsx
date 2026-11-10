@@ -305,11 +305,11 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
               {hits.length ? hits.map((h) => {
                 const out = h.available <= 0;
                 return (
-                  <div key={h.variantId} className={clsx('flex items-center gap-2.5 rounded-md p-1.5', h.discontinued ? 'bg-bad-soft/50' : out ? 'opacity-50' : 'hover:bg-surface2')}>
+                  <div key={h.variantId} className={clsx('flex items-center gap-2.5 rounded-md p-1.5', out ? 'opacity-50' : 'hover:bg-surface2')}>
                     <Thumb src={h.thumb} alt={h.fullName} size={44} zoom={h.variantCode} />
                     <button type="button" disabled={out} onClick={() => addHit(h)} className="flex min-w-0 flex-1 flex-col text-left disabled:cursor-not-allowed">
-                      <span className="flex flex-wrap items-center gap-1.5 text-[13.5px] font-semibold"><span className="text-subtle">{h.variantCode}</span><span className="min-w-0 truncate" title={h.fullName}>{h.name}{h.label && h.label !== 'Үндсэн' ? ` · ${h.label}` : ''}</span>{h.discontinued ? <span className="rounded bg-bad-soft px-1 text-[11px] font-bold text-bad-ink">ДУУССАН</span> : null}</span>
-                      <span className="text-[12px] text-subtle">{money(h.price)}{h.deliveryIncluded ? '' : ' + хүргэлт'} · <span className={clsx('font-semibold', h.available > 10 ? 'text-ok-ink' : h.available > 0 ? 'text-warn' : 'text-bad-ink')}>{h.available}ш</span></span>
+                      <span className="flex flex-wrap items-center gap-1.5 text-[13.5px] font-semibold"><span className="text-subtle">{h.variantCode}</span><span className="min-w-0 truncate" title={h.fullName}>{h.name}{h.label && h.label !== 'Үндсэн' ? ` · ${h.label}` : ''}</span>{h.discontinued ? <span title="Барааны төлөв «Зогсоосон» — дахин татахгүй, үлдэгдэл дуустал зарна" className="rounded bg-warn-soft px-1 text-[11px] font-bold text-warn">Зогсоосон</span> : null}</span>
+                      <span className="text-[12px] text-subtle">{money(h.price)}{h.deliveryIncluded ? '' : ' + хүргэлт'} · <span className={clsx('font-semibold', h.available > 0 ? 'text-ok-ink' : 'text-bad-ink')}>{h.available > 0 ? `${h.available}ш үлдсэн` : 'Дууссан'}</span></span>
                       {h.description ? <span title={h.description} className="line-clamp-1 break-all text-[11.5px] text-muted [overflow-wrap:anywhere]">{h.description}</span> : null}
                     </button>
                   </div>

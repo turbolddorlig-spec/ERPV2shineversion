@@ -289,10 +289,10 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
       const diff: string[] = [];
       for (const l of lines) {
         const old = existing.get(l.variantId);
-        if (!old) diff.push(`+ ${l.name}${l.label ? ` · ${l.label}` : ''} ×${l.qty}`);
-        else if (old.qty !== l.qty || old.unitPrice !== l.unitPrice) diff.push(`${l.name}${l.label ? ` · ${l.label}` : ''}: ×${old.qty} → ×${l.qty}${old.unitPrice !== l.unitPrice ? `, ${old.unitPrice}₮ → ${l.unitPrice}₮` : ''}`);
+        if (!old) diff.push(`+ ${l.name}${l.label ? ` · ${l.label}` : ''} ${l.qty}ш`);
+        else if (old.qty !== l.qty || old.unitPrice !== l.unitPrice) diff.push(`${l.name}${l.label ? ` · ${l.label}` : ''}: ${old.qty}ш → ${l.qty}ш${old.unitPrice !== l.unitPrice ? `, ${old.unitPrice}₮ → ${l.unitPrice}₮` : ''}`);
       }
-      for (const old of o.lines) if (!lines.some((l) => l.variantId === old.variantId)) diff.push(`− ${old.name}${old.label ? ` · ${old.label}` : ''} ×${old.qty}`);
+      for (const old of o.lines) if (!lines.some((l) => l.variantId === old.variantId)) diff.push(`− ${old.name}${old.label ? ` · ${old.label}` : ''} ${old.qty}ш`);
       if (diff.length) {
         changes.lines = { from: null, to: diff };
         await tx.orderLine.deleteMany({ where: { orderId: id } });

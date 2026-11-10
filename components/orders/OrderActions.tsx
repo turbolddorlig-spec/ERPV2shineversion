@@ -70,7 +70,7 @@ export function HistoryDrawer({ orderId, onClose }: { orderId: number | null; on
               <li key={l.id} className="flex items-center gap-2 p-2">
                 <Thumb src={l.thumb} alt={l.name} size={32} />
                 <span className="min-w-0 flex-1"><span className="line-clamp-1 font-semibold">{l.name}{l.label ? ` · ${l.label}` : ''}</span><span className="text-[11.5px] text-subtle">{l.code}</span></span>
-                <span className="whitespace-nowrap">{money(l.unitPrice)} × {l.qty}</span>
+                <span className="whitespace-nowrap"><b>{l.qty}ш</b> × {money(l.unitPrice)}</span>
               </li>
             ))}
             <li className="flex justify-between p-2 font-bold"><span>Нийт{o.deliveryFee ? ` (хүргэлт ${money(o.deliveryFee)})` : ''}</span><span>{money(o.total)}</span></li>

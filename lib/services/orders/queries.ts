@@ -198,7 +198,7 @@ export async function customerCard(actor: UserActor, phonesInput: string[]) {
   const count = (s: OrderStatus) => stats.find((x) => x.status === s)?._count ?? 0;
   return {
     phones,
-    orders: ser.map((o) => ({ id: o.id, number: o.number, displayStatus: o.displayStatus, statusLabel: o.statusLabel, createdAt: o.createdAt, total: o.total, lines: o.lines.map((l) => `${l.name}${l.label ? ` · ${l.label}` : ''} ×${l.qty}`) })),
+    orders: ser.map((o) => ({ id: o.id, number: o.number, displayStatus: o.displayStatus, statusLabel: o.statusLabel, createdAt: o.createdAt, total: o.total, lines: o.lines.map((l) => `${l.name}${l.label ? ` · ${l.label}` : ''} ${l.qty}ш`) })),
     stats: { total: stats.reduce((a, s) => a + s._count, 0), delivered: count('DELIVERED'), cancelled: count('CANCELLED') },
     active: active ? { id: active.id, number: active.number, statusLabel: active.statusLabel, deliveryDate: active.deliveryDate, inHandover: active.inHandover, version: active.version, operatorName: active.operatorName, lines: active.lines } : null,
     blacklist: blacklist.map((b) => ({ id: b.id, phone: b.phone, reason: b.reason, reportedBy: b.reportedBy, createdAt: b.createdAt, orderNumber: b.orderNumber })),

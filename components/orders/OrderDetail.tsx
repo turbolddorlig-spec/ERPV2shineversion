@@ -86,7 +86,7 @@ export function OrderDetail({ id }: { id: number }) {
                   <span className="text-[12px] text-subtle">{l.code}</span>
                   {l.unitPrice < l.listPrice ? <span className="text-[12px] text-warn">Хямдруулсан {money(l.listPrice)} → {money(l.unitPrice)}: {l.discountReason}</span> : null}
                 </span>
-                <span className="text-[14px]">{money(l.unitPrice)} × {l.qty}</span>
+                <span className="text-[14px]"><b>{l.qty}ш</b> × {money(l.unitPrice)}</span>
                 <span className="w-24 text-right text-[15px] font-extrabold">{money(l.unitPrice * l.qty)}</span>
                 <span className="sr-only">{i}</span>
               </li>

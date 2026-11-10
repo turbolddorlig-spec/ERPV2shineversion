@@ -23,7 +23,7 @@ export interface OLine { id: number; variantId: number; code: string; name: stri
 export interface OItem {
   id: number; number: string; status: string; displayStatus: DStatus; statusLabel: string; phone: string; extraPhone: string | null; fullAddress: string; noKhoroo: boolean;
   note: string | null; pageName: string | null; operatorName: string; deliveryDate: string; isToday: boolean; prepaid: boolean; createdAt: string;
-  total: number; discount: number; deliveryFee: number; postponeCount: number; lines: OLine[]; cancelLabel: string | null; inHandover: boolean; version: number;
+  total: number; discount: number; deliveryFee: number; postponeCount: number; lines: OLine[]; cancelLabel: string | null; inHandover: boolean; version: number; driverName?: string | null;
 }
 interface ListResp { items: OItem[]; hasMore: boolean; matched: number | null; matchedCapped: boolean; counts: Record<string, number>; can: { edit: boolean; markPaid: boolean; supervise: boolean; review: boolean } }
 interface Hourly { cuts: number[]; rows: { rank: number; name: string; cum: number[]; total: number; me: boolean }[]; total: number }
@@ -309,9 +309,9 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
       {error ? <Notice>{error}</Notice> : null}
 
       <div className="overflow-x-auto rounded-xl border border-line bg-surface">
-        <table className="w-full min-w-[980px] text-[13px]">
+        <table className="w-full min-w-[1080px] text-[13px]">
           <thead className="border-b border-line bg-surface2/70">
-            <tr><th className={clsx(th, 'w-[130px]')}>Захиалга</th><th className={clsx(th, 'w-[110px]')}>Утас</th><th className={th}>Бараа</th><th className={th}>Хаяг</th><th className={clsx(th, 'w-[150px]')}>Төлөв</th><th className={clsx(th, 'w-[95px] text-right')}>Дүн</th><th className={clsx(th, 'w-[130px]')}>Оператор</th><th className={clsx(th, 'w-[124px] text-center')}>Үйлдэл</th></tr>
+            <tr><th className={clsx(th, 'w-[130px]')}>Захиалга</th><th className={clsx(th, 'w-[110px]')}>Утас</th><th className={th}>Бараа</th><th className={th}>Хаяг</th><th className={clsx(th, 'w-[150px]')}>Төлөв</th><th className={clsx(th, 'w-[95px] text-right')}>Дүн</th><th className={clsx(th, 'w-[130px]')}>Оператор</th><th className={clsx(th, 'w-[110px]')}>Жолооч</th><th className={clsx(th, 'w-[124px] text-center')}>Үйлдэл</th></tr>
           </thead>
           <tbody className="divide-y divide-line">
             {data?.items.map((o) => {
@@ -322,7 +322,7 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
                   <td className="select-text px-2.5 py-2"><div className="font-semibold">{formatPhone(o.phone)}</div>{o.extraPhone ? <div className="text-[11.5px] text-muted">{formatPhone(o.extraPhone)}</div> : null}</td>
                   <td className="px-2.5 py-2">
                     <div className="flex flex-col gap-1">
-                      {o.lines.slice(0, 3).map((l) => <span key={l.id} className="flex items-center gap-1.5"><Thumb src={l.thumb} alt={`${l.name} ${l.label}`} size={26} zoom={l.code} /><span className="line-clamp-1">{l.name}{l.label ? ` · ${l.label}` : ''} <b>×{l.qty}</b></span></span>)}
+                      {o.lines.slice(0, 3).map((l) => <span key={l.id} className="flex items-center gap-1.5"><Thumb src={l.thumb} alt={`${l.name} ${l.label}`} size={26} zoom={l.code} /><span className="line-clamp-1">{l.name}{l.label ? ` · ${l.label}` : ''} <b className="whitespace-nowrap">{l.qty}ш</b></span></span>)}
                       {o.lines.length > 3 ? <span className="text-[11.5px] text-subtle">+{o.lines.length - 3} бараа</span> : null}
                     </div>
                   </td>
@@ -330,6 +330,7 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
                   <td className="px-2.5 py-2"><StatusChip o={o} /></td>
                   <td className="px-2.5 py-2 text-right font-bold">{money(o.total)}</td>
                   <td className="px-2.5 py-2"><div className="line-clamp-1">{o.operatorName}</div>{o.pageName ? <div className="line-clamp-1 text-[11.5px] text-subtle">{o.pageName}</div> : null}</td>
+                  <td className="px-2.5 py-2">{o.driverName ? <div className="line-clamp-1">{o.driverName}</div> : <span className="text-subtle">—</span>}</td>
                   <td className="px-1.5 py-1.5">
                     <div className="flex items-center justify-center gap-0.5">
                       {o.status === 'PENDING_PAYMENT' && can?.markPaid ? <IconBtn tone="ok" icon="cash" label="Мөнгө орсон" onClick={() => setPaying(o)} /> : null}

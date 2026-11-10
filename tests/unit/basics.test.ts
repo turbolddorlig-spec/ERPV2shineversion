@@ -26,7 +26,7 @@ describe('утас', () => {
   it('хэлбэржүүлнэ', () => {
     expect(normalizePhone(' 9911-2233 ')).toBe('99112233');
     expect(normalizePhone('9911 2233')).toBe('99112233');
-    expect(formatPhone('99112233')).toBe('9911-2233');
+    expect(formatPhone('99112233')).toBe('99112233');
   });
   it('8 оронтой л хүчинтэй', () => {
     expect(isValidPhone('99112233')).toBe(true);
