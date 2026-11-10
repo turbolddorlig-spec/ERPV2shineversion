@@ -13,10 +13,10 @@ export function middleware(req: NextRequest) {
   if (pathname.startsWith('/api/')) {
     return NextResponse.json({ error: 'Нэвтрэх шаардлагатай', code: 'unauthorized' }, { status: 401 });
   }
-  const url = req.nextUrl.clone();
-  url.pathname = '/login';
-  url.search = '';
-  return NextResponse.redirect(url);
+  // Хэрэглэгчийн орсон хаяг (IP эсвэл домэйн) хэвээр үлдэнэ — серверийн дотоод нэр (localhost) руу биш
+  const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host') ?? req.nextUrl.host;
+  const proto = (req.headers.get('x-forwarded-proto') ?? req.nextUrl.protocol.replace(':', '')).split(',')[0]!.trim();
+  return NextResponse.redirect(new URL('/login', `${proto}://${host}`), 307);
 }
 
 export const config = {

@@ -1,5 +1,7 @@
-# Домэйн тохируулсан бол Caddy HTTPS сертификатыг автоматаар авч, сунгана.
-{$DOMAIN:localhost} {
+# SITE_ADDRESS-ийг docker-compose.yml тохируулна:
+#  - Домэйнгүй үед ":80"  → зөвхөн HTTP, IP хаягаар нээгдэнэ, сертификат авах оролдлого ХИЙХГҮЙ.
+#  - Домэйнтэй үед "v2.erpzahialga.com" → HTTPS сертификатыг автоматаар авч, сунгана.
+{$SITE_ADDRESS} {
 	encode gzip
 	reverse_proxy app:3000
 }

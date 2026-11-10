@@ -2,6 +2,7 @@
  * HTTP түвшний бүрэн шалгалт — ажиллаж буй сервер дээр (E2E_BASE, анхдагч http://localhost:3100).
  * Тест database-д seed-test-data.ts-ийн 150 хэрэглэгч байх ёстой.
  */
+import http from 'node:http';
 import type { Role } from '@prisma/client';
 import { PAGES, accessTo } from '../../lib/permissions';
 
@@ -46,6 +47,15 @@ async function main() {
   check('нэвтрээгүй → /login', anon.status === 307 && anon.location.includes('/login'), `${anon.status} ${anon.location}`);
   const anonApi = await req('/api/users');
   check('нэвтрээгүй API → 401', anonApi.status === 401);
+
+  // 1б. IP / домэйнаар орсон хүнийг серверийн дотоод нэр (localhost) руу шилжүүлэхгүй
+  for (const host of ['103.153.141.29', 'v2.example.mn']) {
+    const loc = await new Promise<string>((resolve, reject) => {
+      const u = new URL(BASE + '/orders');
+      http.get({ hostname: u.hostname, port: u.port, path: u.pathname, headers: { host } }, (r) => { r.resume(); resolve(r.headers.location ?? ''); }).on('error', reject);
+    });
+    check(`Host=${host} → өөрийн хаяг дээрээ /login`, loc === `http://${host}/login` || loc === '/login', loc);
+  }
 
   // 2. Хуурамч cookie
   const fake = 'zs=' + 'A'.repeat(43);

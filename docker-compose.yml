@@ -22,7 +22,8 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://erp:${POSTGRES_PASSWORD}@db:5432/erp?schema=public&connection_limit=20
-      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      # HTTP (домэйнгүй) үед false байх ёстой, эс бөгөөс браузер нэвтрэлтийн cookie-г хадгалахгүй
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
       APP_URL: ${APP_URL:-http://localhost}
     depends_on:
       db:
@@ -35,7 +36,8 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      DOMAIN: ${DOMAIN:-localhost}
+      # Домэйн хоосон бол ":80" — зөвхөн HTTP (IP хаягаар), HTTPS оролдохгүй
+      SITE_ADDRESS: ${DOMAIN:-:80}
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
