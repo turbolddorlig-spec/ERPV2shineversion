@@ -1,0 +1,149 @@
+<title>Модуль 2 Төлөвлөгөө</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap">
+<style>
+/* Layout: reading column; what changes → structure diagram → screens → rules → access → tests → impact → approval */
+:root{--bg:#F5F4F0;--surface:#FFFFFF;--surface2:#EFEDE7;--line:#E1DED6;--ink:#16181D;--muted:#4D525C;--subtle:#5F646E;--accent:#C2410C;--accent-soft:#FFF1E8;--ok:#166534;--ok-bg:#E6F4EA;--info:#1D4ED8;--info-bg:#E3ECFD;--warn:#92400E;--warn-bg:#FEF3C7;--font:"Onest",Inter,system-ui,sans-serif}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0E1014;--surface:#171A20;--surface2:#1D2028;--line:#2A2E38;--ink:#ECEDEF;--muted:#B0B4BD;--subtle:#9A9FA9;--accent:#FF8A4C;--accent-soft:rgba(255,122,61,.14);--ok:#86EFAC;--ok-bg:rgba(74,222,128,.13);--info:#93C5FD;--info-bg:rgba(96,165,250,.15);--warn:#FCD34D;--warn-bg:rgba(251,191,36,.14);color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0E1014;--surface:#171A20;--surface2:#1D2028;--line:#2A2E38;--ink:#ECEDEF;--muted:#B0B4BD;--subtle:#9A9FA9;--accent:#FF8A4C;--accent-soft:rgba(255,122,61,.14);--ok:#86EFAC;--ok-bg:rgba(74,222,128,.13);--info:#93C5FD;--info-bg:rgba(96,165,250,.15);--warn:#FCD34D;--warn-bg:rgba(251,191,36,.14);color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.6;font-variant-numeric:tabular-nums;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:980px;margin:0 auto;padding-block:36px 64px;display:flex;flex-direction:column;gap:34px}
+h1{font-size:clamp(28px,4vw,38px);font-weight:800;letter-spacing:-.03em;line-height:1.1;margin:0;text-wrap:balance}
+h2{font-size:21px;font-weight:800;letter-spacing:-.02em;margin:0}
+h3{font-size:15.5px;font-weight:700;margin:0}
+p{margin:0;max-width:76ch}
+.eyebrow{font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--subtle)}
+.brand{font-weight:800}.brand span{color:var(--accent)}
+.lede{color:var(--muted);font-size:16px}
+section{display:flex;flex-direction:column;gap:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.card p,.card li{font-size:14px;color:var(--muted)}
+ul,ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;max-width:82ch}
+li{color:var(--muted)} li strong{color:var(--ink)}
+code{font-size:12.5px;background:var(--surface2);padding:1px 5px;border-radius:5px;white-space:nowrap}
+.tree{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:10px;overflow-x:auto}
+.node{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.box{border-radius:10px;padding:8px 12px;font-weight:700;font-size:14px;white-space:nowrap}
+.b-prod{background:var(--accent-soft);color:var(--accent)}
+.b-var{background:var(--info-bg);color:var(--info)}
+.b-img{background:var(--ok-bg);color:var(--ok)}
+.b-meta{background:var(--surface2);color:var(--muted);font-weight:600}
+.indent{padding-left:28px;border-left:2px dashed var(--line);margin-left:14px;display:flex;flex-direction:column;gap:8px}
+.tablebox{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:13.5px}
+th{text-align:left;font-size:12px;font-weight:700;color:var(--muted);background:var(--surface2);padding:9px 12px;border-bottom:1px solid var(--line)}
+td{padding:9px 12px;border-bottom:1px solid var(--line);color:var(--muted);vertical-align:top}
+td:first-child{color:var(--ink);font-weight:600}
+tr:last-child td{border-bottom:0}
+.note{background:var(--accent-soft);border-radius:14px;padding:14px 16px;font-size:14px}
+.warn{background:var(--warn-bg);color:var(--warn);border-radius:14px;padding:14px 16px;font-size:14px}
+footer{font-size:13px;color:var(--subtle)}
+</style>
+<div class="wrap">
+<header style="display:flex;flex-direction:column;gap:10px">
+<span class="eyebrow"><span class="brand">zahialga<span>•</span></span> · ERP V2 · Модуль 2</span>
+<h1>Үлдэгдлийн журнал ба агуулахын төлөвлөгөө</h1>
+<p class="lede">Хуучин системийн хамгийн том асуудал — <strong>үлдэгдэл таардаггүй</strong> — үүнийг энэ модуль шийднэ. Бараа хөдлөх бүрт нэг мөр бичигдэж, үлдэгдэл = орсон − гарсан. Мөрийг засах, устгах боломжгүй.</p>
+</header>
+
+<section><h2>Таны шийдвэрүүд</h2>
+<div class="grid">
+<div class="card"><h3>6 агуулах</h3><p>1 үндсэн (тавиуртай) + 5. Бусдаас үндсэн рүү байнга зөөнө. <strong>Агуулах тус бүрийн үлдэгдэл</strong> харагдана.</p></div>
+<div class="card"><h3>Шилжүүлэг — 2 алхам</h3><p>Илгээсэн → «замдаа» → хүлээн авах агуулах тоолж батална. Дутуу ирвэл зөрүү шууд харагдана.</p></div>
+<div class="card"><h3>Орлого</h3><p>Бараа, тоо, агуулах + тэмдэглэл. Олон барааг нэг дор.</p></div>
+<div class="card"><h3>Зарлага — шууд</h3><p>Гэмтэл · Дээж, бэлэг, реклам · Нийлүүлэгчид буцаасан. Шууд хасагдана, админ тайлангаас харна.</p></div>
+<div class="card"><h3>Тооллого</h3><p>Агуулах тоолно → зөрүү харагдана → Админ <strong>тус бүр</strong> эсвэл <strong>«Бүгдийг зөвшөөрөх»</strong>.</p></div>
+<div class="card"><h3>Бараа зээл</h3><p>Ажилтан хүсэлт → агуулах өгөхдөө батална → буцаахад агуулах хүлээн авна. Буцаагаагүй нь цалингаас (үнэ − 5,000₮).</p></div>
+<div class="card"><h3>Тавиур</h3><p>Бараа бүрт нэг тавиурын код («A-3»). Олон барааг нэг дор оноох. Бэлтгэлийн жагсаалт тавиурын дарааллаар.</p></div>
+</div></section>
+
+<section><h2>Бараа хаана байна вэ</h2>
+<p class="lede">Бараа үргэлж <strong>нэг газарт</strong> байна. Хөдөлгөөн бүр «хаанаас → хаашаа» гэж бичигдэнэ.</p>
+<div class="tree">
+<div class="node"><span class="box b-meta">Нийлүүлэгч</span><span>→ Орлого →</span><span class="box b-prod">Агуулах 2–6</span><span>→ Шилжүүлэг (замдаа) →</span><span class="box b-prod">Үндсэн агуулах (тавиур)</span></div>
+<div class="indent">
+<div class="node"><span class="box b-var">→ Ажилтны гарт (зээл) → буцаалт / цалингийн суутгал</span></div>
+<div class="node"><span class="box b-var">→ Гэмтэл · Дээж, бэлэг · Нийлүүлэгчид буцаасан</span></div>
+<div class="node"><span class="box b-var">± Тооллогын засвар (админ баталсан)</span></div>
+<div class="node"><span class="box b-img">→ Жолоочийн гарт (Модуль 4 падаан) → Үйлчлүүлэгч / буцаалт (Модуль 5)</span></div>
+</div></div>
+<p class="note"><strong>Захиалах боломжтой</strong> = Үндсэн агуулахад байгаа − захиалгад нөөцлөгдсөн (Модуль 3). Энэ модуль нөөцлөлтийн талбарыг бэлдэнэ, захиалга хараахан байхгүй.</p>
+</section>
+
+<section><h2>Хамгаалалт (хуучин 11 зөрүүг хаах)</h2><ul>
+<li><strong>Сөрөг үлдэгдэл боломжгүй</strong> — database өөрөө хориглоно. «0 болгож нууцлах» байхгүй.</li>
+<li><strong>Давхар дарах</strong> — үйлдэл бүр давтагдашгүй түлхүүртэй; 2 удаа дарсан ч нэг л хөдөлгөөн.</li>
+<li><strong>Зэрэг 2 хүн</strong> нэг барааг гаргавал database нэгийг нь хүлээлгэнэ, хүрэхгүй бол татгалзана.</li>
+<li><strong>Агуулах заавал</strong> — «хамгийн ихтэй агуулахаас» гэх таамаг байхгүй.</li>
+<li><strong>Журналыг засах, устгах боломжгүй</strong> (үйлдлийн түүх шиг). Алдааг зөвхөн эсрэг хөдөлгөөнөөр засна.</li>
+<li><strong>Тулгалт</strong> — «журналын нийлбэр = үлдэгдэл» шалгалт агуулахын хуудсанд; зөрүү гарвал улаанаар.</li>
+<li>Үлдэгдэлтэй агуулахыг хаахыг хориглоно — эхлээд шилжүүлнэ.</li>
+</ul></section>
+
+<section><h2>Дэлгэцүүд</h2>
+<div class="grid">
+<div class="card"><h3>Агуулах — үлдэгдэл</h3><ul><li>Бараа (хувилбар) бүр: агуулах тус бүрийн тоо, нийт, замдаа, тавиур</li><li>Хайлт, ангилал, агуулахаар шүүх; 50 мөр/хуудас</li><li>Барааны жагсаалтад «Үлдэгдэл» багана нэмэгдэнэ</li><li>Excel татах</li></ul></div>
+<div class="card"><h3>Орлого</h3><ul><li>Агуулах сонгоно → бараа хайж нэмнэ → тоо → тэмдэглэл</li><li>Нэг баримтанд олон бараа</li></ul></div>
+<div class="card"><h3>Шилжүүлэг</h3><ul><li>Хаанаас → хаашаа, олон бараа</li><li>Хүлээн авах агуулахад «Ирэх шилжүүлэг» жагсаалт — ирсэн тоогоо оруулж батална</li><li>Дутуу ирвэл админ шийднэ: илгээгч рүү буцаах эсвэл хорогдол</li><li>Хүлээн аваагүй шилжүүлгийг цуцалж болно</li></ul></div>
+<div class="card"><h3>Зарлага</h3><ul><li>Шалтгаан + тайлбар заавал</li><li>Админд зарлагын тайлан (шалтгаан, огноо, хүнээр)</li></ul></div>
+<div class="card"><h3>Тооллого</h3><ul><li>Агуулах сонгож тооллого эхлүүлнэ; бүгдийг эсвэл заримыг тоолно</li><li>Систем ↔ тоолсон, зөрүү тодоор</li><li>Админ: тус бүр эсвэл «Бүгдийг зөвшөөрөх»; татгалзаж болно</li><li>Тоолсны дараа бараа хөдөлсөн бол анхааруулна</li></ul></div>
+<div class="card"><h3>Бараа зээл</h3><ul><li>Ажилтан: хүсэлт гаргах, өөрийн зээлээ харах</li><li>Агуулах: «Олгох», «Буцаалт хүлээн авах» (хэсэгчлэн ч болно)</li><li>Супер админ / Нягтлан: 5,000₮ хямдралыг засах (ерөнхий тохиргоо ба зээл тус бүрээр), «Цалингаас суутгах» гэж тэмдэглэх</li></ul></div>
+<div class="card"><h3>Хөдөлгөөний түүх</h3><ul><li>Бараа, агуулах, төрөл, огноо, хүнээр шүүх</li><li>Мөр бүр: хэзээ, хэн, хаанаас → хаашаа, тоо, баримт, тайлбар</li><li>Excel татах</li></ul></div>
+<div class="card"><h3>Агуулахууд</h3><ul><li>Нэмэх, нэр/хаяг засах, үндсэнийг сонгох</li><li>Хаах — зөвхөн хоосон бол</li></ul></div>
+</div></section>
+
+<section><h2>Хэн юу хийх вэ</h2>
+<div class="tablebox"><table><thead><tr><th>Үйлдэл</th><th>Хэн</th></tr></thead><tbody>
+<tr><td>Агуулахын хуудас харах</td><td>Супер админ, Админ, Агуулах, Нягтлан (харах)</td></tr>
+<tr><td>Орлого, шилжүүлэг илгээх / хүлээн авах, зарлага, тооллого оруулах, тавиур</td><td>Супер админ, Админ, Агуулах</td></tr>
+<tr><td>Тооллого батлах, шилжүүлгийн дутагдал шийдэх</td><td>Супер админ, Админ</td></tr>
+<tr><td>Агуулах нэмэх, засах, хаах</td><td>Супер админ, Админ</td></tr>
+<tr><td>Бараа зээл хүсэх</td><td>Оператор, Ахлах оператор, Маркетинг, Ахлах маркетинг</td></tr>
+<tr><td>Зээл олгох, буцаалт хүлээн авах</td><td>Супер админ, Админ, Агуулах</td></tr>
+<tr><td>Зээлийн хямдрал (5,000₮) засах, «Цалингаас суутгах»</td><td>Супер админ, Нягтлан</td></tr>
+<tr><td>Барааны жагсаалтад үлдэгдэл харах</td><td>Бараа хардаг бүх хүн</td></tr>
+</tbody></table></div>
+<p class="note">Үйлдэл бүр хэн хийснээр үйлдлийн түүхэнд бичигдэнэ. Нэг хүн олон role-тэй бол эрх нь нийлнэ (жишээ: Маркетинг + Агуулах).</p>
+</section>
+
+<section><h2>Миний санал болгож буй жижиг шийдвэрүүд</h2>
+<p class="lede">Та асуугаагүй ч хэрэгжүүлэхэд шийдэх шаардлагатай. Өөрөөр хүсвэл хэлээрэй.</p>
+<ul>
+<li><strong>Шилжүүлэг дутуу ирвэл</strong> — зөрүү «замдаа» хэвээр үлдэж, админ «илгээгч рүү буцаах» эсвэл «хорогдол» гэж шийднэ.</li>
+<li><strong>Зарлага, тооллогын тайлбар</strong> — заавал (5+ тэмдэгт), барааны засвартай адил.</li>
+<li><strong>Зээлийн хямдрал</strong> — ерөнхий тохиргоо 5,000₮; Супер админ / Нягтлан зээл тус бүрийн суутгах дүнг ч засна. Цалингаас бодитоор хасах нь Цалингийн модульд.</li>
+<li><strong>Бага үлдэгдлийн анхааруулга</strong> — одоо хийхгүй (өмнө нь та хасуулсан). Хэрэгтэй бол дараа.</li>
+<li><strong>Тавиурын код</strong> — үндсэн агуулахад; бусад агуулахад шаардлагагүй.</li>
+</ul></section>
+
+<section><h2>Тест (MASTER §12)</h2>
+<div class="grid">
+<div class="card"><h3>Үлдэгдлийн зөв байдал</h3><ul><li>Орлого, шилжүүлэг, зарлага, тооллого, зээлийн бүх замаар журнал = үлдэгдэл</li><li>Сөрөг гаргах оролдлого → татгалзана</li><li>Хүлээн аваагүй / цуцалсан / дутуу ирсэн шилжүүлэг</li></ul></div>
+<div class="card"><h3>Давхар ба зэрэг</h3><ul><li>«Хадгалах» 2 удаа → 1 хөдөлгөөн</li><li>2 хүн зэрэг сүүлийн барааг гаргах → 1 л амжилттай</li><li>Нэг шилжүүлгийг 2 удаа хүлээн авах → 1</li></ul></div>
+<div class="card"><h3>Тооллого ба зээл</h3><ul><li>Тоолсны дараа бараа хөдөлсөн үед батлах</li><li>Тус бүр / бүгдийг зөвшөөрөх, татгалзах</li><li>Зээл: олгох, хэсэгчилсэн буцаалт, суутгал, хямдрал засах</li></ul></div>
+<div class="card"><h3>Эрх ба ачаалал (R1)</h3><ul><li>Role бүрийн эрх (API-аар ч)</li><li>10,000 бараа × 6 агуулах, <strong>1,000,000+ хөдөлгөөн</strong>, 150 зэрэг хэрэглэгч</li><li>Гар утас, Light/Dark</li></ul></div>
+</div></section>
+
+<section><h2>Бусад модульд нөлөө (MASTER §4–5)</h2>
+<div class="tablebox"><table><thead><tr><th>Зүйл</th><th>Нөлөө</th></tr></thead><tbody>
+<tr><td>Үлдэгдэл</td><td><strong>Шинээр үүснэ.</strong> Бүх хөдөлгөөн энэ журналаар л явна.</td></tr>
+<tr><td>Захиалга, нөөцлөлт</td><td>Захиалга хараахан байхгүй. Модуль 3 үндсэн агуулахаас нөөцөлнө.</td></tr>
+<tr><td>Падаан, жолоочийн бараа, буцаалт, нэмэлт бараа</td><td>Модуль 4, 5-д. Энэ журнал «жолоочийн гар»-ыг газар болгон бэлдэнэ.</td></tr>
+<tr><td>Мөнгө, цалин</td><td>Зээлийн суутгах дүнг бэлдэнэ; бодит суутгал Цалингийн модульд.</td></tr>
+<tr><td>Meta CAPI</td><td>Нөлөөгүй.</td></tr>
+<tr><td>Хуучин өгөгдөл</td><td>Хуучин үлдэгдлийг эцсийн шилжилтэд таны зөвшөөрлөөр «эхний үлдэгдэл» болгож оруулна. Тэр хүртэл зөвхөн хуурамч тест өгөгдөл.</td></tr>
+</tbody></table></div>
+</section>
+
+<section><h2>Энэ модульд ОРОХГҮЙ</h2><ul>
+<li>Захиалгын нөөцлөлт — Модуль 3.</li>
+<li>Жолоочид бараа өгөх (падаан) — Модуль 4. Жолоочийн буцаалт, нэмэлт бараа — Модуль 5.</li>
+<li>Цалингаас бодитоор суутгах — Цалингийн модуль.</li>
+<li>Худалдан авалт, нийлүүлэгчийн бүртгэл (хасагдсан #11).</li>
+</ul></section>
+
+<footer>Модуль 2 төлөвлөгөө · 2026.11.10 · Таны тодорхой зөвшөөрлийг хүлээж байна.</footer>
+</div>
