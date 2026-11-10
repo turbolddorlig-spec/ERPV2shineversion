@@ -152,6 +152,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
                 {showCost ? <th scope="col" className="border-b border-line px-3 py-2.5 text-right font-bold">Өртөг</th> : null}
                 <th scope="col" className="border-b border-line px-3 py-2.5 font-bold">Хувилбар</th>
                 <th scope="col" className="border-b border-line px-3 py-2.5 font-bold">Төлөв</th>
+                {canEdit ? <th scope="col" className="border-b border-line px-3 py-2.5"><span className="sr-only">Үйлдэл</span></th> : null}
               </tr>
             </thead>
             <tbody>
@@ -172,6 +173,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
                   {showCost ? <td className="border-b border-line px-3 py-2 text-right text-muted">{money(p.costPrice)}</td> : null}
                   <td className="border-b border-line px-3 py-2 text-muted">{p.hasVariants ? `${p.variantCount} хувилбар` : 'Үндсэн'}</td>
                   <td className="border-b border-line px-3 py-2"><StatusBadge status={p.status} label={p.statusLabel} /></td>
+                  {canEdit ? <td className="border-b border-line px-3 py-2 text-right"><Link href={`/products/${p.id}?edit=1`} aria-label={`${p.code} засах`} className="inline-flex h-9 items-center gap-1.5 rounded-[10px] border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2"><Icon name="edit" size={15} />Засах</Link></td> : null}
                 </tr>
               ))}
             </tbody>
@@ -191,6 +193,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
                 <span className="flex items-center gap-2"><span className="text-[14.5px] font-extrabold">{money(p.price)}</span><StatusBadge status={p.status} label={p.statusLabel} /></span>
               </span>
             </Link>
+            {canEdit ? <Link href={`/products/${p.id}?edit=1`} aria-label={`${p.code} засах`} className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-[11px] border border-line bg-surface px-3 text-[13px] font-semibold"><Icon name="edit" size={15} />Засах</Link> : null}
           </li>
         ))}
       </ul>

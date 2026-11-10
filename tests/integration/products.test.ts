@@ -286,6 +286,30 @@ describe('засварын түүх хуудас (#29)', () => {
     const mine = (await H.listProductHistory(ml, { actorId: ml.id })).items[0]!;
     await err(H.reviewProductEdit(ml, mine.id), 403);
   });
+  it('Супер админ өөрийн засварыг шалгаж болно; «Бүгдийг шалгасан» зөвхөн Супер админ', async () => {
+    const sa = await actor(['SUPER_ADMIN']);
+    const adm = await actor(['ADMIN']);
+    const ml = await actor(['MARKETING_LEAD']);
+    const p = await P.createProduct(sa, { code: 'SA1', name: 'Бараа', price: 1000 });
+    const r1 = await P.updateProduct(sa, p.id, { name: 'СА засав' }, { reason: 'Нэр тодруулав', version: p.version });
+    const mine = (await H.listProductHistory(sa, { actorId: sa.id, unreviewed: true })).items[0]!;
+    await H.reviewProductEdit(sa, mine.id);
+    expect(await H.unreviewedCount(sa, { fresh: true })).toBe(0);
+    // Админ өөрийнхөө засварыг шалгахгүй хэвээр
+    const r2 = await P.updateProduct(adm, p.id, { price: 900 }, { reason: 'Үнэ буулгав', version: r1.product.version });
+    const admOwn = (await H.listProductHistory(adm, { actorId: adm.id })).items[0]!;
+    await err(H.reviewProductEdit(adm, admOwn.id), 403);
+    await P.updateProduct(ml, p.id, { name: 'ML засав' }, { reason: 'Ахлагч засав', version: r2.product.version });
+    expect(await H.unreviewedCount(sa, { fresh: true })).toBe(2);
+    await err(H.reviewAllProductEdits(adm), 403);
+    await err(H.reviewAllProductEdits(ml), 403);
+    expect(await H.reviewAllProductEdits(sa)).toEqual({ count: 2 });
+    expect(await H.unreviewedCount(sa, { fresh: true })).toBe(0);
+    expect(await H.reviewAllProductEdits(sa)).toEqual({ count: 0 });
+    expect(await db.auditLog.count({ where: { action: 'product.review_all' } })).toBe(1);
+    // «Бүгдийг шалгасан» үйлдэл барааны засварын жагсаалтад холилдохгүй
+    expect((await H.listProductHistory(sa, {})).items.every((i) => i.action !== 'product.review_all')).toBe(true);
+  });
   it('харах эрх: агуулах, торгууль харна; оператор харахгүй', async () => {
     await H.listProductHistory(await actor(['WAREHOUSE']), {});
     await H.listProductHistory(await actor(['PENALTY_OFFICER']), {});

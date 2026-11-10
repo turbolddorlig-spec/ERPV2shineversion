@@ -64,8 +64,8 @@ function Changes({ changes }: { changes: Record<string, Change> }) {
   );
 }
 
-export function HistoryCard({ item, canReview, onReviewed, onActor, selfId }: {
-  item: HistoryItem; canReview?: boolean; selfId?: string; onReviewed?: () => void; onActor?: (id: string, name: string) => void;
+export function HistoryCard({ item, canReview, onReviewed, onActor, selfId, allowSelf = false }: {
+  item: HistoryItem; canReview?: boolean; selfId?: string; allowSelf?: boolean; onReviewed?: () => void; onActor?: (id: string, name: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -98,7 +98,7 @@ export function HistoryCard({ item, canReview, onReviewed, onActor, selfId }: {
         {item.review
           ? <span className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-ok-ink"><Icon name="check" size={14} strokeWidth={2.6} />Шалгасан · {item.review.by} · {ubDateTime(item.review.at)}</span>
           : item.reviewable ? <span className="text-[12.5px] font-semibold text-warn">Шалгаагүй</span> : null}
-        {canReview && !item.review && item.reviewable && item.actorId !== selfId ? <Button size="sm" variant="dark" loading={busy} onClick={review} className="ml-auto">Шалгасан</Button> : null}
+        {canReview && !item.review && item.reviewable && (allowSelf || item.actorId !== selfId) ? <Button size="sm" variant="dark" loading={busy} onClick={review} className="ml-auto">Шалгасан</Button> : null}
       </div>
       {err ? <Notice>{err}</Notice> : null}
     </li>

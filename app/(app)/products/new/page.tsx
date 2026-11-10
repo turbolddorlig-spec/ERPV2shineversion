@@ -12,7 +12,7 @@ export default async function NewProductPage() {
   if (access !== 'edit') redirect('/products');
   return (
     <>
-      <PageHeader title="Бараа нэмэх" />
+      <PageHeader back={{ href: '/products', label: 'Бараа руу буцах' }} title="Бараа нэмэх" />
       <ProductEditor product={null} perms={{ edit: true, cost: canSeeCost(user.roles), code: canChangeProductCode(user.roles), status: canChangeProductStatus(user.roles) }} />
     </>
   );

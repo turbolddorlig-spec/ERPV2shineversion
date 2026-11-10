@@ -122,10 +122,15 @@ export function AppShell({ user, nav, children }: { user: { name: string; roleLa
   );
 }
 
-export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: ReactNode; actions?: ReactNode }) {
+export function PageHeader({ title, subtitle, actions, back }: { title: string; subtitle?: ReactNode; actions?: ReactNode; back?: { href: string; label?: string } }) {
   return (
     <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
       <div className="flex min-w-0 flex-col gap-1">
+        {back ? (
+          <Link href={back.href} className="-ml-1 mb-1 inline-flex h-9 w-fit items-center gap-1 rounded-[10px] px-1.5 text-[14px] font-semibold text-muted hover:bg-surface2 hover:text-ink">
+            <Icon name="left" size={18} /> {back.label ?? 'Буцах'}
+          </Link>
+        ) : null}
         <h1 className="text-[24px] font-extrabold tracking-[-0.03em] md:text-[26px]">{title}</h1>
         {subtitle ? <p className="text-[13.5px] text-muted">{subtitle}</p> : null}
       </div>

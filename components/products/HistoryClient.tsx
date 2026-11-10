@@ -1,5 +1,6 @@
 'use client';
 import clsx from 'clsx';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/Notice';
@@ -7,7 +8,10 @@ import { Icon } from '@/components/icons';
 import { api, ApiError } from '@/components/ui/api';
 import { HistoryCard, type HistoryResp } from './ProductHistoryList';
 
-export function HistoryClient({ selfId, canReview }: { selfId: string; canReview: boolean }) {
+export function HistoryClient({ selfId, canReview, superAdmin = false }: { selfId: string; canReview: boolean; superAdmin?: boolean }) {
+  const router = useRouter();
+  const [confirmAll, setConfirmAll] = useState(false);
+  const [allBusy, setAllBusy] = useState(false);
   const initial = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
   const [productId] = useState(initial?.get('productId') ?? '');
   const [actor, setActor] = useState<{ id: string; name: string } | null>(null);
@@ -36,6 +40,16 @@ export function HistoryClient({ selfId, canReview }: { selfId: string; canReview
   }, [productId, actor, from, to, important, unreviewed, page]);
   useEffect(() => { load(); }, [load]);
 
+  /** Шалгасны дараа жагсаалт болон цэсний тэмдэгтийг шинэчилнэ */
+  const afterReview = useCallback(() => { load(); router.refresh(); }, [load, router]);
+
+  async function reviewAll() {
+    setAllBusy(true);
+    try { await api('/api/products/history/review-all', { method: 'POST', json: {} }); setConfirmAll(false); afterReview(); }
+    catch (e) { setError(e instanceof ApiError ? e.message : 'Алдаа гарлаа'); }
+    finally { setAllBusy(false); }
+  }
+
   const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
   const chip = (on: boolean) => clsx('h-10 shrink-0 rounded-full border px-4 text-[13.5px] font-semibold', on ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface text-ink');
 
@@ -45,6 +59,17 @@ export function HistoryClient({ selfId, canReview }: { selfId: string; canReview
         <div className="flex flex-wrap items-center gap-3 rounded-xl bg-warn-soft px-3.5 py-3 text-warn">
           <strong className="text-[15px]">{data.unreviewed} засвар шалгагдаагүй байна</strong>
           <Button size="sm" onClick={() => { setUnreviewed(true); setPage(1); }}>Харах</Button>
+          {superAdmin ? (confirmAll ? (
+            <span className="flex flex-wrap items-center gap-2 sm:ml-auto">
+              <span className="text-[13.5px] font-semibold">{data.unreviewed} засварыг бүгдийг шалгасан болгох уу?</span>
+              <Button size="sm" variant="dark" loading={allBusy} onClick={reviewAll}>Тийм</Button>
+              <Button size="sm" onClick={() => setConfirmAll(false)}>Үгүй</Button>
+            </span>
+          ) : (
+            <Button size="sm" variant="dark" className="sm:ml-auto" onClick={() => setConfirmAll(true)}>
+              <Icon name="check" size={15} /> Бүгдийг шалгасан болгох
+            </Button>
+          )) : null}
         </div>
       ) : null}
       <div className="flex flex-wrap items-end gap-2">
@@ -61,7 +86,7 @@ export function HistoryClient({ selfId, canReview }: { selfId: string; canReview
           <p className="text-[13px] text-muted">{data.total.toLocaleString('en-US')} бичлэг{actor ? ` · ${actor.name}` : ''}</p>
           <ul className="flex flex-col gap-2.5">
             {data.items.map((i) => (
-              <HistoryCard key={i.id} item={i} canReview={canReview} selfId={selfId} onReviewed={load} onActor={(id, name) => { setActor({ id, name }); setPage(1); }} />
+              <HistoryCard key={i.id} item={i} canReview={canReview} selfId={selfId} allowSelf={superAdmin} onReviewed={afterReview} onActor={(id, name) => { setActor({ id, name }); setPage(1); }} />
             ))}
           </ul>
           {data.items.length === 0 ? <div className="rounded-[16px] border border-dashed border-line bg-surface p-8 text-center text-muted">Бичлэг алга</div> : null}

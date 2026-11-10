@@ -173,6 +173,15 @@ async function main() {
   check('хуучин version → 409 stale', stale.status === 409 && stale.text.includes('stale'), String(stale.status));
   const codeTry = await req('/api/products/2', { cookie: mk.cookie, method: 'PATCH', body: { changes: { code: 'HACK1' }, reason: 'Код солих оролдлого', version: before.version + 1 } });
   check('маркетинг код солихгүй → 403', codeTry.status === 403, String(codeTry.status));
+  // «Бүгдийг шалгасан болгох» — зөвхөн Супер админ
+  for (const [phone, who, want] of [['80000140', 'маркетинг', 403], ['80000139', 'ахлах маркетинг', 403], ['80000002', 'админ', 403], ['80000001', 'супер админ', 200]] as const) {
+    const u = await loginAs(phone);
+    const r = await req('/api/products/history/review-all', { cookie: u.cookie, method: 'POST', body: {} });
+    check(`${who} бүгдийг шалгасан болгох → ${want}`, r.status === want, `${r.status} ${r.text.slice(0, 80)}`);
+  }
+  const saU = await loginAs('80000001');
+  const unrev = JSON.parse((await req('/api/products/history?unreviewed=1', { cookie: saU.cookie })).text);
+  check('бүгдийг шалгасны дараа шалгаагүй 0', unrev.unreviewed === 0 && unrev.total === 0, JSON.stringify({ u: unrev.unreviewed, t: unrev.total }));
   // Зураг upload (multipart, HTTP)
   const png = await sharp({ create: { width: 600, height: 600, channels: 3, background: '#E8590C' } }).png().toBuffer();
   const corrupt = Buffer.concat([png.subarray(0, 60), Buffer.alloc(200, 7)]);

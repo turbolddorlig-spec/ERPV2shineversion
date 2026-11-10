@@ -12,7 +12,7 @@ export default async function CatalogPage() {
   if (!canManageCatalogLists(user.roles)) redirect('/forbidden');
   return (
     <>
-      <PageHeader title="Ангилал, улирал" subtitle="Барааг хайх, шүүхэд ашиглана" />
+      <PageHeader back={{ href: '/products', label: 'Бараа руу буцах' }} title="Ангилал, улирал" subtitle="Барааг хайх, шүүхэд ашиглана" />
       <div className="grid gap-5 lg:grid-cols-2">
         <CatalogClient kind="categories" title="Ангилал" />
         <CatalogClient kind="seasons" title="Улирал" />

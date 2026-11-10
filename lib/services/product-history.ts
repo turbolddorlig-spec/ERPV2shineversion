@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { db } from '../db';
 import { badRequest, forbidden, notFound } from '../errors';
 import { canReviewProductEdits, canSeeCost, canView } from '../permissions';
+import { writeAudit } from '../audit';
 import type { UserActor } from './users';
 
 /**
@@ -109,18 +110,39 @@ export async function unreviewedCount(actor: UserActor, opts: { fresh?: boolean 
   return n;
 }
 
-/** "Шалгасан" тэмдэглэх. Өөрийн засварыг өөрөө шалгахгүй. Давтан дарахад нэг л бичлэг. */
+/**
+ * "Шалгасан" тэмдэглэх. Давтан дарахад нэг л бичлэг.
+ * Өөрийн засварыг өөрөө шалгахгүй — зөвхөн Супер админ өөрийнхөө засварыг шалгаж болно (эзний шийдвэр).
+ */
 export async function reviewProductEdit(actor: UserActor, auditId: string) {
   if (!canReviewProductEdits(actor.roles)) throw forbidden('Засварыг Супер админ, Админ, Ахлах маркетинг шалгана');
   if (!/^\d+$/.test(auditId)) throw notFound();
   const row = await db.auditLog.findUnique({ where: { id: BigInt(auditId) } });
   if (!row || row.entityType !== 'Product') throw notFound('Засвар олдсонгүй');
   if (row.action === 'product.created') throw badRequest('Шинэ бараа үүсгэсэн бичлэгийг шалгах шаардлагагүй');
-  if (row.actorId === actor.id) throw forbidden('Өөрийн засварыг өөрөө шалгаж болохгүй');
+  if (row.actorId === actor.id && !actor.roles.includes('SUPER_ADMIN')) throw forbidden('Өөрийн засварыг өөрөө шалгаж болохгүй');
   await db.auditReview.createMany({
     data: [{ auditLogId: row.id, reviewedById: actor.id, reviewedByName: actor.name }],
     skipDuplicates: true,
   });
+  badgeCache = null;
   const r = await db.auditReview.findUniqueOrThrow({ where: { auditLogId: row.id } });
   return { by: r.reviewedByName, at: r.reviewedAt };
+}
+
+/** Шалгаагүй бүх засварыг нэг дор "Шалгасан" болгох — зөвхөн Супер админ. Үйлдэл өөрөө түүхэнд бичигдэнэ. */
+export async function reviewAllProductEdits(actor: UserActor) {
+  if (!actor.roles.includes('SUPER_ADMIN')) throw forbidden('Бүгдийг шалгасан болгохыг зөвхөн Супер админ хийнэ');
+  const count = await db.$transaction(async (tx) => {
+    const n = await tx.$executeRaw`
+      INSERT INTO "AuditReview" ("auditLogId", "reviewedById", "reviewedByName", "reviewedAt")
+      SELECT a.id, ${actor.id}::uuid, ${actor.name}, now() FROM "AuditLog" a
+      WHERE a."entityType" = 'Product' AND a.action <> 'product.created'
+        AND NOT EXISTS (SELECT 1 FROM "AuditReview" r WHERE r."auditLogId" = a.id)
+      ON CONFLICT ("auditLogId") DO NOTHING`;
+    if (n > 0) await writeAudit(actor, 'product.review_all', 'ProductReview', null, { count: n }, tx);
+    return n;
+  });
+  badgeCache = null;
+  return { count };
 }
