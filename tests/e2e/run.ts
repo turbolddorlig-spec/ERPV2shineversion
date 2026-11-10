@@ -3,6 +3,7 @@
  * Тест database-д seed-test-data.ts-ийн 150 хэрэглэгч байх ёстой.
  */
 import http from 'node:http';
+import sharp from 'sharp';
 import type { Role } from '@prisma/client';
 import { PAGES, accessTo } from '../../lib/permissions';
 
@@ -132,6 +133,68 @@ async function main() {
   const un = await req(`/api/users/${lid}/unlock`, { cookie: adm.cookie, method: 'POST', body: {} });
   check('админ түгжээ тайлав', un.status === 200, un.text);
   check('тайлсны дараа нэвтэрнэ', (await loginAs('80000050')).status === 200);
+
+  // ───────── Модуль 1: Бараа ─────────
+  const prodPages = ['/products', '/products/new', '/products/history', '/products/catalog', '/products/1'];
+  const expectProd: Record<string, (r: Role[]) => boolean> = {
+    '/products': (r) => accessTo(r, 'products') !== 'none',
+    '/products/1': (r) => accessTo(r, 'products') !== 'none',
+    '/products/new': (r) => accessTo(r, 'products') === 'edit',
+    '/products/history': (r) => accessTo(r, 'product-history') !== 'none',
+    '/products/catalog': (r) => ['SUPER_ADMIN', 'ADMIN', 'MARKETING_LEAD'].some((x) => r.includes(x as Role)),
+  };
+  for (const [roles, phone] of ROLE_PHONE) {
+    const l = await loginAs(phone);
+    if (!l.cookie) continue;
+    for (const path of prodPages) {
+      const r = await req(path, { cookie: l.cookie });
+      const allowed = expectProd[path]!(roles);
+      check(`${roles.join('+')} ${path}`, allowed ? r.status === 200 : r.status === 307, `${r.status} ${r.location}`);
+    }
+    // Өртөг зөвхөн админд (API хариунд ч)
+    const admin = roles.includes('SUPER_ADMIN') || roles.includes('ADMIN');
+    for (const api of ['/api/products?page=1', '/api/products/1', '/api/products/history?productId=1']) {
+      const r = await req(api, { cookie: l.cookie });
+      if (r.status !== 200) continue;
+      if (admin) { if (!api.includes('history')) check(`${roles.join('+')} ${api} өртөг харагдана`, /"costPrice"/.test(r.text), r.text.slice(0, 80)); }
+      else check(`${roles.join('+')} ${api} өртөг нуугдана`, !/"costPrice"/.test(r.text), r.text.slice(0, 80));
+    }
+    const s = await req('/api/products/search?q=пүүз', { cookie: l.cookie });
+    const canSearch = accessTo(roles, 'products') !== 'none' || accessTo(roles, 'orders') !== 'none';
+    check(`${roles.join('+')} бараа хайх`, canSearch ? s.status === 200 && !/cost/i.test(s.text) : s.status === 403, String(s.status));
+  }
+  const mk = await loginAs('80000140'); // Маркетинг
+  const before = JSON.parse((await req('/api/products/2', { cookie: mk.cookie })).text).product;
+  const noReason = await req('/api/products/2', { cookie: mk.cookie, method: 'PATCH', body: { changes: { price: before.price + 1000 }, version: before.version } });
+  check('тайлбаргүй засвар → 400 reason_required', noReason.status === 400 && noReason.text.includes('reason_required'), noReason.text);
+  const ok = await req('/api/products/2', { cookie: mk.cookie, method: 'PATCH', body: { changes: { price: before.price + 1000 }, reason: 'E2E үнэ шалгалт', version: before.version } });
+  check('тайлбартай засвар → 200', ok.status === 200, ok.text.slice(0, 120));
+  const stale = await req('/api/products/2', { cookie: mk.cookie, method: 'PATCH', body: { changes: { price: before.price + 2000 }, reason: 'Хуучин хувилбараар', version: before.version } });
+  check('хуучин version → 409 stale', stale.status === 409 && stale.text.includes('stale'), String(stale.status));
+  const codeTry = await req('/api/products/2', { cookie: mk.cookie, method: 'PATCH', body: { changes: { code: 'HACK1' }, reason: 'Код солих оролдлого', version: before.version + 1 } });
+  check('маркетинг код солихгүй → 403', codeTry.status === 403, String(codeTry.status));
+  // Зураг upload (multipart, HTTP)
+  const png = await sharp({ create: { width: 600, height: 600, channels: 3, background: '#E8590C' } }).png().toBuffer();
+  const corrupt = Buffer.concat([png.subarray(0, 60), Buffer.alloc(200, 7)]);
+  const cf = new FormData();
+  cf.set('file', new Blob([corrupt], { type: 'image/png' }), 'c.png'); cf.set('reason', 'E2E эвдэрхий файл');
+  const cUp = await fetch(BASE + '/api/products/2/images', { method: 'POST', headers: { cookie: mk.cookie }, body: cf });
+  check('эвдэрхий зураг → 400 (500 биш)', cUp.status === 400, String(cUp.status));
+  const fd = new FormData();
+  fd.set('file', new Blob([png], { type: 'image/png' }), 'a.png'); fd.set('reason', 'E2E зураг');
+  const up = await fetch(BASE + '/api/products/2/images', { method: 'POST', headers: { cookie: mk.cookie }, body: fd });
+  const upBody = await up.json();
+  check('зураг upload → 201', up.status === 201, JSON.stringify(upBody).slice(0, 120));
+  if (up.status === 201) {
+    const img = await fetch(BASE + upBody.image.sm);
+    check('зураг /media-аас нээгдэнэ (нэвтрээгүй ч)', img.status === 200 && img.headers.get('content-type') === 'image/webp', String(img.status));
+  }
+  const bad = new FormData();
+  bad.set('file', new Blob([Buffer.from('not image')], { type: 'image/png' }), 'x.png'); bad.set('reason', 'E2E буруу файл');
+  const badUp = await fetch(BASE + '/api/products/2/images', { method: 'POST', headers: { cookie: mk.cookie }, body: bad });
+  check('буруу файл → 400', badUp.status === 400, String(badUp.status));
+  const trav = await req('/media/../../.env');
+  check('media замаар хавтаснаас гарахгүй', trav.status === 404 || trav.status === 400 || trav.status === 307, String(trav.status));
 
   console.log(`\nE2E: ${pass} амжилттай, ${fails.length} алдаатай`);
   if (fails.length) { console.log(fails.map((f) => '  ✗ ' + f).join('\n')); process.exit(1); }

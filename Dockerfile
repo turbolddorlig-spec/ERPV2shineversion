@@ -16,8 +16,8 @@ RUN npx prisma generate && npx next build
 
 FROM node:20-alpine AS run
 WORKDIR /app
-RUN addgroup -S app && adduser -S app -G app
-ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 TZ=Asia/Ulaanbaatar PORT=3000 HOSTNAME=0.0.0.0 \
+RUN addgroup -S app && adduser -S app -G app && mkdir -p /app/data/uploads && chown -R app:app /app/data
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 TZ=Asia/Ulaanbaatar PORT=3000 HOSTNAME=0.0.0.0 UPLOAD_DIR=/app/data/uploads \
     PRISMA_QUERY_ENGINE_LIBRARY=/app/node_modules/.prisma/client/libquery_engine-linux-musl-openssl-3.0.x.so.node \
     PRISMA_SCHEMA_ENGINE_BINARY=/app/node_modules/@prisma/engines/schema-engine-linux-musl-openssl-3.0.x
 COPY --from=build /app/.next/standalone ./

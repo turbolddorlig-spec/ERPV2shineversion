@@ -25,6 +25,9 @@ services:
       # HTTP (домэйнгүй) үед false байх ёстой, эс бөгөөс браузер нэвтрэлтийн cookie-г хадгалахгүй
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       APP_URL: ${APP_URL:-http://localhost}
+    volumes:
+      # Барааны зураг (Модуль 1)
+      - uploads:/app/data/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -40,6 +43,7 @@ services:
       SITE_ADDRESS: ${DOMAIN:-:80}
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - uploads:/srv/media:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
@@ -56,6 +60,7 @@ services:
     volumes:
       - ./backups:/backups
       - ./docker/backup.sh:/backup.sh:ro
+      - uploads:/media:ro
     entrypoint: ["sh", "/backup.sh"]
     depends_on:
       db:
@@ -63,5 +68,6 @@ services:
 
 volumes:
   db_data:
+  uploads:
   caddy_data:
   caddy_config:

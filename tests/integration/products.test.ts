@@ -272,13 +272,13 @@ describe('засварын түүх хуудас (#29)', () => {
     expect(all.items).toHaveLength(3);
     const imp = await H.listProductHistory(ml, { important: true });
     expect(imp.items).toHaveLength(1);
-    expect(await H.unreviewedCount(ml)).toBe(2);
+    expect(await H.unreviewedCount(ml, { fresh: true })).toBe(2);
     const id = imp.items[0]!.id;
     await err(H.reviewProductEdit(mk, id), 403);
     await H.reviewProductEdit(ml, id);
     await H.reviewProductEdit(ml, id);
     expect(await db.auditReview.count()).toBe(1);
-    expect(await H.unreviewedCount(ml)).toBe(1);
+    expect(await H.unreviewedCount(ml, { fresh: true })).toBe(1);
     const un = await H.listProductHistory(ml, { unreviewed: true });
     expect(un.items.map((i) => i.id)).not.toContain(id);
     const own = await P.updateProduct(ml, p.id, { name: 'Ахлагч засав' }, { reason: 'Ахлагчийн засвар', version: (await P.getProduct(ml, p.id)).version });
@@ -290,5 +290,15 @@ describe('засварын түүх хуудас (#29)', () => {
     await H.listProductHistory(await actor(['WAREHOUSE']), {});
     await H.listProductHistory(await actor(['PENALTY_OFFICER']), {});
     await err(H.listProductHistory(await actor(['OPERATOR']), {}), 403);
+  });
+});
+
+describe('эвдэрхий зураг', () => {
+  it('толгой нь зөв, дотор нь эвдэрсэн PNG → 400 image_invalid (500 биш)', async () => {
+    const a = await actor(['MARKETING']);
+    const p = await P.createProduct(a, { code: 'BROKEN', name: 'Бараа', price: 1000 });
+    const good = await png(300, 300);
+    const corrupt = Buffer.concat([good.subarray(0, 60), Buffer.alloc(200, 7)]);
+    await err(I.addProductImage(a, p.id, corrupt, { reason: 'Зураг нэмэв' }), 400, 'image_invalid');
   });
 });

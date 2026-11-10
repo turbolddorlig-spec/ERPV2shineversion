@@ -61,3 +61,4 @@ async function main() {
   if (errors > 0) process.exit(1);
 }
 main();
+export {};

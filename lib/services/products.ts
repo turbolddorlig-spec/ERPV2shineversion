@@ -448,20 +448,31 @@ export async function nextProductCode(actor: UserActor): Promise<string> {
  */
 export async function searchVariants(actor: UserActor, qInput: string, limit = 20) {
   if (!canSearchProducts(actor.roles)) throw forbidden();
-  const q = qInput.trim();
+  const q = qInput.trim().slice(0, 60);
   if (q.length < 1) return [];
   const take = Math.min(50, Math.max(1, limit));
-  const rows = await db.productVariant.findMany({
-    where: {
-      isActive: true,
-      product: { status: { in: ['ACTIVE', 'DISCONTINUED'] } },
-      OR: [
-        { code: { contains: q, mode: 'insensitive' } },
-        { product: { name: { contains: q, mode: 'insensitive' } } },
-      ],
-    },
-    orderBy: [{ product: { status: 'asc' } }, { productId: 'asc' }, { sortOrder: 'asc' }],
-    take,
+  const like = `%${q.replace(/[\\%_]/g, (m) => '\\' + m)}%`;
+  const prefix = `${q.replace(/[\\%_]/g, (m) => '\\' + m)}%`;
+  // 1-р алхам: тохирох барааны ID-г индексээр олно (нэр/код — trigram, хувилбарын код — trigram).
+  // Кодоор эхэлсэн нь эхэнд, дараа нь идэвхтэй нь.
+  const hits = await db.$queryRaw<{ id: number }[]>`
+    WITH h AS (
+      SELECT p.id FROM "Product" p
+       WHERE p.status IN ('ACTIVE','DISCONTINUED') AND (p.name ILIKE ${like} OR p.code ILIKE ${like})
+      UNION
+      SELECT v."productId" FROM "ProductVariant" v
+       WHERE v."isActive" AND v.code ILIKE ${like}
+    )
+    SELECT p.id FROM h JOIN "Product" p ON p.id = h.id
+     WHERE p.status IN ('ACTIVE','DISCONTINUED')
+     ORDER BY (p.code ILIKE ${prefix}) DESC, p.status ASC, p.id ASC
+     LIMIT ${take}`;
+  if (!hits.length) return [];
+  const order = new Map(hits.map((h, i) => [h.id, i]));
+  // 2-р алхам: зөвхөн эдгээр барааны идэвхтэй хувилбарууд
+  const rows = (await db.productVariant.findMany({
+    where: { isActive: true, productId: { in: hits.map((h) => h.id) } },
+    orderBy: [{ productId: 'asc' }, { sortOrder: 'asc' }],
     select: {
       id: true, code: true, color: true, size: true, priceOverride: true,
       product: {
@@ -471,7 +482,7 @@ export async function searchVariants(actor: UserActor, qInput: string, limit = 2
         },
       },
     },
-  });
+  })).sort((a, b) => order.get(a.product.id)! - order.get(b.product.id)!).slice(0, take);
   return rows.map((v) => {
     const img = v.product.images.find((i) => v.color && i.color === v.color) ?? v.product.images[0];
     return {

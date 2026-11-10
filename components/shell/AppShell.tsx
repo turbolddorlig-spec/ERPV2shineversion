@@ -7,7 +7,7 @@ import { Icon } from '../icons';
 import { ThemeToggle } from './ThemeToggle';
 
 export interface NavItem {
-  key: string; label: string; short: string; href: string; group: string; icon: string; readOnly: boolean;
+  key: string; label: string; short: string; href: string; group: string; icon: string; readOnly: boolean; badge?: number;
 }
 
 function initials(name: string) {
@@ -31,7 +31,9 @@ export function AppShell({ user, nav, children }: { user: { name: string; roleLa
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [pathname]);
-  const active = (href: string) => pathname === href || pathname.startsWith(href + '/');
+  // Хамгийн тохирох (урт) замыг идэвхтэй гэж үзнэ: /products/history → "Барааны засвар", /products/5 → "Бараа"
+  const best = nav.filter((n) => pathname === n.href || pathname.startsWith(n.href + '/')).sort((a, b) => b.href.length - a.href.length)[0]?.href;
+  const active = (href: string) => href === best;
   const current = nav.find((n) => active(n.href));
   const groups = Array.from(new Set(nav.map((n) => n.group)));
 
@@ -44,10 +46,11 @@ export function AppShell({ user, nav, children }: { user: { name: string; roleLa
         </Link>
         {nav.map((n) => (
           <Link key={n.key} href={n.href} aria-current={active(n.href) ? 'page' : undefined} title={n.label}
-            className={clsx('flex min-h-[58px] flex-col items-center justify-center gap-1 rounded-xl px-0.5 py-1.5 text-center',
+            className={clsx('relative flex min-h-[58px] flex-col items-center justify-center gap-1 rounded-xl px-0.5 py-1.5 text-center',
               active(n.href) ? 'bg-rail-active text-white' : 'text-rail-text hover:bg-rail-active/60 hover:text-white')}>
             <Icon name={n.icon} size={21} className={active(n.href) ? 'text-[#FF8A4C]' : undefined} />
             <span className="text-[10.5px] font-semibold leading-tight">{n.short}</span>
+            {n.badge ? <span className="absolute right-1.5 top-1 min-w-[18px] rounded-full bg-[#E8590C] px-1 text-[10.5px] font-bold leading-[18px] text-white">{n.badge > 99 ? '99+' : n.badge}</span> : null}
           </Link>
         ))}
         <Link href="/me" title="Миний мэдээлэл" className="mx-auto mt-auto grid h-10 w-10 place-items-center rounded-full bg-[#2A2E38] text-[12px] font-bold text-[#ECEDEF]">
@@ -88,6 +91,7 @@ export function AppShell({ user, nav, children }: { user: { name: string; roleLa
                       active(n.href) ? 'bg-accent-soft text-accent-ink' : 'text-ink hover:bg-surface2')}>
                     <Icon name={n.icon} size={20} />
                     <span className="flex-1">{n.label}</span>
+                    {n.badge ? <span className="rounded-full bg-accent px-2 text-[12px] font-bold leading-6 text-on-accent">{n.badge}</span> : null}
                     {n.readOnly ? <span className="text-[11px] font-bold text-subtle">харах</span> : null}
                   </Link>
                 ))}

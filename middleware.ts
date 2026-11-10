@@ -9,6 +9,8 @@ const PUBLIC = ['/login', '/api/auth/login', '/api/health'];
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (PUBLIC.some((p) => pathname === p)) return NextResponse.next();
+  // Барааны зураг (UUID нэртэй, нууц биш) — production-д Caddy шууд өгнө
+  if (pathname.startsWith('/media/')) return NextResponse.next();
   if (req.cookies.get('zs')) return NextResponse.next();
   if (pathname.startsWith('/api/')) {
     return NextResponse.json({ error: 'Нэвтрэх шаардлагатай', code: 'unauthorized' }, { status: 401 });

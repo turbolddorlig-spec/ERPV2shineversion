@@ -42,8 +42,14 @@ export async function saveProductImage(productId: number, data: Buffer): Promise
   let width = meta.width;
   let height = meta.height;
   for (const [size, px] of Object.entries(SIZES) as [ImageSize, number][]) {
-    const out = await sharp(data).rotate().resize(px, px, { fit: 'inside', withoutEnlargement: true })
-      .webp({ quality: size === 'sm' ? 72 : 82 }).toBuffer({ resolveWithObject: true });
+    let out: { data: Buffer; info: sharp.OutputInfo };
+    try {
+      out = await sharp(data, { failOn: 'error' }).rotate().resize(px, px, { fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: size === 'sm' ? 72 : 82 }).toBuffer({ resolveWithObject: true });
+    } catch {
+      // Толгой хэсэг нь зөв боловч дотроо эвдэрсэн файл
+      throw badRequest('Зургийн файл эвдэрсэн байна. Өөр зураг сонгоно уу.', 'image_invalid');
+    }
     if (size === 'lg') { width = out.info.width; height = out.info.height; }
     const final = path.join(UPLOAD_DIR, `${fileKey}-${size}.webp`);
     await writeFile(final + '.tmp', out.data);

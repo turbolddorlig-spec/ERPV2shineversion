@@ -92,14 +92,21 @@ export async function listProductHistory(actor: UserActor, params: HistoryParams
   };
 }
 
-/** Шалгаагүй засварын тоо — цэсний тэмдэгт (зөвхөн шалгах эрхтэй хүнд) */
-export async function unreviewedCount(actor: UserActor): Promise<number> {
+/**
+ * Шалгаагүй засварын тоо — цэсний тэмдэгт (зөвхөн шалгах эрхтэй хүнд).
+ * Хуудас бүр дээр дахин тоолохгүйн тулд 30 секунд санана (тэмдэгт 30 сек хоцорч болно — шалгах хуудас өөрөө үргэлж шинэ тоог харуулна).
+ */
+let badgeCache: { n: number; at: number } | null = null;
+export async function unreviewedCount(actor: UserActor, opts: { fresh?: boolean } = {}): Promise<number> {
   if (!canReviewProductEdits(actor.roles)) return 0;
+  if (!opts.fresh && badgeCache && Date.now() - badgeCache.at < 30_000) return badgeCache.n;
   const rows = await db.$queryRaw<{ n: bigint }[]>`
     SELECT count(*)::bigint AS n FROM "AuditLog" a
     WHERE a."entityType" = 'Product' AND a.action <> 'product.created'
       AND NOT EXISTS (SELECT 1 FROM "AuditReview" r WHERE r."auditLogId" = a.id)`;
-  return Number(rows[0]?.n ?? 0);
+  const n = Number(rows[0]?.n ?? 0);
+  badgeCache = { n, at: Date.now() };
+  return n;
 }
 
 /** "Шалгасан" тэмдэглэх. Өөрийн засварыг өөрөө шалгахгүй. Давтан дарахад нэг л бичлэг. */
