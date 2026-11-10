@@ -35,6 +35,17 @@ export function Thumb({ src, alt, size = 44 }: { src: string | null; alt: string
     : <span aria-hidden="true" className="grid shrink-0 place-items-center rounded-[10px] bg-surface2 text-subtle" style={{ width: size, height: size }}><Icon name="image" size={Math.round(size / 2.4)} /></span>;
 }
 
+/** Барааг нээх цорын ганц товч: засах эрхтэй бол «Засах», үгүй бол «Харах» */
+function OpenBtn({ id, code, canEdit, mobile }: { id: number; code: string; canEdit: boolean; mobile?: boolean }) {
+  return (
+    <Link href={canEdit ? `/products/${id}?edit=1` : `/products/${id}`} aria-label={`${code} ${canEdit ? 'засах' : 'харах'}`}
+      className={clsx('inline-flex shrink-0 items-center gap-1.5 border border-line bg-surface font-semibold hover:bg-surface2',
+        mobile ? 'h-11 rounded-[11px] px-3 text-[13px]' : 'h-9 rounded-[10px] px-3 text-[13px]')}>
+      <Icon name={canEdit ? 'edit' : 'eye'} size={15} />{canEdit ? 'Засах' : 'Харах'}
+    </Link>
+  );
+}
+
 export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistory }: { canEdit: boolean; showCost: boolean; canManageLists: boolean; canSeeHistory: boolean }) {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('live');
@@ -156,7 +167,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
                 {showCost ? <th scope="col" className="border-b border-line px-3 py-2.5 text-right font-bold">Өртөг</th> : null}
                 <th scope="col" className="border-b border-line px-3 py-2.5 font-bold">Хувилбар</th>
                 <th scope="col" className="border-b border-line px-3 py-2.5 font-bold">Төлөв</th>
-                {canEdit ? <th scope="col" className="border-b border-line px-3 py-2.5"><span className="sr-only">Үйлдэл</span></th> : null}
+                <th scope="col" className="border-b border-line px-3 py-2.5"><span className="sr-only">Үйлдэл</span></th>
               </tr>
             </thead>
             <tbody>
@@ -165,10 +176,11 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
                 <tr className={clsx(selected.has(p.id) && 'bg-accent-soft/50', 'hover:bg-surface2/60')}>
                   {canEdit ? <td className="border-b border-line py-2 pl-4"><input type="checkbox" aria-label={`${p.code} сонгох`} checked={selected.has(p.id)} onChange={() => toggle(p.id)} className="h-[18px] w-[18px] accent-[var(--accent)]" /></td> : null}
                   <td className="border-b border-line px-3 py-2">
-                    <Link href={`/products/${p.id}`} className="flex items-center gap-3">
+                    {/* Нэр, кодыг хуулж авах боломжтой — дарахад бараа руу орохгүй (эзний шийдвэр #33) */}
+                    <div className="flex items-center gap-3">
                       <Thumb src={p.thumb} alt={p.name} />
-                      <span className="flex min-w-0 flex-col"><span className="truncate font-semibold">{p.name}</span><span className="text-[12px] text-subtle">{p.code}</span></span>
-                    </Link>
+                      <span className="flex min-w-0 select-text flex-col"><span className="font-semibold">{p.name}</span><span className="text-[12px] text-subtle">{p.code}</span></span>
+                    </div>
                   </td>
                   <td className="border-b border-line px-3 py-2">
                     {p.category ? <span className="inline-flex items-center gap-1.5 text-[13px]"><span aria-hidden="true" className="h-2.5 w-2.5 rounded-[3px]" style={{ background: CATEGORY_DOT[p.category.color] }} />{p.category.name}</span> : <span className="text-subtle">—</span>}
@@ -182,7 +194,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
                     </button>
                   ) : 'Үндсэн'}</td>
                   <td className="border-b border-line px-3 py-2"><StatusBadge status={p.status} label={p.statusLabel} /></td>
-                  {canEdit ? <td className="border-b border-line px-3 py-2 text-right"><Link href={`/products/${p.id}?edit=1`} aria-label={`${p.code} засах`} className="inline-flex h-9 items-center gap-1.5 rounded-[10px] border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2"><Icon name="edit" size={15} />Засах</Link></td> : null}
+                  <td className="border-b border-line px-3 py-2 text-right"><OpenBtn id={p.id} code={p.code} canEdit={canEdit} /></td>
                 </tr>
                 {!collapsed.has(p.id) ? p.variants.map((v) => (
                   <tr key={`v${v.id}`} className={clsx('bg-surface2/30 text-[13px]', !v.isActive && 'opacity-55')}>
@@ -199,7 +211,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
                     {showCost ? <td className="border-b border-line/60 px-3 py-1.5 text-right text-subtle">{money(p.costPrice)}</td> : null}
                     <td className="border-b border-line/60 px-3 py-1.5 text-[12px] text-subtle">{v.priceOverride ? 'Тусдаа үнэ' : ''}</td>
                     <td className="border-b border-line/60 px-3 py-1.5">{v.isActive ? null : <Badge tone="neutral">Идэвхгүй</Badge>}</td>
-                    {canEdit ? <td className="border-b border-line/60" /> : null}
+                    <td className="border-b border-line/60" />
                   </tr>
                 )) : null}
                 </Fragment>
@@ -214,15 +226,15 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
           <li key={p.id} className="flex flex-col gap-2 rounded-[16px] border border-line bg-surface p-3 shadow-card">
             <div className="flex items-center gap-3">
             {canEdit ? <input type="checkbox" aria-label={`${p.code} сонгох`} checked={selected.has(p.id)} onChange={() => toggle(p.id)} className="h-5 w-5 shrink-0 accent-[var(--accent)]" /> : null}
-            <Link href={`/products/${p.id}`} className="flex min-w-0 flex-1 items-center gap-3">
+            <div className="flex min-w-0 flex-1 select-text items-center gap-3">
               <Thumb src={p.thumb} alt={p.name} size={56} />
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="truncate text-[15px] font-bold">{p.name}</span>
                 <span className="text-[12.5px] text-subtle">{p.code} · {p.hasVariants ? `${p.variantCount} хувилбар` : 'Үндсэн'}</span>
                 <span className="flex items-center gap-2"><span className="text-[14.5px] font-extrabold">{money(p.price)}</span><StatusBadge status={p.status} label={p.statusLabel} /></span>
               </span>
-            </Link>
-            {canEdit ? <Link href={`/products/${p.id}?edit=1`} aria-label={`${p.code} засах`} className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-[11px] border border-line bg-surface px-3 text-[13px] font-semibold"><Icon name="edit" size={15} />Засах</Link> : null}
+            </div>
+            <OpenBtn id={p.id} code={p.code} canEdit={canEdit} mobile />
             </div>
             {p.variants.length ? (
               <>
