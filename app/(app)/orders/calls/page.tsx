@@ -1,16 +1,17 @@
 import { requirePage } from '@/lib/current-user';
 import { PageHeader } from '@/components/shell/AppShell';
-import { CallsClient } from '@/components/orders/CallsClient';
+import { OrdersClient } from '@/components/orders/OrdersClient';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Дуудлагын бүртгэл · zahialga•' };
 
+/** Захиалгын жагсаалт + «Дуудлагын бүртгэл» цонх нээлттэй */
 export default async function CallsPage() {
   await requirePage('orders');
   return (
     <>
-      <PageHeader back={{ href: '/orders', label: 'Захиалга руу буцах' }} title="Дуудлагын бүртгэл" subtitle="Залгах дугаарууд — 5 оролдлого, хооронд 30 минут" />
-      <CallsClient />
+      <PageHeader title="Захиалга" />
+      <OrdersClient initialModal={{ kind: 'calls' }} />
     </>
   );
 }

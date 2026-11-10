@@ -9,7 +9,7 @@ export default async function OrdersPage() {
   await requirePage('orders');
   return (
     <>
-      <PageHeader title="Захиалга" subtitle="Өнөөдрийн захиалгууд, төлөв бүрээр" />
+      <PageHeader title="Захиалга" />
       <OrdersClient />
     </>
   );

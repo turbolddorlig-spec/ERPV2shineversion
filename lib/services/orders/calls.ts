@@ -39,23 +39,34 @@ export async function createCallNotes(actor: UserActor, input: { phones?: unknow
   return { created: r.count };
 }
 
-export async function listCallNotes(actor: UserActor, p: { status?: string; ownerId?: string; q?: string; page?: number }) {
+export async function listCallNotes(actor: UserActor, p: { status?: string; ownerId?: string; q?: string; page?: number; scope?: string }) {
   if (!canView(actor.roles, 'orders')) throw forbidden();
   const sup = canSuperviseOperators(actor.roles);
-  const and: Prisma.CallNoteWhereInput[] = [];
-  if (!sup) and.push({ ownerId: actor.id });
-  else if (p.ownerId) and.push({ ownerId: p.ownerId });
+  // Хуучин шиг: анхдагч «Зөвхөн минийх»; ахлах «Бүх оператор» сонгож болно
+  const all = sup && (p.scope === 'all' || !!p.ownerId);
+  const base: Prisma.CallNoteWhereInput[] = [];
+  if (!all) base.push({ ownerId: actor.id });
+  else if (p.ownerId) base.push({ ownerId: p.ownerId });
+  const q = (p.q ?? '').replace(/\D/g, '');
+  if (q) base.push({ phone: { contains: q } });
+  const and = [...base];
   if (p.status === 'open' || !p.status) and.push({ status: { in: ['PENDING', 'CONTACTED'] } });
   else if (p.status !== 'all') and.push({ status: p.status as CallStatus });
-  const q = (p.q ?? '').replace(/\D/g, '');
-  if (q) and.push({ phone: { contains: q } });
   const page = Math.max(1, Math.floor(p.page ?? 1));
   const where = { AND: and };
-  const [total, rows, incoming] = await Promise.all([
+  const [total, rows, incoming, grouped] = await Promise.all([
     db.callNote.count({ where }),
     db.callNote.findMany({ where, orderBy: [{ status: 'asc' }, { id: 'desc' }], skip: (page - 1) * 50, take: 50 }),
     db.callNoteTransfer.findMany({ where: { toId: actor.id, status: 'PENDING' }, include: { note: true }, orderBy: { id: 'desc' }, take: 100 }),
+    db.callNote.groupBy({ by: ['status'], where: { AND: base }, _count: true }),
   ]);
+  const counts = Object.fromEntries(grouped.map((g) => [g.status, g._count])) as Partial<Record<CallStatus, number>>;
+  const [outgoing, orders] = await Promise.all([
+    db.callNoteTransfer.findMany({ where: { noteId: { in: rows.map((r) => r.id) }, status: 'PENDING' }, select: { noteId: true, toName: true } }),
+    db.order.findMany({ where: { id: { in: rows.map((r) => r.orderId).filter((x): x is number => !!x) } }, select: { id: true, number: true } }),
+  ]);
+  const outMap = new Map(outgoing.map((t) => [t.noteId, t.toName]));
+  const ordMap = new Map(orders.map((o) => [o.id, o.number]));
   const vids = [...new Set([...rows, ...incoming.map((t) => t.note)].map((n) => n.variantId).filter((x): x is number => !!x))];
   const [variants, pages] = await Promise.all([
     vids.length ? db.productVariant.findMany({ where: { id: { in: vids } }, select: { id: true, code: true, color: true, size: true, product: { select: { name: true, images: { where: { isMain: true }, take: 1, select: { fileKey: true } } } } } }) : [],
@@ -72,12 +83,13 @@ export async function listCallNotes(actor: UserActor, p: { status?: string; owne
       attempts: n.attempts, lastAttemptAt: n.lastAttemptAt, canAttemptAt: nextAt > now ? new Date(nextAt) : null,
       variantId: n.variantId, product: v ? `${v.product.name}${v.color || v.size ? ` · ${[v.color, v.size].filter(Boolean).join(' · ')}` : ''}` : n.productText, productCode: v?.code ?? null,
       thumb: v?.product.images[0] ? mediaUrl(v.product.images[0].fileKey, 'sm') : null,
-      pageId: n.pageId, pageName: n.pageId ? pm.get(n.pageId) ?? null : null, orderId: n.orderId,
+      pageId: n.pageId, pageName: n.pageId ? pm.get(n.pageId) ?? null : null, orderId: n.orderId, orderNumber: n.orderId ? ordMap.get(n.orderId) ?? null : null,
+      pendingTransferTo: outMap.get(n.id) ?? null,
       closeReason: n.closeReason, closeLabel: n.closeReason ? CLOSE_LABEL[n.closeReason] : null, closeNote: n.closeNote, createdAt: n.createdAt,
     };
   };
   return {
-    total, page, pageSize: 50, supervise: sup,
+    total, page, pageSize: 50, supervise: sup, scope: all ? 'all' : 'own', counts,
     items: rows.map(ser),
     incoming: incoming.map((t) => ({ transferId: t.id, fromName: t.fromName, createdAt: t.createdAt, note: ser(t.note) })),
   };

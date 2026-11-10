@@ -114,7 +114,7 @@ export function AppShell({ user, nav, children }: { user: { name: string; roleLa
       ) : null}
 
       <div className="lg:pl-[84px]">
-        <div className="mx-auto w-full max-w-[1400px] px-[max(16px,env(safe-area-inset-left))] pb-[max(24px,env(safe-area-inset-bottom))] pt-4 lg:px-7 lg:pt-6">
+        <div className="mx-auto w-full max-w-[1400px] has-[.full-bleed]:max-w-none px-[max(16px,env(safe-area-inset-left))] pb-[max(24px,env(safe-area-inset-bottom))] pt-4 lg:px-7 lg:pt-6">
           {children}
         </div>
       </div>

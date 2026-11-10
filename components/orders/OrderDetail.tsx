@@ -14,6 +14,7 @@ import { ZoomButton } from '@/components/ui/Lightbox';
 import { money, ubDateTime } from '@/lib/format';
 import { formatPhone } from '@/lib/phone';
 import { StatusChip, type OItem } from './OrdersClient';
+import { OrderModal, type EditOrder } from './OrderForm';
 
 interface Detail extends OItem {
   version: number; status: string; subtotal: number; deliveryFeeEdited: boolean; blacklistNote: string | null; inHandover: boolean;
@@ -38,6 +39,7 @@ export function OrderDetail({ id }: { id: number }) {
   const [reason, setReason] = useState('');
   const [cnote, setCnote] = useState('');
   const [undo, setUndo] = useState(false);
+  const [editing, setEditing] = useState<EditOrder | null>(null);
   const load = useCallback(() => api<{ order: Detail }>(`/api/orders/${id}`).then((r) => setO(r.order)), [id]);
   useEffect(() => {
     const d = new URLSearchParams(window.location.search).get('done');
@@ -126,7 +128,7 @@ export function OrderDetail({ id }: { id: number }) {
           {o.can.markPaid && o.status === 'PENDING_PAYMENT' ? <Button loading={busy} onClick={() => act('extend', { days: 3 }, 'Хугацааг 3 хоногоор сунгалаа')}>+3 хоног</Button> : null}
           {o.can.markPaid && o.status === 'NEW' && o.prepaid ? <Button onClick={() => setUndo(true)}>«Мөнгө орсон» буцаах</Button> : null}
           {o.can.edit && active ? <Button variant="danger" onClick={() => { setReason(''); setCnote(''); setCancelOpen(true); }}>Цуцлах</Button> : null}
-          {o.can.edit && active ? <Link href={`/orders/${o.id}/edit`} className="inline-flex h-11 items-center gap-2 rounded-[11px] bg-accent px-5 font-bold text-on-accent"><Icon name="edit" size={16} />Засах</Link> : null}
+          {o.can.edit && active ? <Button variant="primary" onClick={() => api<{ order: EditOrder }>(`/api/orders/${o.id}`).then((r) => setEditing(r.order)).catch((e) => setError(e instanceof ApiError ? e.message : 'Алдаа'))}><Icon name="edit" size={16} />Засах</Button> : null}
         </div>
       </div>
       <Modal open={cancelOpen} onClose={() => setCancelOpen(false)} title={`№${o.number} цуцлах`}
@@ -142,6 +144,9 @@ export function OrderDetail({ id }: { id: number }) {
           </label>
         </div>
       </Modal>
+      <OrderModal open={!!editing} edit={editing} onClose={() => setEditing(null)}
+        onDone={(m) => { setEditing(null); setFlash(m); load(); router.refresh(); }}
+        onAddToExisting={() => undefined} />
       <ReasonModal open={undo} title="«Мөнгө орсон» буцаах" label="Шалтгаан" confirmText="Буцаах" busy={busy} onCancel={() => setUndo(false)}
         onConfirm={async (note) => { if (await act('unpaid', { note }, 'Буцаалаа — «Төлбөр хүлээж буй»')) setUndo(false); }} />
     </div>

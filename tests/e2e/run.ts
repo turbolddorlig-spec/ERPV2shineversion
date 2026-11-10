@@ -193,16 +193,17 @@ async function main() {
   const listV = JSON.parse((await req('/api/products?page=1', { cookie: admU.cookie })).text);
   const withV = listV.items.find((x: { hasVariants: boolean }) => x.hasVariants);
   check('жагсаалтад хувилбар үнэтэйгээ ирнэ', !!withV && withV.variants.length > 0 && typeof withV.variants[0].price === 'number', JSON.stringify(withV?.variants?.[0] ?? null));
-  // Зураг upload (multipart, HTTP)
+  // Зураг upload (multipart, HTTP). Давтан ажиллуулахад 8 зургийн хязгаарт хүрэхгүйн тулд ажиллуулалт бүрт өөр бараа
+  const imgPid = 2 + (Math.floor(Date.now() / 1000) % 3000);
   const png = await sharp({ create: { width: 600, height: 600, channels: 3, background: '#E8590C' } }).png().toBuffer();
   const corrupt = Buffer.concat([png.subarray(0, 60), Buffer.alloc(200, 7)]);
   const cf = new FormData();
   cf.set('file', new Blob([corrupt], { type: 'image/png' }), 'c.png'); cf.set('reason', 'E2E эвдэрхий файл');
-  const cUp = await fetch(BASE + '/api/products/2/images', { method: 'POST', headers: { cookie: mk.cookie }, body: cf });
+  const cUp = await fetch(BASE + `/api/products/${imgPid}/images`, { method: 'POST', headers: { cookie: mk.cookie }, body: cf });
   check('эвдэрхий зураг → 400 (500 биш)', cUp.status === 400, String(cUp.status));
   const fd = new FormData();
   fd.set('file', new Blob([png], { type: 'image/png' }), 'a.png'); fd.set('reason', 'E2E зураг');
-  const up = await fetch(BASE + '/api/products/2/images', { method: 'POST', headers: { cookie: mk.cookie }, body: fd });
+  const up = await fetch(BASE + `/api/products/${imgPid}/images`, { method: 'POST', headers: { cookie: mk.cookie }, body: fd });
   const upBody = await up.json();
   check('зураг upload → 201', up.status === 201, JSON.stringify(upBody).slice(0, 120));
   if (up.status === 201) {
@@ -211,7 +212,7 @@ async function main() {
   }
   const bad = new FormData();
   bad.set('file', new Blob([Buffer.from('not image')], { type: 'image/png' }), 'x.png'); bad.set('reason', 'E2E буруу файл');
-  const badUp = await fetch(BASE + '/api/products/2/images', { method: 'POST', headers: { cookie: mk.cookie }, body: bad });
+  const badUp = await fetch(BASE + `/api/products/${imgPid}/images`, { method: 'POST', headers: { cookie: mk.cookie }, body: bad });
   check('буруу файл → 400', badUp.status === 400, String(badUp.status));
   const trav = await req('/media/../../.env');
   check('media замаар хавтаснаас гарахгүй', trav.status === 404 || trav.status === 400 || trav.status === 307, String(trav.status));

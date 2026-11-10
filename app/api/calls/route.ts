@@ -8,7 +8,7 @@ export async function GET(req: NextRequest) {
   try {
     const ctx = await requireApiUser(req, { page: 'orders' });
     const sp = req.nextUrl.searchParams;
-    return json(await listCallNotes(ctx.actor, { status: sp.get('status') ?? undefined, ownerId: sp.get('ownerId') || undefined, q: sp.get('q') ?? undefined, page: Number(sp.get('page')) || 1 }));
+    return json(await listCallNotes(ctx.actor, { status: sp.get('status') ?? undefined, ownerId: sp.get('ownerId') || undefined, q: sp.get('q') ?? undefined, page: Number(sp.get('page')) || 1, scope: sp.get('scope') ?? undefined }));
   } catch (e) { return errorResponse(e); }
 }
 export async function POST(req: NextRequest) {

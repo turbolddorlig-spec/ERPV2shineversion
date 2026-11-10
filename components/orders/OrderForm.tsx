@@ -1,11 +1,10 @@
 'use client';
 import clsx from 'clsx';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
+import { Modal } from '@/components/ui/Modal';
 import { Notice } from '@/components/ui/Notice';
-import { Select } from '@/components/ui/Select';
 import { Icon } from '@/components/icons';
 import { api, ApiError } from '@/components/ui/api';
 import { Thumb } from '@/components/products/ProductsClient';
@@ -36,6 +35,8 @@ export interface EditOrder {
   addressDetail: string; note: string | null; pageId: number; deliveryDate: string; deliveryFee: number; deliveryFeeEdited: boolean; blacklistNote: string | null; inHandover: boolean;
   lines: { variantId: number; code: string; name: string; label: string; thumb: string | null; image: string | null; listPrice: number; unitPrice: number; qty: number; discountReason: string | null; deliveryIncluded: boolean }[];
 }
+/** Цонх нээх үеийн урьдчилсан утга (дуудлагын бүртгэлээс «Захиалга» г.м.) */
+export interface OrderPrefill { phone?: string; pageId?: number | null; variantId?: number | null; code?: string | null }
 
 const ubDay = (add = 0) => new Date(Date.now() + 8 * 3600_000 + add * 86_400_000).toISOString().slice(0, 10);
 const newKey = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -49,13 +50,43 @@ const hitToLine = (h: Hit): FormLine => ({
   variantId: h.variantId, code: h.variantCode, name: h.name, label: h.label === 'Үндсэн' ? '' : h.label, thumb: h.thumb, image: h.image, description: h.description,
   listPrice: h.price, unitPrice: h.price, qty: 1, discountReason: '', deliveryIncluded: h.deliveryIncluded, available: h.available,
 });
+function mergeLines(base: FormLine[], add: FormLine[]) {
+  const m = [...base];
+  for (const a of add) { const i = m.findIndex((x) => x.variantId === a.variantId); if (i >= 0) m[i] = { ...m[i]!, qty: m[i]!.qty + a.qty }; else m.push(a); }
+  return m;
+}
 
-export function OrderForm({ edit }: { edit?: EditOrder }) {
-  const router = useRouter();
+// Хуучин ERP шиг нягт хэмжээ
+const lbl = 'text-[12.5px] font-semibold text-muted';
+const inp = 'h-9 w-full rounded-lg border border-line bg-surface px-2.5 text-[13.5px] text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent-soft';
+const sel = `${inp} pr-7`;
+
+/**
+ * Захиалга үүсгэх / засах цонх — хуучин ERP-ийн дараалал (2026-11-11 эзний шаардлага):
+ * зүүн: Пэйж → Утас, Нэмэлт утас → Дүүрэг, Хороо, Аймаг → Дэлгэрэнгүй хаяг → Оператор санамж → Хүргэх өдөр;
+ * баруун: зөвхөн бараа (хайх → сонгосон). Доор: «N бараа | M ширхэг · Нийт», Болих · Захиалга үүсгэх.
+ */
+export function OrderModal({ open, edit, addLines, prefill, onClose, onDone, onAddToExisting }: {
+  open: boolean; edit?: EditOrder | null; addLines?: FormLine[]; prefill?: OrderPrefill | null;
+  onClose: () => void; onDone: (msg: string, orderId: number) => void; onAddToExisting?: (orderId: number, lines: FormLine[]) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Modal open={open} onClose={() => { if (!busy) onClose(); }} size="xl" title={edit ? `Захиалга №${edit.number} засах` : 'Шинэ захиалга'} subtitle={edit?.inHandover ? 'Падаанд орсон — барааг засахгүй' : 'Захиалгын мэдээлэл оруулна уу'}
+      bodyClassName="min-h-0 flex-1 overflow-hidden">
+      {open ? <OrderForm key={edit ? `e${edit.id}` : 'new'} edit={edit ?? undefined} addLines={addLines} prefill={prefill} onClose={onClose} onDone={onDone} onAddToExisting={onAddToExisting} onBusy={setBusy} /> : null}
+    </Modal>
+  );
+}
+
+function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, onBusy }: {
+  edit?: EditOrder; addLines?: FormLine[]; prefill?: OrderPrefill | null; onClose: () => void; onDone: (msg: string, orderId: number) => void;
+  onAddToExisting?: (orderId: number, lines: FormLine[]) => void; onBusy: (b: boolean) => void;
+}) {
   const [pages, setPages] = useState<{ id: number; name: string }[]>([]);
   const [fees, setFees] = useState({ feeUB: 5000, feeRural: 10000 });
-  const [pageId, setPageId] = useState(edit ? String(edit.pageId) : '');
-  const [phone, setPhone] = useState(edit?.phone ?? '');
+  const [pageId, setPageId] = useState(edit ? String(edit.pageId) : prefill?.pageId ? String(prefill.pageId) : '');
+  const [phone, setPhone] = useState(edit?.phone ?? prefill?.phone ?? '');
   const [extraPhone, setExtraPhone] = useState(edit?.extraPhone ?? '');
   const [province, setProvince] = useState(edit?.province ?? UB);
   const [district, setDistrict] = useState(edit?.district ?? '');
@@ -65,42 +96,33 @@ export function OrderForm({ edit }: { edit?: EditOrder }) {
   const [dateMode, setDateMode] = useState<'tomorrow' | 'today' | 'other'>(edit ? (edit.deliveryDate === ubDay() ? 'today' : edit.deliveryDate === ubDay(1) ? 'tomorrow' : 'other') : 'tomorrow');
   const [otherDate, setOtherDate] = useState(edit?.deliveryDate ?? ubDay(2));
   const [prepaidWait, setPrepaidWait] = useState(false);
-  const [lines, setLines] = useState<FormLine[]>(edit ? edit.lines.map((l) => ({ ...l, description: null, discountReason: l.discountReason ?? '', available: null })) : []);
+  const [lines, setLines] = useState<FormLine[]>(() => {
+    const base = edit ? edit.lines.map((l) => ({ ...l, description: null, discountReason: l.discountReason ?? '', available: null })) : [];
+    return addLines?.length ? mergeLines(base, addLines) : base;
+  });
   const [feeOverride, setFeeOverride] = useState<string | null>(edit?.deliveryFeeEdited ? String(edit.deliveryFee) : null);
   const [feeReason, setFeeReason] = useState('');
   const [blacklistNote, setBlacklistNote] = useState('');
   const [card, setCard] = useState<Card | null>(null);
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<Hit[]>([]);
+  const [searching, setSearching] = useState(false);
   const [popular, setPopular] = useState<Hit[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusyState] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [idemKey] = useState(newKey);
   const qReq = useRef(0);
+  const setBusy = (b: boolean) => { setBusyState(b); onBusy(b); };
 
   useEffect(() => {
     api<{ pages: { id: number; name: string }[]; lastPageId: number | null; fees: { feeUB: number; feeRural: number } }>('/api/orders/pages').then((r) => {
       setPages(r.pages); setFees(r.fees);
       if (!edit) setPageId((p) => p || (r.lastPageId ? String(r.lastPageId) : ''));
     }).catch(() => undefined);
-    const sp = new URLSearchParams(window.location.search);
-    if (!edit) {
-      if (sp.get('phone')) setPhone(sp.get('phone')!);
-      if (sp.get('pageId')) setPageId(sp.get('pageId')!);
-      const v = sp.get('variantId');
-      if (v) api<{ items: Hit[] }>(`/api/products/search?q=${encodeURIComponent(sp.get('code') ?? '')}&limit=10`).then((r) => { const h = r.items.find((x) => String(x.variantId) === v); if (h) setLines([hitToLine(h)]); }).catch(() => undefined);
-    } else {
-      // Давхар захиалгаас «тэр захиалгад бараа нэмэх»
-      try {
-        const raw = sessionStorage.getItem(`orderAdd:${edit.id}`);
-        if (raw) {
-          sessionStorage.removeItem(`orderAdd:${edit.id}`);
-          const add = JSON.parse(raw) as FormLine[];
-          setLines((ls) => { const m = [...ls]; for (const a of add) { const i = m.findIndex((x) => x.variantId === a.variantId); if (i >= 0) m[i] = { ...m[i]!, qty: m[i]!.qty + a.qty }; else m.push(a); } return m; });
-        }
-      } catch { /* ignore */ }
+    if (!edit && prefill?.variantId) {
+      api<{ items: Hit[] }>(`/api/products/search?q=${encodeURIComponent(prefill.code ?? '')}&limit=10`).then((r) => { const h = r.items.find((x) => x.variantId === prefill.variantId); if (h) setLines((ls) => (ls.length ? ls : [hitToLine(h)])); }).catch(() => undefined);
     }
-  }, [edit]);
+  }, [edit, prefill]);
 
   // Үйлчлүүлэгчийн карт (#51)
   useEffect(() => {
@@ -111,15 +133,17 @@ export function OrderForm({ edit }: { edit?: EditOrder }) {
   }, [phone, extraPhone]);
 
   useEffect(() => {
-    if (!pageId) return;
+    if (!pageId || edit) return;
     api<{ items: Hit[] }>(`/api/orders/popular?pageId=${pageId}`).then((r) => setPopular(r.items)).catch(() => setPopular([]));
-  }, [pageId]);
+  }, [pageId, edit]);
 
   useEffect(() => {
     const term = q.trim();
-    if (!term) { setHits([]); return; }
+    if (!term) { setHits([]); setSearching(false); return; }
     const id = ++qReq.current;
-    const t = setTimeout(() => api<{ items: Hit[] }>(`/api/products/search?q=${encodeURIComponent(term)}&limit=12`).then((r) => { if (id === qReq.current) setHits(r.items); }).catch(() => undefined), 220);
+    setSearching(true);
+    const t = setTimeout(() => api<{ items: Hit[] }>(`/api/products/search?q=${encodeURIComponent(term)}&limit=20`)
+      .then((r) => { if (id === qReq.current) { setHits(r.items); setSearching(false); } }).catch(() => setSearching(false)), 220);
     return () => clearTimeout(t);
   }, [q]);
 
@@ -131,12 +155,15 @@ export function OrderForm({ edit }: { edit?: EditOrder }) {
   const autoFee = lines.some((l) => !l.deliveryIncluded) ? (ub ? fees.feeUB : fees.feeRural) : 0;
   const fee = feeOverride !== null && feeOverride !== '' ? Number(feeOverride) : autoFee;
   const total = subtotal - discount + fee;
+  const pcs = lines.reduce((a, l) => a + l.qty, 0);
   const dup = card?.active && card.active.id !== edit?.id ? card.active : null;
-  const resultLabel = edit ? 'Хадгалах' : !ub || prepaidWait ? 'Захиалга үүсгэх · Төлбөр хүлээж буй' : scheduled ? 'Захиалга үүсгэх · Он сар өдөртэй' : 'Захиалга үүсгэх · Шинэ';
+  const statusHint = edit ? null : !ub || prepaidWait ? 'Төлбөр хүлээж буй' : scheduled ? 'Он сар өдөртэй' : 'Шинэ';
   const addr = useMemo(() => fullAddress({ province, district: ub ? district : null, khoroo: khoroo ? Number(khoroo) : null, addressDetail: detail }), [province, district, khoroo, detail, ub]);
+  const locked = !!edit?.inHandover;
 
   function addHit(h: Hit) {
-    setLines((ls) => { const i = ls.findIndex((x) => x.variantId === h.variantId); if (i >= 0) { const m = [...ls]; m[i] = { ...m[i]!, qty: m[i]!.qty + 1 }; return m; } return [...ls, hitToLine(h)]; });
+    if (locked) return;
+    setLines((ls) => mergeLines(ls, [hitToLine(h)]));
     setQ(''); setHits([]);
   }
   const upd = (id: number, patch: Partial<FormLine>) => setLines((ls) => ls.map((l) => (l.variantId === id ? { ...l, ...patch } : l)));
@@ -149,12 +176,6 @@ export function OrderForm({ edit }: { edit?: EditOrder }) {
     if (ph[1] && !extraPhone) setExtraPhone(ph[1]);
   }
 
-  function addToExisting() {
-    if (!dup) return;
-    try { sessionStorage.setItem(`orderAdd:${dup.id}`, JSON.stringify(lines)); } catch { /* ignore */ }
-    router.push(`/orders/${dup.id}/edit`);
-  }
-
   async function submit() {
     setError(null);
     if (!lines.length) return setError('Дор хаяж нэг бараа нэмнэ үү');
@@ -162,7 +183,8 @@ export function OrderForm({ edit }: { edit?: EditOrder }) {
     if (badDisc) return setError(`«${badDisc.name}» үнийг бууруулсан шалтгаанаа бичнэ үү (5+ тэмдэгт)`);
     const body = {
       phone, extraPhone: extraPhone || null, province, district: ub ? district : null, khoroo: ub && khoroo ? Number(khoroo) : null, addressDetail: detail,
-      note, pageId: pages.some((p) => String(p.id) === pageId) ? Number(pageId) : edit && pageId === String(edit.pageId) ? Number(pageId) : 0, deliveryDate, lines: lines.map((l) => ({ variantId: l.variantId, qty: l.qty, unitPrice: l.unitPrice, discountReason: l.discountReason || undefined })),
+      note, pageId: pages.some((p) => String(p.id) === pageId) ? Number(pageId) : edit && pageId === String(edit.pageId) ? Number(pageId) : 0, deliveryDate,
+      lines: lines.map((l) => ({ variantId: l.variantId, qty: l.qty, unitPrice: l.unitPrice, discountReason: l.discountReason || undefined })),
       ...(feeOverride !== null && feeOverride !== '' ? { deliveryFee: Number(feeOverride), feeReason } : {}),
       ...(card?.blacklist.length ? { blacklistNote } : {}),
     };
@@ -172,12 +194,13 @@ export function OrderForm({ edit }: { edit?: EditOrder }) {
       try {
         if (edit) {
           await api(`/api/orders/${edit.id}`, { method: 'PATCH', json: { ...body, version: edit.version } });
-          router.push(`/orders/${edit.id}?done=${encodeURIComponent('Хадгаллаа')}`);
+          setBusy(false);
+          onDone(`№${edit.number} хадгалагдлаа`, edit.id);
         } else {
-          const r = await api<{ order: { number: string } }>('/api/orders', { method: 'POST', json: { ...body, prepaidWait, idemKey } });
-          router.push(`/orders?done=${encodeURIComponent(`№${r.order.number} захиалга үүслээ`)}`);
+          const r = await api<{ order: { id: number; number: string } }>('/api/orders', { method: 'POST', json: { ...body, prepaidWait, idemKey } });
+          setBusy(false);
+          onDone(`№${r.order.number} захиалга үүслээ`, r.order.id);
         }
-        router.refresh();
         return;
       } catch (e) {
         if (e instanceof ApiError) { setError(e.message); break; }
@@ -188,186 +211,177 @@ export function OrderForm({ edit }: { edit?: EditOrder }) {
     setBusy(false);
   }
 
-  const sec = 'flex flex-col gap-3 rounded-[18px] border border-line bg-surface p-4 shadow-card';
   return (
-    <div className="grid gap-4 pb-32 lg:grid-cols-[minmax(0,1fr)_380px]">
-      <div className="flex min-w-0 flex-col gap-4">
-        <section className={sec}>
-          <h2 className="text-[16px] font-extrabold">Үйлчлүүлэгч</h2>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-muted">Утас
-              <input inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value.replace(/[^\d\s-]/g, ''))} onPaste={onPhonePaste} placeholder="9911 2233" autoFocus={!edit}
-                className="h-12 rounded-xl border border-line bg-surface px-3.5 text-[17px] font-bold text-ink outline-none focus:border-accent" />
-            </label>
-            <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-muted">Нэмэлт утас
-              <input inputMode="tel" value={extraPhone} onChange={(e) => setExtraPhone(e.target.value.replace(/[^\d\s-]/g, ''))} placeholder="(заавал биш)"
-                className="h-12 rounded-xl border border-line bg-surface px-3.5 text-[16px] text-ink outline-none focus:border-accent" />
-            </label>
-          </div>
-          {card ? <CustomerCard card={card} dup={dup} onAddress={() => { if (card.lastAddress) { setProvince(card.lastAddress.province); setDistrict(card.lastAddress.district ?? ''); setKhoroo(card.lastAddress.khoroo ? String(card.lastAddress.khoroo) : ''); setDetail(card.lastAddress.addressDetail); } }}
-            onAddToExisting={addToExisting} hasLines={lines.length > 0}
-            onCall={(c) => { if (c.pageId) setPageId(String(c.pageId)); if (c.variantId) api<{ items: Hit[] }>(`/api/products/search?q=${encodeURIComponent((c.product ?? '').match(/\(([^)]+)\)$/)?.[1] ?? '')}&limit=5`).then((r) => { const h = r.items.find((x) => x.variantId === c.variantId); if (h) addHit(h); }).catch(() => undefined); }} /> : null}
-          {card?.blacklist.length ? (
-            <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-bad-ink">Хар жагсаалттай — яагаад авч байгаагаа бичнэ үү (5+ тэмдэгт)
-              <textarea rows={2} value={blacklistNote} onChange={(e) => setBlacklistNote(e.target.value)} className="rounded-xl border border-bad bg-surface px-3.5 py-2.5 text-ink outline-none" />
-            </label>
-          ) : null}
-        </section>
-
-        <section className={sec}>
-          <h2 className="text-[16px] font-extrabold">Хаяг</h2>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Select id="province" label="Аймаг / хот" value={province} onChange={(e) => { setProvince(e.target.value); if (!isUB(e.target.value)) { setDistrict(''); setKhoroo(''); } }}>
-              {PROVINCES.map((p) => <option key={p} value={p}>{p}</option>)}
-            </Select>
-            {ub ? (
-              <>
-                <Select id="district" label="Дүүрэг" value={district} onChange={(e) => { setDistrict(e.target.value); setKhoroo(''); }}>
-                  <option value="">— Сонгох —</option>
-                  {Object.keys(UB_DISTRICTS).map((d) => <option key={d} value={d}>{d}</option>)}
-                </Select>
-                <Select id="khoroo" label="Хороо" value={khoroo} onChange={(e) => setKhoroo(e.target.value)} disabled={!district}>
-                  <option value="">Хороо тодорхойгүй</option>
-                  {district ? Array.from({ length: UB_DISTRICTS[district]! }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}-р хороо</option>) : null}
-                </Select>
-              </>
-            ) : null}
-          </div>
-          <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-muted">Дэлгэрэнгүй (байр, орц, тоот)
-            <input value={detail} onChange={(e) => setDetail(e.target.value)} placeholder="Нарны хороолол 45-р байр, 3 орц, 56 тоот" className="h-12 rounded-xl border border-line bg-surface px-3.5 text-ink outline-none focus:border-accent" />
-          </label>
-          <p className="rounded-xl bg-surface2 px-3.5 py-2.5 text-[14px] font-semibold">📍 {addr}</p>
-          {!ub ? <Notice tone="warn">Орон нутаг — заавал урьдчилгаатай: «Төлбөр хүлээж буй» төлөвтэй үүснэ.</Notice> : null}
-        </section>
-
-        <section className={sec}>
-          <div className="flex flex-wrap items-end justify-between gap-2">
-            <h2 className="text-[16px] font-extrabold">Бараа</h2>
-            <Select id="page" className="min-w-[200px]" label="Пэйж" value={pages.some((p) => String(p.id) === pageId) ? pageId : ''} onChange={(e) => setPageId(e.target.value)}>
+    <div className="flex h-full max-h-[calc(94vh-56px)] flex-col">
+      <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto px-4 py-3 md:grid-cols-2">
+        {/* ───── Зүүн: үйлчлүүлэгч, хаяг ───── */}
+        <div className="flex min-w-0 flex-col gap-3">
+          <label className="flex flex-col gap-1"><span className={lbl}>Хуудас (пэйж)</span>
+            <select value={pages.some((p) => String(p.id) === pageId) ? pageId : ''} onChange={(e) => setPageId(e.target.value)} className={sel} aria-label="Пэйж">
               <option value="">Пэйж сонгоогүй</option>
               {pages.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </Select>
+            </select>
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1"><span className={lbl}>Утас <span className="text-bad-ink">*</span></span>
+              <input inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value.replace(/[^\d\s-]/g, ''))} onPaste={onPhonePaste} placeholder="99887766" data-autofocus={!edit ? true : undefined}
+                className={clsx(inp, 'font-bold', (dup || card?.blacklist.some((b) => b.phone === phone.replace(/\D/g, ''))) && 'border-bad')} />
+            </label>
+            <label className="flex flex-col gap-1"><span className={lbl}>Нэмэлт утас</span>
+              <input inputMode="tel" value={extraPhone} onChange={(e) => setExtraPhone(e.target.value.replace(/[^\d\s-]/g, ''))} placeholder="88776655" className={inp} />
+            </label>
           </div>
-          {popular.length ? (
-            <div className="flex flex-col gap-1.5">
-              <span className="text-[12px] font-semibold text-subtle">Энэ пэйжийн түгээмэл (7 хоног) — нэг даралтаар нэмнэ</span>
-              <div className="flex gap-2 overflow-x-auto pb-1">
+          {card ? <CustomerCard card={card} dup={dup} hasLines={lines.length > 0}
+            onAddress={() => { if (card.lastAddress) { setProvince(card.lastAddress.province); setDistrict(card.lastAddress.district ?? ''); setKhoroo(card.lastAddress.khoroo ? String(card.lastAddress.khoroo) : ''); setDetail(card.lastAddress.addressDetail); } }}
+            onAddToExisting={() => { if (dup && onAddToExisting) onAddToExisting(dup.id, lines); }}
+            onCall={(c) => { if (c.pageId) setPageId(String(c.pageId)); if (c.variantId) api<{ items: Hit[] }>(`/api/products/search?q=${encodeURIComponent((c.product ?? '').match(/\(([^)]+)\)$/)?.[1] ?? '')}&limit=5`).then((r) => { const h = r.items.find((x) => x.variantId === c.variantId); if (h) addHit(h); }).catch(() => undefined); }} /> : null}
+          {card?.blacklist.length ? (
+            <label className="flex flex-col gap-1 text-[12.5px] font-semibold text-bad-ink">Хар жагсаалттай — яагаад авч байгаагаа бичнэ үү (5+ тэмдэгт)
+              <textarea rows={2} value={blacklistNote} onChange={(e) => setBlacklistNote(e.target.value)} className="rounded-lg border border-bad bg-surface px-2.5 py-1.5 text-[13.5px] text-ink outline-none" />
+            </label>
+          ) : null}
+          <div className={clsx('grid gap-3', ub ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-1')}>
+            {ub ? (
+              <>
+                <label className="flex flex-col gap-1"><span className={lbl}>Дүүрэг <span className="text-bad-ink">*</span></span>
+                  <select id="district" value={district} onChange={(e) => { setDistrict(e.target.value); setKhoroo(''); }} className={sel}>
+                    <option value="">Дүүрэг сонгох</option>
+                    {Object.keys(UB_DISTRICTS).map((d) => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1"><span className={lbl}>Хороо</span>
+                  <select id="khoroo" value={khoroo} onChange={(e) => setKhoroo(e.target.value)} disabled={!district} className={sel}>
+                    <option value="">Тодорхойгүй</option>
+                    {district ? Array.from({ length: UB_DISTRICTS[district]! }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}-р хороо</option>) : null}
+                  </select>
+                </label>
+              </>
+            ) : null}
+            <label className={clsx('flex flex-col gap-1', ub && 'col-span-2 sm:col-span-1')}><span className={lbl}>Аймаг <span className="text-bad-ink">*</span></span>
+              <select id="province" value={province} onChange={(e) => { setProvince(e.target.value); if (!isUB(e.target.value)) { setDistrict(''); setKhoroo(''); } }} className={sel}>
+                {PROVINCES.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </label>
+          </div>
+          <label className="flex flex-col gap-1"><span className={lbl}>Дэлгэрэнгүй хаяг <span className="text-bad-ink">*</span></span>
+            <textarea rows={3} value={detail} onChange={(e) => setDetail(e.target.value)} placeholder="Хороолол, байр, тоот..." aria-label="Дэлгэрэнгүй хаяг"
+              className="rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[13.5px] text-ink outline-none focus:border-accent" />
+            <span className="text-[12px] text-subtle">📍 {addr}</span>
+          </label>
+          {!ub ? <p className="rounded-lg bg-warn-soft px-2.5 py-1.5 text-[12.5px] text-warn">Орон нутаг — урьдчилгаатай: «Төлбөр хүлээж буй» төлөвтэй үүснэ.</p> : null}
+          <label className="flex flex-col gap-1"><span className={lbl}>Оператор санамж</span>
+            <textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Нэмэлт тэмдэглэл..." className="rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[13.5px] text-ink outline-none focus:border-accent" />
+          </label>
+          <div className="flex flex-col gap-1.5">
+            <span className={lbl}>Хүргэх өдөр</span>
+            <div className="grid grid-cols-3 gap-1.5">
+              {(['tomorrow', 'today', 'other'] as const).map((m) => (
+                <button key={m} type="button" aria-pressed={dateMode === m} onClick={() => setDateMode(m)} className={clsx('h-9 rounded-lg border text-[13px] font-semibold', dateMode === m ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface')}>
+                  {m === 'tomorrow' ? 'Маргааш' : m === 'today' ? '🔴 Өнөөдөр' : 'Өөр өдөр'}
+                </button>
+              ))}
+            </div>
+            {dateMode === 'other' ? <input type="date" aria-label="Хүргэх өдөр" min={ubDay(1)} value={otherDate} onChange={(e) => setOtherDate(e.target.value)} className={inp} /> : null}
+            {dateMode === 'other' && scheduled ? <p className="text-[12px] text-info">Он сар өдөртэй — тэр өдрийн өмнөх өдөр автоматаар «Шинэ» болно.</p> : null}
+            {dateMode === 'today' ? <p className="text-[12px] text-bad-ink">Яаралтай — ахлах жолоочийн жагсаалтын эхэнд улаан тэмдэгтэй гарна.</p> : null}
+            {!edit && ub ? (
+              <label className="flex items-center gap-2 text-[13px] font-semibold">
+                <input type="checkbox" checked={prepaidWait} onChange={(e) => setPrepaidWait(e.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />Урьдчилгаа хүлээх
+              </label>
+            ) : null}
+          </div>
+        </div>
+
+        {/* ───── Баруун: бараа ───── */}
+        <div className="flex min-w-0 flex-col gap-2.5">
+          <span className={lbl}>Бараа <span className="text-bad-ink">*</span></span>
+          <div className="relative">
+            <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-subtle"><Icon name="search" size={15} /></span>
+            <input value={q} onChange={(e) => setQ(e.target.value)} disabled={locked} onKeyDown={(e) => { if (e.key === 'Enter' && hits[0] && hits[0].available > 0) { e.preventDefault(); addHit(hits[0]); } }}
+              placeholder="Бараа хайх (код эсвэл нэр)..." aria-label="Бараа хайх" className={clsx(inp, 'pl-8')} />
+          </div>
+          {q.trim() ? (
+            <div className="max-h-[300px] overflow-y-auto rounded-lg border border-line p-1">
+              {hits.length ? hits.map((h) => {
+                const out = h.available <= 0;
+                return (
+                  <div key={h.variantId} className={clsx('flex items-center gap-2.5 rounded-md p-1.5', h.discontinued ? 'bg-bad-soft/50' : out ? 'opacity-50' : 'hover:bg-surface2')}>
+                    <Thumb src={h.thumb} alt={h.fullName} size={44} zoom={h.variantCode} />
+                    <button type="button" disabled={out} onClick={() => addHit(h)} className="flex min-w-0 flex-1 flex-col text-left disabled:cursor-not-allowed">
+                      <span className="flex flex-wrap items-center gap-1.5 text-[13.5px] font-semibold"><span className="text-subtle">{h.variantCode}</span><span className="truncate">{h.name}{h.label && h.label !== 'Үндсэн' ? ` · ${h.label}` : ''}</span>{h.discontinued ? <span className="rounded bg-bad-soft px-1 text-[11px] font-bold text-bad-ink">ДУУССАН</span> : null}</span>
+                      <span className="text-[12px] text-subtle">{money(h.price)}{h.deliveryIncluded ? '' : ' + хүргэлт'} · <span className={clsx('font-semibold', h.available > 10 ? 'text-ok-ink' : h.available > 0 ? 'text-warn' : 'text-bad-ink')}>{h.available}ш</span></span>
+                      {h.description ? <span className="line-clamp-1 text-[11.5px] text-muted">{h.description}</span> : null}
+                    </button>
+                  </div>
+                );
+              }) : <p className="py-4 text-center text-[13px] text-muted">{searching ? 'Хайж байна…' : 'Бараа олдсонгүй'}</p>}
+            </div>
+          ) : popular.length && !edit ? (
+            <div className="flex flex-col gap-1">
+              <span className="text-[11.5px] text-subtle">Энэ пэйжийн түгээмэл (7 хоног)</span>
+              <div className="flex gap-1.5 overflow-x-auto pb-1">
                 {popular.map((h) => (
-                  <button key={h.variantId} type="button" disabled={h.available <= 0} onClick={() => addHit(h)} className="flex w-[120px] shrink-0 flex-col items-center gap-1 rounded-xl border border-line bg-surface p-2 text-center text-[12px] hover:bg-surface2 disabled:opacity-50">
-                    <Thumb src={h.thumb} alt={h.fullName} size={56} />
+                  <button key={h.variantId} type="button" disabled={h.available <= 0} onClick={() => addHit(h)} className="flex w-[96px] shrink-0 flex-col items-center gap-0.5 rounded-lg border border-line bg-surface p-1.5 text-center text-[11px] hover:bg-surface2 disabled:opacity-50">
+                    <Thumb src={h.thumb} alt={h.fullName} size={40} />
                     <span className="line-clamp-2 font-semibold">{h.fullName}</span>
-                    <span className="text-subtle">{money(h.price)} · {h.available}ш</span>
+                    <span className="text-subtle">{h.available}ш</span>
                   </button>
                 ))}
               </div>
             </div>
           ) : null}
-          <div className="relative">
-            <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-subtle"><Icon name="search" size={18} /></span>
-            <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && hits[0] && hits[0].available > 0) { e.preventDefault(); addHit(hits[0]); } }}
-              placeholder="Бараа хайх: код, нэр, өнгө…" aria-label="Бараа хайх" className="h-12 w-full rounded-xl border border-line bg-surface pl-11 pr-3 text-[15px] outline-none focus:border-accent" />
-            {hits.length ? (
-              <ul className="absolute inset-x-0 top-full z-30 mt-1 max-h-[60vh] overflow-y-auto rounded-xl border border-line bg-surface p-1 shadow-pop">
-                {hits.map((h) => (
-                  <li key={h.variantId} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface2">
-                    <Thumb src={h.thumb} alt={h.fullName} size={48} zoom={h.variantCode} />
-                    <button type="button" disabled={h.available <= 0} onClick={() => addHit(h)} className="flex min-w-0 flex-1 flex-col text-left disabled:opacity-50">
-                      <span className="truncate text-[14.5px] font-semibold">{h.fullName}</span>
-                      <span className="text-[12px] text-subtle">{h.variantCode} · {money(h.price)}{h.deliveryIncluded ? '' : ' + хүргэлт'} · <span className={h.available > 0 ? 'text-ok-ink' : 'font-bold text-bad-ink'}>{h.available > 0 ? `${h.available} ш боломжтой` : 'дууссан'}</span></span>
-                      {h.description ? <span className="line-clamp-1 text-[12px] text-muted">{h.description}</span> : null}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
           {lines.length ? (
-            <ul className="flex flex-col divide-y divide-line rounded-xl border border-line">
+            <div className="max-h-[340px] divide-y divide-line overflow-y-auto rounded-lg border border-line">
               {lines.map((l) => {
                 const lowered = l.unitPrice < l.listPrice;
                 return (
-                  <li key={l.variantId} className="flex flex-col gap-2 px-3 py-3">
-                    <div className="flex flex-wrap items-center gap-3">
-                      {l.thumb ? <ZoomButton images={[{ src: l.image ?? largeOf(l.thumb), alt: `${l.name} ${l.label}`, name: l.code }]} label={`${l.name} — томруулах`}><Thumb src={l.thumb} alt={l.name} size={52} /></ZoomButton> : <Thumb src={null} alt={l.name} size={52} />}
-                      <span className="flex min-w-[140px] flex-1 flex-col">
-                        <span className="text-[15px] font-bold">{l.name}{l.label ? <span className="text-muted"> · {l.label}</span> : null}</span>
-                        <span className="text-[12px] text-subtle">{l.code}{l.available !== null ? ` · ${l.available} ш боломжтой` : ''}{l.deliveryIncluded ? '' : ' · хүргэлт тусдаа'}</span>
-                        {l.description ? <span className="text-[12px] text-muted">{l.description}</span> : null}
+                  <div key={l.variantId} className="flex flex-col gap-1.5 p-2">
+                    <div className="flex items-center gap-2">
+                      {l.thumb ? <ZoomButton images={[{ src: l.image ?? largeOf(l.thumb), alt: `${l.name} ${l.label}`, name: l.code }]} label={`${l.name} — томруулах`}><Thumb src={l.thumb} alt={l.name} size={36} /></ZoomButton> : <Thumb src={null} alt={l.name} size={36} />}
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate text-[13.5px] font-semibold">{l.name}{l.label ? <span className="text-muted"> · {l.label}</span> : null}</span>
+                        <span className="text-[11.5px] text-subtle">{l.code}{l.available !== null ? ` | ${l.available}ш` : ''}{l.deliveryIncluded ? '' : ' · хүргэлт тусдаа'}</span>
                       </span>
-                      <label className="flex flex-col text-[11.5px] text-subtle">Үнэ
-                        <input inputMode="numeric" value={l.unitPrice} onChange={(e) => upd(l.variantId, { unitPrice: Math.min(l.listPrice, Number(e.target.value.replace(/\D/g, '')) || 0) })}
-                          className={clsx('h-11 w-28 rounded-lg border bg-surface px-2 text-right text-[15px] font-bold text-ink outline-none', lowered ? 'border-warn' : 'border-line')} />
-                      </label>
-                      <span className="flex items-center gap-1">
-                        <button type="button" aria-label="Хасах" onClick={() => upd(l.variantId, { qty: Math.max(1, l.qty - 1) })} className="grid h-11 w-11 place-items-center rounded-lg border border-line text-[20px] font-bold">−</button>
-                        <input inputMode="numeric" aria-label={`${l.code} тоо`} value={l.qty} onChange={(e) => upd(l.variantId, { qty: Math.max(1, Number(e.target.value.replace(/\D/g, '')) || 1) })} className="h-11 w-14 rounded-lg border border-line bg-surface text-center text-[16px] font-bold outline-none" />
-                        <button type="button" aria-label="Нэмэх" onClick={() => upd(l.variantId, { qty: l.qty + 1 })} className="grid h-11 w-11 place-items-center rounded-lg border border-line text-[20px] font-bold">+</button>
-                      </span>
-                      <span className="w-24 text-right text-[15px] font-extrabold">{money(l.unitPrice * l.qty)}</span>
-                      <button type="button" aria-label={`${l.code} хасах`} onClick={() => setLines((ls) => ls.filter((x) => x.variantId !== l.variantId))} className="grid h-11 w-11 place-items-center rounded-lg text-bad-ink hover:bg-bad-soft"><Icon name="trash" size={17} /></button>
+                      {!locked ? <button type="button" aria-label={`${l.code} хасах`} onClick={() => setLines((ls) => ls.filter((x) => x.variantId !== l.variantId))} className="grid h-7 w-7 place-items-center rounded-md text-bad-ink hover:bg-bad-soft"><Icon name="trash" size={14} /></button> : null}
                     </div>
-                    {lowered ? (
-                      <input value={l.discountReason} onChange={(e) => upd(l.variantId, { discountReason: e.target.value })} placeholder={`Үнийг ${money(l.listPrice)} → ${money(l.unitPrice)} болгосон шалтгаан (заавал)`}
-                        className="h-10 rounded-lg border border-warn bg-warn-soft/40 px-3 text-[13.5px] text-ink outline-none" />
-                    ) : null}
-                  </li>
+                    <div className="flex items-center gap-1.5">
+                      <button type="button" aria-label="Хасах" disabled={locked || l.qty <= 1} onClick={() => upd(l.variantId, { qty: Math.max(1, l.qty - 1) })} className="grid h-7 w-7 place-items-center rounded-md border border-line font-bold disabled:opacity-40">−</button>
+                      <input inputMode="numeric" aria-label={`${l.code} тоо`} disabled={locked} value={l.qty} onChange={(e) => upd(l.variantId, { qty: Math.max(1, Number(e.target.value.replace(/\D/g, '')) || 1) })} className="h-7 w-11 rounded-md border border-line bg-surface text-center text-[13px] font-bold outline-none" />
+                      <button type="button" aria-label="Нэмэх" disabled={locked || (l.available !== null && l.qty >= l.available)} onClick={() => upd(l.variantId, { qty: l.qty + 1 })} className="grid h-7 w-7 place-items-center rounded-md border border-line font-bold disabled:opacity-40">+</button>
+                      <span className="text-[12px] text-subtle">×</span>
+                      <input inputMode="numeric" aria-label={`${l.code} үнэ`} disabled={locked} value={l.unitPrice} onChange={(e) => upd(l.variantId, { unitPrice: Math.min(l.listPrice, Number(e.target.value.replace(/\D/g, '')) || 0) })}
+                        className={clsx('h-7 w-24 rounded-md border bg-surface px-1.5 text-right text-[13px] font-semibold outline-none', lowered ? 'border-warn' : 'border-line')} />
+                      <span className="text-[12px] text-subtle">=</span>
+                      <span className="ml-auto whitespace-nowrap text-[13.5px] font-bold">{money(l.unitPrice * l.qty)}</span>
+                    </div>
+                    {lowered ? <input value={l.discountReason} onChange={(e) => upd(l.variantId, { discountReason: e.target.value })} placeholder={`${money(l.listPrice)} → ${money(l.unitPrice)} болгосон шалтгаан (заавал)`} className="h-8 rounded-md border border-warn bg-warn-soft/40 px-2 text-[12.5px] text-ink outline-none" /> : null}
+                  </div>
                 );
               })}
-            </ul>
-          ) : <p className="rounded-xl border border-dashed border-line px-4 py-6 text-center text-[14px] text-muted">Дээрх хайлтаар бараа нэмнэ үү</p>}
-        </section>
+            </div>
+          ) : <p className="rounded-lg border border-dashed border-line px-3 py-5 text-center text-[13px] text-muted">Дээрх хайлтаар бараа нэмнэ үү</p>}
+        </div>
       </div>
 
-      <aside className="flex flex-col gap-4">
-        <section className={sec}>
-          <h2 className="text-[16px] font-extrabold">Хүргэх өдөр</h2>
-          <div className="grid grid-cols-3 gap-1.5">
-            {(['tomorrow', 'today', 'other'] as const).map((m) => (
-              <button key={m} type="button" aria-pressed={dateMode === m} onClick={() => setDateMode(m)} className={clsx('h-11 rounded-[11px] border text-[14px] font-semibold', dateMode === m ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface')}>
-                {m === 'tomorrow' ? 'Маргааш' : m === 'today' ? '🔴 Өнөөдөр' : 'Өөр өдөр'}
-              </button>
-            ))}
-          </div>
-          {dateMode === 'other' ? <input type="date" aria-label="Хүргэх өдөр" min={ubDay(1)} value={otherDate} onChange={(e) => setOtherDate(e.target.value)} className="h-11 rounded-xl border border-line bg-surface px-3" /> : null}
-          {dateMode === 'today' ? <p className="text-[12.5px] text-bad-ink">Яаралтай — ахлах жолоочийн жагсаалтын эхэнд улаан тэмдэгтэй гарна.</p> : null}
-          {!edit && ub ? (
-            <label className="flex items-center gap-2 text-[14px] font-semibold">
-              <input type="checkbox" checked={prepaidWait} onChange={(e) => setPrepaidWait(e.target.checked)} className="h-5 w-5 accent-[var(--accent)]" />Урьдчилгаа хүлээх
-            </label>
-          ) : null}
-          <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-muted">Тэмдэглэл
-            <textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Жишээ: орой 6-аас хойш" className="rounded-xl border border-line bg-surface px-3.5 py-2.5 text-ink outline-none focus:border-accent" />
-          </label>
-        </section>
-
-        <section className={sec}>
-          <h2 className="text-[16px] font-extrabold">Дүн</h2>
-          <dl className="flex flex-col gap-1.5 text-[14px]">
-            <div className="flex justify-between"><dt className="text-muted">Бараа</dt><dd className="font-semibold">{money(subtotal)}</dd></div>
-            {discount ? <div className="flex justify-between text-warn"><dt>Хөнгөлөлт</dt><dd className="font-semibold">−{money(discount)}</dd></div> : null}
-            <div className="flex items-center justify-between gap-2">
-              <dt className="text-muted">Хүргэлт</dt>
-              <dd className="flex items-center gap-2">
-                {feeOverride === null ? <><span className="font-semibold">{money(autoFee)}</span><button type="button" onClick={() => setFeeOverride(String(autoFee))} className="text-[12.5px] font-semibold text-accent-ink">Өөрчлөх</button></>
-                  : <><input inputMode="numeric" aria-label="Хүргэлтийн төлбөр" value={feeOverride} onChange={(e) => setFeeOverride(e.target.value.replace(/\D/g, ''))} className="h-9 w-24 rounded-lg border border-warn bg-surface px-2 text-right font-bold" /><button type="button" onClick={() => { setFeeOverride(null); setFeeReason(''); }} className="text-[12.5px] font-semibold text-muted">Буцаах</button></>}
-              </dd>
-            </div>
-            {feeOverride !== null && Number(feeOverride) !== autoFee ? <input value={feeReason} onChange={(e) => setFeeReason(e.target.value)} placeholder="Хүргэлтийн төлбөр өөрчилсөн шалтгаан (заавал)" className="h-10 rounded-lg border border-warn bg-warn-soft/40 px-3 text-[13px]" /> : null}
-            <div className="mt-1 flex justify-between border-t border-line pt-2 text-[18px]"><dt className="font-bold">Төлөх</dt><dd className="font-extrabold">{money(total)}</dd></div>
-          </dl>
-        </section>
-      </aside>
-
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface/95 px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 backdrop-blur lg:left-[84px]">
-        <div className="mx-auto flex max-w-[1400px] flex-col gap-2">
-          {error ? <Notice>{error}</Notice> : null}
-          {dup && !edit ? <Notice tone="warn">Энэ утсаар идэвхтэй захиалга №{dup.number} байна — шинэ захиалга үүсгэхгүй, тэр захиалгад бараа нэмнэ.</Notice> : null}
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <span className="mr-auto text-[15px] font-extrabold">{money(total)}</span>
-            <Link href={edit ? `/orders/${edit.id}` : '/orders'} className="inline-flex h-12 items-center rounded-[11px] border border-line bg-surface px-4 font-semibold">Буцах</Link>
-            {dup && !edit ? <Button variant="primary" size="lg" disabled={dup.inHandover} onClick={addToExisting}>№{dup.number} захиалгад бараа нэмэх</Button>
-              : <Button variant="primary" size="lg" loading={busy} onClick={submit}>{resultLabel}</Button>}
-          </div>
+      {/* ───── Дүн (хуучин шиг) ───── */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line bg-info-soft/40 px-4 py-2 text-[13px]">
+        <span className="text-muted">{lines.length} бараа | {pcs} ширхэг</span>
+        {discount ? <span className="text-warn">Хөнгөлөлт −{money(discount)}</span> : null}
+        <span className="flex items-center gap-1.5 text-muted">Хүргэлт
+          {feeOverride === null ? <><b className="text-ink">{money(autoFee)}</b><button type="button" onClick={() => setFeeOverride(String(autoFee))} className="font-semibold text-accent-ink">өөрчлөх</button></>
+            : <><input inputMode="numeric" aria-label="Хүргэлтийн төлбөр" value={feeOverride} onChange={(e) => setFeeOverride(e.target.value.replace(/\D/g, ''))} className="h-7 w-20 rounded-md border border-warn bg-surface px-1.5 text-right font-bold" /><button type="button" onClick={() => { setFeeOverride(null); setFeeReason(''); }} className="font-semibold">буцаах</button></>}
+        </span>
+        {feeOverride !== null && Number(feeOverride) !== autoFee ? <input value={feeReason} onChange={(e) => setFeeReason(e.target.value)} placeholder="Хүргэлт өөрчилсөн шалтгаан (заавал)" className="h-7 min-w-[220px] flex-1 rounded-md border border-warn bg-surface px-2 text-[12.5px]" /> : null}
+        <span className="ml-auto flex items-baseline gap-2"><span className="font-semibold">Нийт:</span><span className="text-[19px] font-extrabold text-accent-ink">{money(total)}</span></span>
+      </div>
+      <div className="flex flex-col gap-2 border-t border-line bg-surface2/60 px-4 py-2.5 pb-[max(10px,env(safe-area-inset-bottom))]">
+        {error ? <Notice>{error}</Notice> : null}
+        {dup && !edit ? <Notice tone="warn">Энэ утсаар идэвхтэй захиалга №{dup.number} байна — шинэ захиалга үүсгэхгүй, тэр захиалгад бараа нэмнэ.</Notice> : null}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {statusHint ? <span className="mr-auto text-[12.5px] text-muted">Төлөв: <b className="text-ink">{statusHint}</b></span> : null}
+          <Button size="sm" onClick={onClose} disabled={busy}>Болих</Button>
+          {dup && !edit ? <Button size="sm" variant="primary" disabled={dup.inHandover || !onAddToExisting} onClick={() => onAddToExisting?.(dup.id, lines)}>№{dup.number} захиалгад бараа нэмэх</Button>
+            : <Button size="sm" variant="primary" loading={busy} onClick={submit}>{edit ? 'Хадгалах' : 'Захиалга үүсгэх'}</Button>}
         </div>
       </div>
     </div>
@@ -378,32 +392,32 @@ function CustomerCard({ card, dup, onAddress, onAddToExisting, hasLines, onCall 
   card: Card; dup: Card['active']; onAddress: () => void; onAddToExisting: () => void; hasLines: boolean; onCall: (c: Card['calls'][number]) => void;
 }) {
   const empty = !card.stats.total && !card.blacklist.length && !card.calls.length;
-  if (empty) return <p className="rounded-xl bg-surface2 px-3.5 py-2.5 text-[13px] text-muted">Шинэ үйлчлүүлэгч — өмнө захиалга байхгүй</p>;
+  if (empty) return <p className="-mt-1 text-[12px] text-subtle">Шинэ үйлчлүүлэгч — өмнө захиалга байхгүй</p>;
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-line bg-surface2/60 p-3 text-[13.5px]">
+    <div className="-mt-1 flex flex-col gap-1.5 rounded-lg border border-line bg-surface2/60 p-2 text-[12.5px]">
       {card.stats.total ? <p className="font-semibold">🧾 Өмнө {card.stats.total} захиалга · хүргэсэн {card.stats.delivered} · цуцалсан {card.stats.cancelled}</p> : null}
-      {card.blacklist.map((b) => <p key={b.id} className="rounded-lg bg-bad-soft px-3 py-2 font-semibold text-bad-ink">⚠️ Хар жагсаалт ({formatPhone(b.phone)}): {b.reason} — {b.reportedBy}, {ubDateTime(b.createdAt)}{b.orderNumber ? ` · №${b.orderNumber}` : ''}</p>)}
+      {card.blacklist.map((b) => <p key={b.id} className="rounded-md bg-bad-soft px-2 py-1.5 font-semibold text-bad-ink">⚠️ Мөнгөө өгдөггүй хүн ({formatPhone(b.phone)}): {b.reason} — {b.reportedBy}{b.orderNumber ? ` · №${b.orderNumber}` : ''}</p>)}
       {dup ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg bg-warn-soft px-3 py-2 text-warn">
-          <span className="font-semibold">🔁 Идэвхтэй захиалга №{dup.number} · {dup.statusLabel} · {dup.operatorName}</span>
-          {dup.inHandover ? <span>— падаанд орсон тул нэмэх боломжгүй</span> : hasLines ? <button type="button" onClick={onAddToExisting} className="rounded-lg bg-ink px-3 py-1.5 text-[13px] font-bold text-on-ink">Тэнд бараа нэмэх</button> : <Link href={`/orders/${dup.id}`} className="font-bold underline">Харах</Link>}
+        <div className="flex flex-wrap items-center gap-2 rounded-md bg-warn-soft px-2 py-1.5 text-warn">
+          <span className="font-semibold">🔁 Давхар: идэвхтэй захиалга №{dup.number} · {dup.statusLabel} · {dup.operatorName}</span>
+          {dup.inHandover ? <span>— падаанд орсон тул нэмэх боломжгүй</span> : hasLines ? <button type="button" onClick={onAddToExisting} className="rounded-md bg-ink px-2 py-1 text-[12px] font-bold text-on-ink">Тэнд бараа нэмэх</button> : <Link href={`/orders/${dup.id}`} className="font-bold underline">Харах</Link>}
         </div>
       ) : null}
       {card.calls.map((c) => (
-        <div key={c.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-info-soft px-3 py-2 text-info">
-          <span className="font-semibold">📞 {c.ownerName}: {c.product ?? '—'}{c.pageName ? ` · ${c.pageName}` : ''}{c.note ? ` · ${c.note}` : ''}</span>
-          {c.variantId || c.pageId ? <button type="button" onClick={() => onCall(c)} className="rounded-lg bg-surface px-2.5 py-1 text-[12.5px] font-bold text-ink">Бараа, пэйж тохируулах</button> : null}
+        <div key={c.id} className="flex flex-wrap items-center gap-2 rounded-md bg-info-soft px-2 py-1.5 text-info">
+          <span className="font-semibold">📞 Дуудлагын бүртгэлд: {c.product ?? '—'}{c.pageName ? ` · ${c.pageName}` : ''} · {c.ownerName}{c.note ? ` · ${c.note}` : ''}</span>
+          {c.variantId || c.pageId ? <button type="button" onClick={() => onCall(c)} className="rounded-md bg-surface px-2 py-0.5 text-[12px] font-bold text-ink">Бараа, пэйж тохируулах</button> : null}
         </div>
       ))}
       {card.lastAddress ? (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-muted">📍 Сүүлийн хаяг: {card.lastAddress.fullAddress}</span>
-          <button type="button" onClick={onAddress} className="rounded-lg border border-line bg-surface px-2.5 py-1 text-[12.5px] font-bold">Энэ хаягаар</button>
+          <button type="button" onClick={onAddress} className="rounded-md border border-line bg-surface px-2 py-0.5 text-[12px] font-bold">Энэ хаягаар</button>
         </div>
       ) : null}
       {card.orders.length ? (
-        <ul className="flex flex-col gap-0.5 text-[12.5px] text-muted">
-          {card.orders.slice(0, 4).map((o) => <li key={o.id}><Link href={`/orders/${o.id}`} className="font-semibold text-ink">№{o.number}</Link> · {o.statusLabel} · {ubDateTime(o.createdAt).slice(0, 10)} · {money(o.total)} · {o.lines.join(', ')}</li>)}
+        <ul className="flex flex-col gap-0.5 text-[12px] text-muted">
+          {card.orders.slice(0, 3).map((o) => <li key={o.id}><Link href={`/orders/${o.id}`} className="font-semibold text-ink">№{o.number}</Link> · {o.statusLabel} · {ubDateTime(o.createdAt).slice(0, 10)} · {money(o.total)} · {o.lines.join(', ')}</li>)}
         </ul>
       ) : null}
     </div>

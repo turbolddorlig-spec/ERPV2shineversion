@@ -1,18 +1,19 @@
 import { redirect } from 'next/navigation';
 import { requirePage } from '@/lib/current-user';
 import { PageHeader } from '@/components/shell/AppShell';
-import { OrderForm } from '@/components/orders/OrderForm';
+import { OrdersClient } from '@/components/orders/OrdersClient';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Шинэ захиалга · zahialga•' };
 
+/** Захиалгын жагсаалт + «Шинэ захиалга» цонх нээлттэй (хуучин ERP шиг) */
 export default async function NewOrderPage() {
   const { access } = await requirePage('orders');
   if (access !== 'edit') redirect('/forbidden');
   return (
     <>
-      <PageHeader back={{ href: '/orders', label: 'Захиалга руу буцах' }} title="Шинэ захиалга" />
-      <OrderForm />
+      <PageHeader title="Захиалга" />
+      <OrdersClient initialModal={{ kind: 'new' }} />
     </>
   );
 }
