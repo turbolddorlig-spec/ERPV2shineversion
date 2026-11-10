@@ -11,11 +11,14 @@ import type { UserActor } from './users';
  * Өртгийн утгыг эрхгүй хүнд нууна.
  */
 export const HISTORY_PAGE_SIZE = 50;
+/** Шалгах шаардлагагүй: шинэ бараа, өртөг (зөвхөн СА/А, #32) */
+export const NOT_REVIEWABLE = ['product.created', 'product.cost'];
 export const IMPORTANT_TAGS = ['price', 'code', 'status', 'cost'];
 
 export const PRODUCT_ACTION_LABEL: Record<string, string> = {
   'product.created': 'Бараа үүсгэсэн',
   'product.updated': 'Засвар',
+  'product.cost': 'Өртөг өөрчилсөн',
   'product.status': 'Төлөв сольсон',
   'product.image_added': 'Зураг нэмсэн',
   'product.image_updated': 'Зураг өөрчилсөн',
@@ -64,7 +67,7 @@ export async function listProductHistory(actor: UserActor, params: HistoryParams
   if (params.important) and.push({ tags: { hasSome: IMPORTANT_TAGS } });
   if (params.unreviewed) {
     // Шалгаагүй: AuditReview-д бичлэггүй, бараа үүсгэснээс бусад засвар
-    and.push({ action: { not: 'product.created' } });
+    and.push({ action: { notIn: NOT_REVIEWABLE } });
     and.push({ id: { notIn: (await db.auditReview.findMany({ select: { auditLogId: true } })).map((r) => r.auditLogId) } });
   }
   const where: Prisma.AuditLogWhereInput = { AND: and };
@@ -87,7 +90,7 @@ export async function listProductHistory(actor: UserActor, params: HistoryParams
         tags: r.tags, important: r.tags.some((t) => IMPORTANT_TAGS.includes(t)),
         details: redact(r.details, showCost),
         review: rev ? { by: rev.reviewedByName, at: rev.reviewedAt } : null,
-        reviewable: r.action !== 'product.created',
+        reviewable: !NOT_REVIEWABLE.includes(r.action),
       };
     }),
   };
@@ -103,7 +106,7 @@ export async function unreviewedCount(actor: UserActor, opts: { fresh?: boolean 
   if (!opts.fresh && badgeCache && Date.now() - badgeCache.at < 30_000) return badgeCache.n;
   const rows = await db.$queryRaw<{ n: bigint }[]>`
     SELECT count(*)::bigint AS n FROM "AuditLog" a
-    WHERE a."entityType" = 'Product' AND a.action <> 'product.created'
+    WHERE a."entityType" = 'Product' AND a.action NOT IN ('product.created', 'product.cost')
       AND NOT EXISTS (SELECT 1 FROM "AuditReview" r WHERE r."auditLogId" = a.id)`;
   const n = Number(rows[0]?.n ?? 0);
   badgeCache = { n, at: Date.now() };
@@ -119,7 +122,7 @@ export async function reviewProductEdit(actor: UserActor, auditId: string) {
   if (!/^\d+$/.test(auditId)) throw notFound();
   const row = await db.auditLog.findUnique({ where: { id: BigInt(auditId) } });
   if (!row || row.entityType !== 'Product') throw notFound('Засвар олдсонгүй');
-  if (row.action === 'product.created') throw badRequest('Шинэ бараа үүсгэсэн бичлэгийг шалгах шаардлагагүй');
+  if (NOT_REVIEWABLE.includes(row.action)) throw badRequest('Энэ бичлэгийг шалгах шаардлагагүй');
   if (row.actorId === actor.id && !actor.roles.includes('SUPER_ADMIN')) throw forbidden('Өөрийн засварыг өөрөө шалгаж болохгүй');
   await db.auditReview.createMany({
     data: [{ auditLogId: row.id, reviewedById: actor.id, reviewedByName: actor.name }],
@@ -137,7 +140,7 @@ export async function reviewAllProductEdits(actor: UserActor) {
     const n = await tx.$executeRaw`
       INSERT INTO "AuditReview" ("auditLogId", "reviewedById", "reviewedByName", "reviewedAt")
       SELECT a.id, ${actor.id}::uuid, ${actor.name}, now() FROM "AuditLog" a
-      WHERE a."entityType" = 'Product' AND a.action <> 'product.created'
+      WHERE a."entityType" = 'Product' AND a.action NOT IN ('product.created', 'product.cost')
         AND NOT EXISTS (SELECT 1 FROM "AuditReview" r WHERE r."auditLogId" = a.id)
       ON CONFLICT ("auditLogId") DO NOTHING`;
     if (n > 0) await writeAudit(actor, 'product.review_all', 'ProductReview', null, { count: n }, tx);

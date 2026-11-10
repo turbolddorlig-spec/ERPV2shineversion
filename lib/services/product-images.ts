@@ -7,7 +7,9 @@ import { mediaUrl, saveProductImage } from '../storage';
 import { reasonProblem } from '../catalog/variants';
 import type { UserActor } from './users';
 
-export const MAX_IMAGES_PER_PRODUCT = 8;
+/** Зургийн хязгаар: өнгө тус бүрд 8, ерөнхий 8 (шийдвэр #32) */
+export const MAX_IMAGES_PER_COLOR = 8;
+const tooMany = (color: string) => badRequest(color ? `«${color}» өнгөнд ${MAX_IMAGES_PER_COLOR} хүртэл зураг` : `Ерөнхий ${MAX_IMAGES_PER_COLOR} хүртэл зураг`, 'too_many_images');
 
 function assertEdit(actor: UserActor) {
   if (!canEdit(actor.roles, 'products')) throw forbidden('Танд бараа засах эрх байхгүй');
@@ -32,14 +34,13 @@ export async function addProductImage(actor: UserActor, productId: number, file:
   const product = await db.product.findUnique({ where: { id: productId }, select: { id: true, code: true, name: true, colors: true } });
   if (!product) throw notFound('Бараа олдсонгүй');
   const color = cleanColor(opts.color, product.colors);
-  const count = await db.productImage.count({ where: { productId } });
-  if (count >= MAX_IMAGES_PER_PRODUCT) throw badRequest(`Нэг бараанд ${MAX_IMAGES_PER_PRODUCT} хүртэл зураг`, 'too_many_images');
+  if (await db.productImage.count({ where: { productId, color } }) >= MAX_IMAGES_PER_COLOR) throw tooMany(color);
 
   const saved = await saveProductImage(productId, file);
   return db.$transaction(async (tx) => {
     // Зэрэг upload хийхэд хязгаарыг дахин шалгана
+    if (await tx.productImage.count({ where: { productId, color } }) >= MAX_IMAGES_PER_COLOR) throw tooMany(color);
     const n = await tx.productImage.count({ where: { productId } });
-    if (n >= MAX_IMAGES_PER_PRODUCT) throw badRequest(`Нэг бараанд ${MAX_IMAGES_PER_PRODUCT} хүртэл зураг`, 'too_many_images');
     const img = await tx.productImage.create({
       data: { productId, color, isMain: n === 0, sortOrder: n, ...saved },
     });
@@ -62,6 +63,7 @@ export async function updateProductImage(actor: UserActor, imageId: string, inpu
   await db.$transaction(async (tx) => {
     if (input.color !== undefined) {
       const c = cleanColor(input.color, img.product.colors);
+      if (c !== img.color && (await tx.productImage.count({ where: { productId: img.productId, color: c } })) >= MAX_IMAGES_PER_COLOR) throw tooMany(c);
       if (c !== img.color) { await tx.productImage.update({ where: { id: imageId }, data: { color: c } }); changes.imageColor = { from: img.color || 'ерөнхий', to: c || 'ерөнхий' }; }
     }
     if (input.isMain === true && !img.isMain) {
@@ -71,9 +73,12 @@ export async function updateProductImage(actor: UserActor, imageId: string, inpu
     }
     if (input.move === 'up' || input.move === 'down') {
       const all = await tx.productImage.findMany({ where: { productId: img.productId }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] });
+      // Зөвхөн ижил өнгийн зургуудын дотор байр солино (дэлгэц дээр өнгөөр бүлэглэж харуулдаг)
       const i = all.findIndex((x) => x.id === imageId);
-      const j = input.move === 'up' ? i - 1 : i + 1;
-      if (i >= 0 && j >= 0 && j < all.length) {
+      const same = all.map((x, k) => (x.color === img.color ? k : -1)).filter((k) => k >= 0);
+      const pos = same.indexOf(i);
+      const j = same[input.move === 'up' ? pos - 1 : pos + 1] ?? -1;
+      if (i >= 0 && j >= 0) {
         [all[i], all[j]] = [all[j]!, all[i]!];
         for (let k = 0; k < all.length; k++) await tx.productImage.update({ where: { id: all[k]!.id }, data: { sortOrder: k } });
         changes.imageOrder = { from: null, to: 'дараалал сольсон' };

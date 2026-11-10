@@ -150,8 +150,8 @@ export async function listProducts(actor: UserActor, params: ListParams) {
         id: true, code: true, name: true, price: true, costPrice: true, status: true, colors: true, sizes: true, updatedAt: true,
         category: { select: { id: true, name: true, color: true } },
         season: { select: { id: true, name: true } },
-        images: { where: { isMain: true }, take: 1, select: { fileKey: true } },
-        _count: { select: { variants: { where: { isActive: true } } } },
+        images: { orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }], select: { fileKey: true, color: true, isMain: true } },
+        variants: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], select: { id: true, code: true, color: true, size: true, priceOverride: true, isActive: true } },
       },
     }),
   ]);
@@ -160,8 +160,18 @@ export async function listProducts(actor: UserActor, params: ListParams) {
     items: rows.map((r) => ({
       id: r.id, code: r.code, name: r.name, price: r.price, ...(showCost ? { costPrice: r.costPrice } : {}),
       status: r.status, statusLabel: STATUS_LABEL[r.status], category: r.category, season: r.season,
-      variantCount: r._count.variants, hasVariants: r.colors.length + r.sizes.length > 0,
-      thumb: r.images[0] ? mediaUrl(r.images[0].fileKey, 'sm') : null, updatedAt: r.updatedAt,
+      variantCount: r.variants.filter((v) => v.isActive).length, hasVariants: r.colors.length + r.sizes.length > 0,
+      thumb: (() => { const m = r.images.find((i) => i.isMain) ?? r.images[0]; return m ? mediaUrl(m.fileKey, 'sm') : null; })(),
+      updatedAt: r.updatedAt,
+      // Жагсаалтад бараа бүрийн доор догол мөрөөр харуулах хувилбарууд (#32)
+      variants: r.colors.length + r.sizes.length > 0 ? r.variants.map((v) => {
+        const img = v.color ? r.images.find((i) => i.color === v.color) : undefined;
+        return {
+          id: v.id, code: v.code, color: v.color, size: v.size, label: variantLabel(v), isActive: v.isActive,
+          price: v.priceOverride ?? r.price, priceOverride: v.priceOverride !== null,
+          thumb: img ? mediaUrl(img.fileKey, 'sm') : null,
+        };
+      }) : [],
     })),
   };
 }
@@ -188,7 +198,7 @@ export async function createProduct(actor: UserActor, input: ProductInput) {
   const price = cleanMoney(input.price, 'Үнэ')!;
   let costPrice: number | null = null;
   if (input.costPrice !== undefined && input.costPrice !== null && input.costPrice !== '') {
-    if (!canSeeCost(actor.roles)) throw forbidden('Өртөг оруулах эрхгүй');
+    // Анх бүртгэхэд барааг үүсгэх эрхтэй хүн бүр өртөг оруулж болно; дараа нь засах, харах нь зөвхөн СА/А (#32)
     costPrice = cleanMoney(input.costPrice, 'Өртөг', { allowZero: true });
   }
   const colors = cleanAxis(input.colors);
@@ -230,9 +240,6 @@ type Change = { from: unknown; to: unknown };
 
 export async function updateProduct(actor: UserActor, id: number, input: UpdateInput, opts: { reason: unknown; version: unknown }) {
   assertEdit(actor);
-  const problem = reasonProblem(opts.reason);
-  if (problem) throw badRequest(problem, 'reason_required');
-  const reason = String(opts.reason).trim().slice(0, 500);
   const version = Number(opts.version);
   if (!Number.isInteger(version)) throw badRequest('Хувилбарын дугаар алга', 'version_required');
 
@@ -348,6 +355,11 @@ export async function updateProduct(actor: UserActor, id: number, input: UpdateI
   if (Object.keys(variantChanges).length) { changes.variants = { from: null, to: variantChanges }; tags.add('variant'); }
 
   if (Object.keys(changes).length === 0) return { product: serializeProduct(p, actor.roles), changed: false };
+  // Тайлбар заавал (#29). Зөвхөн өртөг өөрчилсөн бол (зөвхөн СА/А хийнэ) тайлбаргүй хадгална (#32)
+  const costOnly = Object.keys(changes).every((k) => k === 'costPrice');
+  const problem = reasonProblem(opts.reason);
+  if (problem && !costOnly) throw badRequest(problem, 'reason_required');
+  const reason = problem ? null : String(opts.reason).trim().slice(0, 500);
 
   try {
     const updated = await db.$transaction(async (tx) => {
@@ -366,7 +378,7 @@ export async function updateProduct(actor: UserActor, id: number, input: UpdateI
           await tx.productVariant.create({ data: { productId: id, code: v.code, color: v.combo.color, size: v.combo.size, isActive: v.isActive, priceOverride: v.priceOverride, sortOrder: v.sortOrder } });
         }
       }
-      await writeAudit(actor, 'product.updated', 'Product', String(id), {
+      await writeAudit(actor, costOnly ? 'product.cost' : 'product.updated', 'Product', String(id), {
         reason, code: newCode, name: (data.name as string) ?? p.name, changes,
       } as unknown as Prisma.InputJsonValue, tx, [...tags]);
       return tx.product.findUniqueOrThrow({ where: { id }, include: FULL_INCLUDE });

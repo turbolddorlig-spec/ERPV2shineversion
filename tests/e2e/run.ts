@@ -182,6 +182,17 @@ async function main() {
   const saU = await loginAs('80000001');
   const unrev = JSON.parse((await req('/api/products/history?unreviewed=1', { cookie: saU.cookie })).text);
   check('бүгдийг шалгасны дараа шалгаагүй 0', unrev.unreviewed === 0 && unrev.total === 0, JSON.stringify({ u: unrev.unreviewed, t: unrev.total }));
+  // Өртөг (#32): админ тайлбаргүй засна, маркетинг засахгүй
+  const admU = await loginAs('80000002');
+  const p3 = JSON.parse((await req('/api/products/3', { cookie: admU.cookie })).text).product;
+  const costOk = await req('/api/products/3', { cookie: admU.cookie, method: 'PATCH', body: { changes: { costPrice: (p3.costPrice ?? 0) + 100 }, version: p3.version } });
+  check('админ өртгийг тайлбаргүй засна → 200', costOk.status === 200, costOk.text.slice(0, 120));
+  const p3b = JSON.parse(costOk.text).product;
+  const costMk = await req('/api/products/3', { cookie: mk.cookie, method: 'PATCH', body: { changes: { costPrice: 1 }, reason: 'Өртөг засах оролдлого', version: p3b.version } });
+  check('маркетинг өртөг засахгүй → 403', costMk.status === 403, String(costMk.status));
+  const listV = JSON.parse((await req('/api/products?page=1', { cookie: admU.cookie })).text);
+  const withV = listV.items.find((x: { hasVariants: boolean }) => x.hasVariants);
+  check('жагсаалтад хувилбар үнэтэйгээ ирнэ', !!withV && withV.variants.length > 0 && typeof withV.variants[0].price === 'number', JSON.stringify(withV?.variants?.[0] ?? null));
   // Зураг upload (multipart, HTTP)
   const png = await sharp({ create: { width: 600, height: 600, channels: 3, background: '#E8590C' } }).png().toBuffer();
   const corrupt = Buffer.concat([png.subarray(0, 60), Buffer.alloc(200, 7)]);

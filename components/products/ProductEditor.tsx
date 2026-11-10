@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
+import { ImageGroups, type ImageOp, type PendingImage } from './ImageGroups';
 import { Field } from '@/components/ui/Field';
 import { Select } from '@/components/ui/Select';
 import { ChipsInput } from '@/components/ui/ChipsInput';
@@ -60,18 +61,24 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
   const [reasonErr, setReasonErr] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
   const [statusTo, setStatusTo] = useState<Product['status'] | null>(null);
-  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [uploadColor, setUploadColor] = useState('');
-  // Сонгосон зургийн урьдчилсан харагдац
-  const uploadColors = isNew ? colors : (product?.colors ?? []);
-  const [previews, setPreviews] = useState<string[]>([]);
+  // Сонгосон (хадгалаагүй) зураг — өнгө тус бүртэй
+  const [pending, setPending] = useState<PendingImage[]>([]);
+  const productColors = product?.colors;
+  const uploadColors = useMemo(() => (isNew ? colors : (productColors ?? [])), [isNew, colors, productColors]);
+  const pendingRef = useRef<PendingImage[]>([]);
+  pendingRef.current = pending;
+  useEffect(() => () => pendingRef.current.forEach((p) => URL.revokeObjectURL(p.url)), []);
+  // Өнгө хасагдвал түүний сонгосон зураг «Ерөнхий» рүү шилжинэ
   useEffect(() => {
-    const urls = pendingFiles.map((f) => URL.createObjectURL(f));
-    setPreviews(urls);
-    return () => urls.forEach((u) => URL.revokeObjectURL(u));
-  }, [pendingFiles]);
+    setPending((ps) => (ps.some((p) => p.color && !uploadColors.includes(p.color)) ? ps.map((p) => (p.color && !uploadColors.includes(p.color) ? { ...p, color: '' } : p)) : ps));
+  }, [uploadColors]);
+  function addPending(color: string, files: File[]) {
+    setPending((ps) => [...ps, ...files.map((file) => ({ id: `${Date.now()}-${Math.random()}`, file, color, url: URL.createObjectURL(file) }))]);
+  }
+  function removePending(id: string) {
+    setPending((ps) => { const x = ps.find((p) => p.id === id); if (x) URL.revokeObjectURL(x.url); return ps.filter((p) => p.id !== id); });
+  }
   const [historyKey, setHistoryKey] = useState(0);
-  const fileRef = useRef<HTMLInputElement>(null);
   const ro = !perms.edit;
 
   useEffect(() => {
@@ -131,9 +138,9 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
     try {
       const r = await api<{ product: Product }>('/api/products', { method: 'POST', json: {
         code, name, description, categoryId: categoryId || null, seasonId: seasonId || null, price,
-        ...(perms.cost && cost !== '' ? { costPrice: cost } : {}), colors, sizes,
+        ...(cost !== '' ? { costPrice: cost } : {}), colors, sizes,
       } });
-      if (pendingFiles.length) {
+      if (pending.length) {
         const fails = await uploadFiles('Бараа бүртгэхэд оруулсан зураг', r.product.id);
         if (fails.length) {
           // Бараа үүссэн ч зарим зураг орсонгүй → барааны хуудсанд үлдэж, дахин оруулна
@@ -153,6 +160,7 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
   /** Хадгалах: талбарын өөрчлөлт (байвал) + сонгосон зураг (байвал) → амжилттай бол барааны жагсаалт руу буцна */
   async function saveWithReason(reason: string) {
     if (!product) return;
+    const inModal = reasonFor !== null;
     setSaving(true); setReasonErr(null);
     try {
       if (changes && Object.keys(changes).length) {
@@ -161,11 +169,12 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
       }
     } catch (e) {
       if (e instanceof ApiError && e.code === 'stale') { setStale(true); setReasonFor(null); }
-      else setReasonErr(e instanceof ApiError ? e.message : 'Хадгалж чадсангүй');
+      else if (inModal) setReasonErr(e instanceof ApiError ? e.message : 'Хадгалж чадсангүй');
+      else setError(e instanceof ApiError ? e.message : 'Хадгалж чадсангүй');
       setSaving(false);
       return;
     }
-    if (pendingFiles.length) {
+    if (pending.length) {
       const fails = await uploadFiles(reason);
       if (fails.length) {
         setSaving(false); setReasonFor(null); await reloadProduct();
@@ -180,7 +189,9 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
   /** Хадгалах товч: өөрчлөлт эсвэл сонгосон зураг байвал тайлбар асууна, юу ч өөрчлөөгүй бол шууд жагсаалт руу буцна */
   function onSaveClick() {
     if (isNew) return void create();
-    if (dirty || pendingFiles.length) { setReasonErr(null); setReasonFor('save'); return; }
+    // Зөвхөн өртөг өөрчилсөн бол (зөвхөн СА/А) тайлбар асуухгүй (#32)
+    if (dirty && !pending.length && changes && Object.keys(changes).every((k) => k === 'costPrice')) { setError(null); return void saveWithReason(''); }
+    if (dirty || pending.length) { setReasonErr(null); setReasonFor('save'); return; }
     router.push('/products');
     router.refresh();
   }
@@ -203,18 +214,20 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
     resetFrom(r.product);
   }
 
-  /** Сонгосон зургуудыг оруулна. Буцаах утга: орж чадаагүй зургийн алдаа */
+  /** Сонгосон зургуудыг (ерөнхий эхлээд, дараа нь өнгө тус бүр) оруулна. Буцаах утга: орж чадаагүй зургийн алдаа */
   async function uploadFiles(reason: string, pid = product?.id): Promise<string[]> {
     if (!pid) return [];
     const fails: string[] = [];
-    for (const f of pendingFiles) {
+    const order = ['', ...uploadColors];
+    const list = [...pending].sort((a, b) => order.indexOf(a.color) - order.indexOf(b.color));
+    for (const p of list) {
       const fd = new FormData();
-      fd.set('file', f); fd.set('reason', reason); fd.set('color', uploadColor);
+      fd.set('file', p.file); fd.set('reason', reason); fd.set('color', p.color);
       const res = await fetch(`/api/products/${pid}/images`, { method: 'POST', body: fd });
-      if (!res.ok) fails.push(`${f.name}: ${(await res.json().catch(() => ({}))).error ?? 'алдаа'}`);
+      if (!res.ok) fails.push(`${p.file.name}: ${(await res.json().catch(() => ({}))).error ?? 'алдаа'}`);
     }
-    setPendingFiles([]);
-    if (fileRef.current) fileRef.current.value = '';
+    pending.forEach((p) => URL.revokeObjectURL(p.url));
+    setPending([]);
     return fails;
   }
 
@@ -233,9 +246,9 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
     } finally { setSaving(false); }
   }
 
-  const changeSummary = (changes && Object.keys(changes).length) || pendingFiles.length ? (
+  const changeSummary = (changes && Object.keys(changes).length) || pending.length ? (
     <ul className="list-disc pl-5">
-      {pendingFiles.length ? <li>{pendingFiles.length} шинэ зураг нэмнэ</li> : null}
+      {pending.length ? <li>{pending.length} шинэ зураг нэмнэ</li> : null}
       {changes && 'code' in changes ? <li>Код: {product?.code} → {String(changes.code).toUpperCase()}</li> : null}
       {changes && ('name' in changes) ? <li>Нэр: {product?.name} → {String(changes.name)}</li> : null}
       {changes && ('price' in changes) ? <li><strong>Үнэ: {money(product?.price)} → {money(Number(changes.price))}</strong></li> : null}
@@ -294,8 +307,8 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field id="p-price" label="Зарах үнэ (₮)" inputMode="numeric" value={price} onChange={(e) => setPrice(e.target.value.replace(/[^\d]/g, ''))} disabled={ro}
                 hint={price ? money(Number(price)) : undefined} />
-              {perms.cost ? (
-                <Field id="p-cost" label="Өртөг (₮) — зөвхөн админд харагдана" inputMode="numeric" value={cost} onChange={(e) => setCost(e.target.value.replace(/[^\d]/g, ''))} disabled={ro}
+              {perms.cost || isNew ? (
+                <Field id="p-cost" label={isNew && !perms.cost ? 'Өртөг (₮) — дараа нь зөвхөн админ харж, засна' : 'Өртөг (₮) — зөвхөн админд харагдана'} inputMode="numeric" value={cost} onChange={(e) => setCost(e.target.value.replace(/[^\d]/g, ''))} disabled={ro}
                   hint={cost && price ? `Ашиг: ${money(Number(price) - Number(cost))}` : undefined} />
               ) : null}
             </div>
@@ -371,9 +384,11 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
               {perms.status && perms.edit ? (
                 <div className="flex flex-col gap-2">
                   {STATUS_OPTS.filter((s) => s.v !== product.status).map((s) => (
-                    <Button key={s.v} className="w-full justify-between" onClick={() => { setStatusTo(s.v); setReasonFor('status'); }}>
-                      <span>{s.l} болгох</span><span className="text-[12px] font-medium text-subtle">{s.d}</span>
-                    </Button>
+                    <button key={s.v} type="button" onClick={() => { setStatusTo(s.v); setReasonFor('status'); }}
+                      className="flex w-full flex-col items-start gap-0.5 rounded-[11px] border border-line bg-surface px-3.5 py-2.5 text-left hover:bg-surface2">
+                      <span className="text-[14px] font-semibold">{s.l} болгох</span>
+                      <span className="text-[12.5px] leading-snug text-subtle">{s.d}</span>
+                    </button>
                   ))}
                 </div>
               ) : <p className="text-[12.5px] text-subtle">Төлөвийг Супер админ, Админ, Ахлах маркетинг солино.</p>}
@@ -381,68 +396,13 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
           ) : null}
 
           <section className="flex flex-col gap-3 rounded-[18px] border border-line bg-surface p-5 shadow-card">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-[16px] font-extrabold">Зураг</h2>
-              <span className="text-[12.5px] text-subtle">{product?.images.length ?? 0}/8</span>
-            </div>
-            <>
-                {!isNew ? <ul className="grid grid-cols-2 gap-2.5">
-                  {product?.images.map((img, i) => (
-                    <li key={img.id} className={clsx('flex flex-col gap-1.5 rounded-xl border p-1.5', img.isMain ? 'border-accent' : 'border-line')}>
-                      <a href={img.lg} target="_blank" rel="noreferrer" className="block aspect-square overflow-hidden rounded-lg bg-surface2">
-                        <img src={img.md} alt={`${product.name} зураг ${i + 1}`} loading="lazy" className="h-full w-full object-cover" />
-                      </a>
-                      <div className="flex items-center justify-between gap-1 px-0.5">
-                        <span className="truncate text-[12px] font-semibold text-muted">{img.isMain ? '★ Үндсэн' : img.color || 'Ерөнхий'}{img.isMain && img.color ? ` · ${img.color}` : ''}</span>
-                      </div>
-                      {perms.edit ? (
-                        <div className="flex flex-wrap gap-1">
-                          {!img.isMain ? <button type="button" title="Үндсэн болгох" aria-label="Үндсэн болгох" onClick={() => setReasonFor({ img, op: 'main' })} className="grid h-9 w-9 place-items-center rounded-lg bg-surface2"><Icon name="star" size={15} /></button> : null}
-                          {i > 0 ? <button type="button" aria-label="Урагш" onClick={() => setReasonFor({ img, op: 'up' })} className="grid h-9 w-9 place-items-center rounded-lg bg-surface2"><Icon name="left" size={15} /></button> : null}
-                          {i < (product?.images.length ?? 0) - 1 ? <button type="button" aria-label="Хойш" onClick={() => setReasonFor({ img, op: 'down' })} className="grid h-9 w-9 place-items-center rounded-lg bg-surface2"><Icon name="right" size={15} /></button> : null}
-                          {product.colors.length ? (
-                            <select aria-label="Зургийн өнгө" value={img.color} onChange={(e) => setReasonFor({ img, op: 'color', color: e.target.value })}
-                              className="h-9 min-w-0 flex-1 rounded-lg border border-line bg-surface px-1 text-[12.5px]">
-                              <option value="">Ерөнхий</option>
-                              {product.colors.map((c) => <option key={c} value={c}>{c}</option>)}
-                            </select>
-                          ) : null}
-                          <button type="button" aria-label="Зураг хасах" onClick={() => setReasonFor({ img, op: 'delete' })} className="grid h-9 w-9 place-items-center rounded-lg bg-bad-soft text-bad-ink"><Icon name="trash" size={15} /></button>
-                        </div>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul> : null}
-                {perms.edit && (product?.images.length ?? 0) < 8 ? (
-                  <div className="flex flex-col gap-2 rounded-xl border border-dashed border-line p-3">
-                    <label htmlFor="p-files" className="text-[13px] font-semibold text-muted">Зураг нэмэх (JPG, PNG, WEBP · 10MB хүртэл)</label>
-                    <input id="p-files" ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" multiple
-                      onChange={(e) => setPendingFiles(Array.from(e.target.files ?? []).slice(0, 8 - (product?.images.length ?? 0)))}
-                      className="text-[13px] file:mr-3 file:h-10 file:rounded-lg file:border-0 file:bg-surface2 file:px-3 file:font-semibold file:text-ink" />
-                    {previews.length ? (
-                      <ul className="grid grid-cols-4 gap-2">
-                        {previews.map((u, i) => (
-                          <li key={u} className="relative aspect-square overflow-hidden rounded-lg bg-surface2">
-                            <img src={u} alt={`Сонгосон зураг ${i + 1}`} className="h-full w-full object-cover" />
-                            {i === 0 && (product?.images.length ?? 0) === 0 ? <span className="absolute left-1 top-1 rounded bg-ink/80 px-1 text-[10.5px] font-bold text-on-ink">★</span> : null}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                    {uploadColors.length ? (
-                      <Select id="p-upcolor" label="Аль өнгийн зураг вэ?" value={uploadColor} onChange={(e) => setUploadColor(e.target.value)}>
-                        <option value="">Ерөнхий (бүх өнгө)</option>
-                        {uploadColors.map((c) => <option key={c} value={c}>{c}</option>)}
-                      </Select>
-                    ) : null}
-                    {isNew ? (
-                      <p className="text-[12.5px] text-subtle">{pendingFiles.length ? `${pendingFiles.length} зураг «Бараа үүсгэх» дарахад хамт хадгалагдана.` : 'Зургаа одоо сонгож болно — бараатай хамт хадгалагдана.'}</p>
-                    ) : pendingFiles.length ? (
-                      <p className="text-[12.5px] text-subtle">«Хадгалах» дарахад зураг хамт хадгалагдана.</p>
-                    ) : null}
-                  </div>
-                ) : null}
-            </>
+            <h2 className="text-[16px] font-extrabold">Зураг</h2>
+            <ImageGroups colors={uploadColors} images={product?.images ?? []} pending={pending} canEdit={perms.edit}
+              productName={name || product?.name || 'Бараа'} onAdd={addPending} onRemovePending={removePending}
+              onOp={(img, op: ImageOp, color) => {
+                if (op === 'color' && color === img.color) return;
+                setReasonErr(null); setReasonFor({ img, op, color });
+              }} />
           </section>
 
           {!isNew && product ? (
@@ -460,7 +420,7 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
       {perms.edit ? (
         <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface/95 px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 backdrop-blur lg:left-[84px]">
           <div className="mx-auto flex max-w-[1400px] items-center justify-end gap-2">
-            {!isNew && (dirty || pendingFiles.length) ? <span className="mr-auto text-[13px] font-semibold text-warn">Хадгалаагүй өөрчлөлт байна</span> : null}
+            {!isNew && (dirty || pending.length) ? <span className="mr-auto text-[13px] font-semibold text-warn">Хадгалаагүй өөрчлөлт байна</span> : null}
             <Link href="/products" className="inline-flex h-11 items-center rounded-[11px] border border-line bg-surface px-4 font-semibold">Буцах</Link>
             <Button variant="primary" size="lg" loading={saving && !reasonFor} disabled={saving}
               onClick={onSaveClick}>

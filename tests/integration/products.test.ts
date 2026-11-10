@@ -84,8 +84,14 @@ describe('бараа үүсгэх', () => {
     await err(P.createProduct(a, { code: 'X1', name: 'Бутархай', price: 10.5 }), 400);
     await err(P.createProduct(a, { code: 'X1', name: 'Ангилалгүй', price: 1000, categoryId: 999 }), 400);
   });
-  it('маркетинг өртөг оруулж чадахгүй; оператор, торгууль бараа үүсгэхгүй', async () => {
-    await err(P.createProduct(await actor(['MARKETING']), { code: 'C1', name: 'Өртөгтэй', price: 1000, costPrice: 500 }), 403);
+  it('маркетинг анх бүртгэхдээ өртөг оруулна (харахгүй, засахгүй); оператор, торгууль бараа үүсгэхгүй', async () => {
+    const mk = await actor(['MARKETING']);
+    const c1 = await P.createProduct(mk, { code: 'C1', name: 'Өртөгтэй', price: 1000, costPrice: 500 });
+    expect('costPrice' in c1).toBe(false);
+    expect((await db.product.findUniqueOrThrow({ where: { id: c1.id } })).costPrice).toBe(500);
+    await err(P.updateProduct(mk, c1.id, { costPrice: 600 }, { reason: 'Өртөг засах оролдлого', version: c1.version }), 403);
+    const adm = await actor(['ADMIN']);
+    expect((await P.getProduct(adm, c1.id)).costPrice).toBe(500);
     await err(P.createProduct(await actor(['OPERATOR']), { code: 'C2', name: 'Оператор', price: 1000 }), 403);
     await err(P.createProduct(await actor(['PENALTY_OFFICER']), { code: 'C3', name: 'Торгууль', price: 1000 }), 403);
   });
@@ -248,6 +254,23 @@ describe('зураг', () => {
     for (let i = 0; i < 8; i++) await I.addProductImage(a, p.id, small, { reason: 'Зураг нэмэв' });
     await err(I.addProductImage(a, p.id, small, { reason: 'Зураг нэмэв' }), 400, 'too_many_images');
   });
+  it('өнгө тус бүрд 8 зураг (#32); дараалал зөвхөн ижил өнгийн дотор солигдоно', async () => {
+    const a = await actor(['MARKETING']);
+    const p = await P.createProduct(a, { code: 'I4', name: 'Бараа', price: 1000, colors: ['Хар', 'Цагаан'] });
+    const small = await png(40, 40);
+    for (let i = 0; i < 8; i++) await I.addProductImage(a, p.id, small, { reason: 'Зураг нэмэв' });
+    for (let i = 0; i < 8; i++) await I.addProductImage(a, p.id, small, { reason: 'Хар зураг', color: 'Хар' });
+    await err(I.addProductImage(a, p.id, small, { reason: 'Хар зураг', color: 'Хар' }), 400, 'too_many_images');
+    const w1 = await I.addProductImage(a, p.id, small, { reason: 'Цагаан зураг', color: 'Цагаан' });
+    const w2 = await I.addProductImage(a, p.id, small, { reason: 'Цагаан зураг', color: 'Цагаан' });
+    // Дүүрсэн өнгө рүү зураг шилжүүлэхгүй
+    await err(I.updateProductImage(a, w1.id, { color: 'Хар', reason: 'Өнгө солих' }), 400, 'too_many_images');
+    // w2-г урагшлуулахад Цагаан бүлэг дотор w1-тэй байр солино (өөр өнгийнхтэй биш)
+    await I.updateProductImage(a, w2.id, { move: 'up', reason: 'Дараалал солив' });
+    const white = (await P.getProduct(a, p.id)).images.filter((i) => i.color === 'Цагаан').map((i) => i.id);
+    expect(white).toEqual([w2.id, w1.id]);
+    expect((await P.getProduct(a, p.id)).images).toHaveLength(18);
+  });
   it('үндсэн зураг хасвал дараагийнх нь үндсэн болно; давтан хасахад 404/409', async () => {
     const a = await actor(['MARKETING']);
     const p = await P.createProduct(a, { code: 'I3', name: 'Бараа', price: 1000 });
@@ -309,6 +332,24 @@ describe('засварын түүх хуудас (#29)', () => {
     expect(await db.auditLog.count({ where: { action: 'product.review_all' } })).toBe(1);
     // «Бүгдийг шалгасан» үйлдэл барааны засварын жагсаалтад холилдохгүй
     expect((await H.listProductHistory(sa, {})).items.every((i) => i.action !== 'product.review_all')).toBe(true);
+  });
+  it('өртөг: СА/А тайлбаргүй засна, шалгах жагсаалтад орохгүй; өөр талбартай бол тайлбар заавал (#32)', async () => {
+    const adm = await actor(['ADMIN']);
+    const ml = await actor(['MARKETING_LEAD']);
+    const p = await P.createProduct(adm, { code: 'CO1', name: 'Бараа', price: 1000, costPrice: 400 });
+    const r = await P.updateProduct(adm, p.id, { costPrice: 450 }, { reason: undefined, version: p.version });
+    expect(r.changed).toBe(true);
+    expect(r.product.costPrice).toBe(450);
+    const row = await db.auditLog.findFirstOrThrow({ where: { entityId: String(p.id) }, orderBy: { id: 'desc' } });
+    expect(row.action).toBe('product.cost');
+    expect(row.tags).toContain('cost');
+    expect(await H.unreviewedCount(ml, { fresh: true })).toBe(0);
+    const hist = await H.listProductHistory(ml, { productId: p.id });
+    const costRow = hist.items.find((i) => i.action === 'product.cost')!;
+    expect(costRow.reviewable).toBe(false);
+    expect(JSON.stringify(costRow.details)).not.toContain('450');
+    await err(H.reviewProductEdit(ml, costRow.id), 400);
+    await err(P.updateProduct(adm, p.id, { costPrice: 500, name: 'Шинэ нэр' }, { reason: '', version: r.product.version }), 400, 'reason_required');
   });
   it('харах эрх: агуулах, торгууль харна; оператор харахгүй', async () => {
     await H.listProductHistory(await actor(['WAREHOUSE']), {});
