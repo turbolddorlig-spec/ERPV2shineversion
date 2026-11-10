@@ -18,7 +18,7 @@ export interface HistoryItem {
 export interface HistoryResp { items: HistoryItem[]; total: number; page: number; pageSize: number; canReview: boolean; unreviewed: number }
 
 const FIELD: Record<string, string> = {
-  code: 'Код', name: 'Нэр', description: 'Тайлбар', category: 'Ангилал', season: 'Улирал', price: 'Үнэ', costPrice: 'Өртөг',
+  code: 'Код', name: 'Нэр', description: 'Тайлбар', category: 'Ангилал', season: 'Улирал', price: 'Үнэ', costPrice: 'Өртөг', deliveryIncluded: 'Үнэд хүргэлт багтсан',
   colors: 'Өнгө', sizes: 'Хэмжээ', variants: 'Хувилбар', status: 'Төлөв', image: 'Зураг', imageColor: 'Зургийн өнгө',
   mainImage: 'Үндсэн зураг', imageOrder: 'Зургийн дараалал',
 };

@@ -19,7 +19,7 @@ import { ProductHistoryList } from './ProductHistoryList';
 export interface Variant { id: number; code: string; color: string; size: string; label: string; priceOverride: number | null; price: number; isActive: boolean }
 export interface Img { id: string; color: string; isMain: boolean; sm: string; md: string; lg: string }
 export interface Product {
-  id: number; code: string; name: string; description: string | null; price: number; costPrice?: number | null;
+  id: number; code: string; name: string; description: string | null; price: number; costPrice?: number | null; deliveryIncluded?: boolean;
   status: 'ACTIVE' | 'DISCONTINUED' | 'ARCHIVED'; statusLabel: string; statusNote: string | null;
   category: { id: number; name: string } | null; season: { id: number; name: string } | null;
   colors: string[]; sizes: string[]; version: number; variants: Variant[]; images: Img[];
@@ -50,6 +50,7 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
   const [seasonId, setSeasonId] = useState(initial?.season ? String(initial.season.id) : '');
   const [price, setPrice] = useState(initial ? String(initial.price) : '');
   const [cost, setCost] = useState(initial?.costPrice != null ? String(initial.costPrice) : '');
+  const [delivery, setDelivery] = useState(initial?.deliveryIncluded ?? true);
   const [colors, setColors] = useState<string[]>(initial?.colors ?? []);
   const [sizes, setSizes] = useState<string[]>(initial?.sizes ?? []);
   const [vPatch, setVPatch] = useState<Record<number, { priceOverride?: string; isActive?: boolean }>>({});
@@ -91,7 +92,7 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
   function resetFrom(p: Product) {
     setProduct(p); setCode(p.code); setName(p.name); setDescription(p.description ?? '');
     setCategoryId(p.category ? String(p.category.id) : ''); setSeasonId(p.season ? String(p.season.id) : '');
-    setPrice(String(p.price)); setCost(p.costPrice != null ? String(p.costPrice) : '');
+    setPrice(String(p.price)); setCost(p.costPrice != null ? String(p.costPrice) : ''); setDelivery(p.deliveryIncluded ?? true);
     setColors(p.colors); setSizes(p.sizes); setVPatch({}); setHistoryKey((k) => k + 1);
   }
 
@@ -118,6 +119,7 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
     if ((categoryId || '') !== (product.category ? String(product.category.id) : '')) c.categoryId = categoryId || null;
     if ((seasonId || '') !== (product.season ? String(product.season.id) : '')) c.seasonId = seasonId || null;
     if (Number(price) !== product.price) c.price = price;
+    if (delivery !== (product.deliveryIncluded ?? true)) c.deliveryIncluded = delivery;
     if (perms.cost && (cost === '' ? null : Number(cost)) !== (product.costPrice ?? null)) c.costPrice = cost === '' ? null : cost;
     if (colors.join('|') !== product.colors.join('|')) c.colors = colors;
     if (sizes.join('|') !== product.sizes.join('|')) c.sizes = sizes;
@@ -130,14 +132,14 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
     }).filter((o) => Object.keys(o).length > 1);
     if (vs.length) c.variants = vs;
     return c;
-  }, [product, code, name, description, categoryId, seasonId, price, cost, colors, sizes, vPatch, perms.cost]);
+  }, [product, code, name, description, categoryId, seasonId, price, cost, delivery, colors, sizes, vPatch, perms.cost]);
   const dirty = isNew ? true : !!changes && Object.keys(changes).length > 0;
 
   async function create() {
     setError(null); setSaving(true);
     try {
       const r = await api<{ product: Product }>('/api/products', { method: 'POST', json: {
-        code, name, description, categoryId: categoryId || null, seasonId: seasonId || null, price,
+        code, name, description, categoryId: categoryId || null, seasonId: seasonId || null, price, deliveryIncluded: delivery,
         ...(cost !== '' ? { costPrice: cost } : {}), colors, sizes,
       } });
       if (pending.length) {
@@ -252,6 +254,7 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
       {changes && 'code' in changes ? <li>Код: {product?.code} → {String(changes.code).toUpperCase()}</li> : null}
       {changes && ('name' in changes) ? <li>Нэр: {product?.name} → {String(changes.name)}</li> : null}
       {changes && ('price' in changes) ? <li><strong>Үнэ: {money(product?.price)} → {money(Number(changes.price))}</strong></li> : null}
+      {changes && ('deliveryIncluded' in changes) ? <li><strong>Хүргэлт: {changes.deliveryIncluded ? 'үнэд багтсан' : 'тусдаа төлбөртэй'}</strong></li> : null}
       {changes && ('costPrice' in changes) ? <li>Өртөг: {money(product?.costPrice)} → {money(changes.costPrice === null ? null : Number(changes.costPrice))}</li> : null}
       {changes && ('categoryId' in changes) ? <li>Ангилал</li> : null}
       {changes && ('seasonId' in changes) ? <li>Улирал</li> : null}
@@ -312,6 +315,10 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
                   hint={cost && price ? `Ашиг: ${money(Number(price) - Number(cost))}` : undefined} />
               ) : null}
             </div>
+            <label className="flex items-start gap-3 rounded-xl bg-surface2 px-3.5 py-3 text-[14px]">
+              <input type="checkbox" className="mt-0.5 h-5 w-5" checked={delivery} disabled={ro} onChange={(e) => setDelivery(e.target.checked)} />
+              <span><span className="font-bold">Үнэд хүргэлт багтсан</span><span className="block text-[12.5px] text-muted">Чагтыг авбал энэ бараатай захиалгад хүргэлтийн төлбөр (Тохиргоо) нэмэгдэнэ.</span></span>
+            </label>
           </section>
 
           <section className="flex flex-col gap-4 rounded-[18px] border border-line bg-surface p-5 shadow-card">
