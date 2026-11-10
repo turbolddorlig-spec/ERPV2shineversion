@@ -19,9 +19,10 @@ export async function writeAudit(
   entityId: string | null,
   details?: Prisma.InputJsonValue,
   tx: Tx = db,
+  tags: string[] = [],
 ): Promise<void> {
   await tx.auditLog.create({
-    data: { actorId: actor.id, actorName: actor.name, action, entityType, entityId, details, ip: actor.ip ?? null },
+    data: { actorId: actor.id, actorName: actor.name, action, entityType, entityId, details, ip: actor.ip ?? null, tags },
   });
 }
 

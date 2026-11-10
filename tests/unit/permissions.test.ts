@@ -23,12 +23,13 @@ const MATRIX: Record<PageKey, string> = {
   supplier:       'E - - - - - - - - - - V',
   users:          'E E E - E - - - E - - -',
   settings:       'E E - - - - - - - - - -',
+  'product-history': 'E E - - - - - V E V V -',
 };
 const COLS: Role[] = ['SUPER_ADMIN', 'ADMIN', 'OPERATOR_LEAD', 'OPERATOR', 'DRIVER_LEAD', 'DRIVER', 'ACCOUNTING', 'WAREHOUSE', 'MARKETING_LEAD', 'MARKETING', 'PENALTY_OFFICER', 'SUPPLIER'];
 const SYM = { E: 'edit', V: 'view', '-': 'none' } as const;
 
 describe('эрхийн хүснэгт', () => {
-  it('бүх 17 хуудас хүснэгтэд байна', () => {
+  it('бүх 18 хуудас хүснэгтэд байна', () => {
     expect(PAGES.map((p) => p.key).sort()).toEqual(Object.keys(MATRIX).sort());
   });
   for (const [page, row] of Object.entries(MATRIX)) {

@@ -4,7 +4,7 @@ export type PageKey =
   | 'dashboard' | 'orders' | 'bank-import' | 'products' | 'goods-outflow'
   | 'warehouse' | 'handover' | 'driver-lead' | 'driver' | 'issues'
   | 'accounting' | 'penalties' | 'salary' | 'my-penalties' | 'supplier'
-  | 'users' | 'settings';
+  | 'users' | 'settings' | 'product-history';
 
 export type Group = 'Үндсэн' | 'Агуулах' | 'Хүргэлт' | 'Санхүү' | 'Систем';
 
@@ -35,6 +35,8 @@ export const PAGES: PageDef[] = [
   { key: 'orders', label: 'Захиалга', short: 'Захиалга', href: '/orders', group: 'Үндсэн', icon: 'flow', module: 3, edit: [...SA_A, 'OPERATOR_LEAD', 'OPERATOR'], view: ['PENALTY_OFFICER'] },
   { key: 'bank-import', label: 'Банкны импорт', short: 'Банк', href: '/bank-import', group: 'Үндсэн', icon: 'bank', module: 6, edit: [...SA_A, 'OPERATOR_LEAD', 'OPERATOR'] },
   { key: 'products', label: 'Бараа', short: 'Бараа', href: '/products', group: 'Үндсэн', icon: 'box', module: 1, edit: [...SA_A, 'WAREHOUSE', 'MARKETING_LEAD', 'MARKETING'], view: ['PENALTY_OFFICER'] },
+  { key: 'product-history', label: 'Барааны засвар', short: 'Засвар', href: '/products/history', group: 'Үндсэн', icon: 'history', module: 1,
+    edit: [...SA_A, 'MARKETING_LEAD'], view: ['MARKETING', 'WAREHOUSE', 'PENALTY_OFFICER'] },
   { key: 'goods-outflow', label: 'Барааны гарц', short: 'Гарц', href: '/goods-outflow', group: 'Үндсэн', icon: 'trend', module: 7, edit: [...SA_A, 'MARKETING_LEAD', 'MARKETING'] },
   { key: 'warehouse', label: 'Агуулах', short: 'Агуулах', href: '/warehouse', group: 'Агуулах', icon: 'warehouse', module: 2, edit: [...SA_A, 'WAREHOUSE'], view: ['ACCOUNTING'] },
   { key: 'handover', label: 'Жолоочид бараа өгөх', short: 'Падаан', href: '/handover', group: 'Агуулах', icon: 'swap', module: 4, edit: [...SA_A, 'WAREHOUSE'], view: ['ACCOUNTING'] },
@@ -84,3 +86,18 @@ export function homeFor(roles: Role[]): string {
   for (const k of order) if (canView(roles, k)) return pageByKey(k)!.href;
   return '/me';
 }
+
+// ── Модуль 1: барааны нарийн эрх (шийдвэр #26–#29) ──
+const has = (roles: Role[], allowed: Role[]) => roles.some((r) => allowed.includes(r));
+/** Өртөг харах, засах */
+export const canSeeCost = (roles: Role[]) => has(roles, SA_A);
+/** Барааны код солих (шалтгаантай) */
+export const canChangeProductCode = (roles: Role[]) => has(roles, SA_A);
+/** Төлөв солих: Зогсоосон / Архив */
+export const canChangeProductStatus = (roles: Role[]) => has(roles, [...SA_A, 'MARKETING_LEAD']);
+/** Ангилал, улирлын жагсаалт удирдах */
+export const canManageCatalogLists = (roles: Role[]) => has(roles, [...SA_A, 'MARKETING_LEAD']);
+/** Барааны засварыг "Шалгасан" гэж тэмдэглэх */
+export const canReviewProductEdits = (roles: Role[]) => has(roles, [...SA_A, 'MARKETING_LEAD']);
+/** Захиалга авахдаа бараа хайх (Модуль 3) — бараа хуудас харахгүй операторт ч хэрэгтэй */
+export const canSearchProducts = (roles: Role[]) => canView(roles, 'products') || canView(roles, 'orders');

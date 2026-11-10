@@ -87,8 +87,120 @@ model AuditLog {
   entityId   String?
   details    Json?
   ip         String?
+  /// Шүүлтүүрт: жишээ нь ["price","code","status"] — чухал өөрчлөлтийг тодруулна
+  tags       String[] @default([])
 
   @@index([at])
   @@index([entityType, entityId])
   @@index([actorId, at])
+  @@index([entityType, at])
+}
+
+/// "Шалгасан" тэмдэглэгээ. AuditLog өөрөө засагдахгүй тул тусдаа хүснэгтэд.
+model AuditReview {
+  auditLogId     BigInt   @id
+  reviewedById   String   @db.Uuid
+  reviewedByName String
+  reviewedAt     DateTime @default(now())
+}
+
+// ─────────────────────────── Модуль 1: Бараа ───────────────────────────
+
+/// Идэвхтэй = зарна · Зогсоосон = дахин захиалахгүй, үлдсэнийг зарна · Архив = зарахгүй, нуугдана
+enum ProductStatus {
+  ACTIVE
+  DISCONTINUED
+  ARCHIVED
+}
+
+model Category {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  color     String    @default("gray")
+  sortOrder Int       @default(0)
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  products  Product[]
+}
+
+model Season {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  sortOrder Int       @default(0)
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  products  Product[]
+}
+
+model Product {
+  id          Int            @id @default(autoincrement())
+  /// Давхардахгүй код (хуучин системийн кодууд хэвээр)
+  code        String         @unique
+  name        String
+  description String?
+  categoryId  Int?
+  category    Category?      @relation(fields: [categoryId], references: [id])
+  seasonId    Int?
+  season      Season?        @relation(fields: [seasonId], references: [id])
+  /// Зарах үнэ, төгрөг
+  price       Int
+  /// Өртөг (авсан үнэ) — зөвхөн Супер админ, Админ харна
+  costPrice   Int?
+  status      ProductStatus  @default(ACTIVE)
+  statusNote  String?
+  /// Хувилбарын тэнхлэгүүд. Хоёулаа хоосон бол нэг "үндсэн" хувилбартай.
+  colors      String[]       @default([])
+  sizes       String[]       @default([])
+  /// Зэрэг засварт нэг нь нөгөөгөө чимээгүй дарахаас сэргийлнэ
+  version     Int            @default(1)
+  createdById String?        @db.Uuid
+  updatedById String?        @db.Uuid
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  variants ProductVariant[]
+  images   ProductImage[]
+
+  @@index([status])
+  @@index([categoryId])
+  @@index([seasonId])
+  @@index([updatedAt])
+}
+
+/// Үлдэгдэл тоологдох нэгж (SKU). Бараа бүр дор хаяж нэгтэй.
+model ProductVariant {
+  id            Int      @id @default(autoincrement())
+  productId     Int
+  product       Product  @relation(fields: [productId], references: [id])
+  code          String   @unique
+  /// '' = өнгөгүй/хэмжээгүй
+  color         String   @default("")
+  size          String   @default("")
+  /// Хоосон бол барааны үнэ
+  priceOverride Int?
+  isActive      Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([productId, color, size])
+  @@index([productId])
+}
+
+model ProductImage {
+  id        String   @id @default(uuid()) @db.Uuid
+  productId Int
+  product   Product  @relation(fields: [productId], references: [id])
+  /// '' = ерөнхий зураг, эсвэл барааны өнгөний нэр
+  color     String   @default("")
+  isMain    Boolean  @default(false)
+  sortOrder Int      @default(0)
+  /// Файлын суурь нэр: products/<productId>/<uuid> → -sm.webp, -md.webp, -lg.webp
+  fileKey   String
+  width     Int
+  height    Int
+  bytes     Int
+  createdAt DateTime @default(now())
+
+  @@index([productId, sortOrder])
 }
