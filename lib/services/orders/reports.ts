@@ -66,34 +66,39 @@ export async function callAnalysis(actor: UserActor, p: { from?: string; to?: st
   assertReports(actor);
   const r = range(p.from, p.to);
   const stale = new Date(Date.now() - 3 * 86_400_000);
-  const rows = await db.$queryRaw<{ id: number; phone: string; pageId: number | null; variantId: number | null; productText: string | null; ownerName: string; status: string; closeReason: string | null; createdAt: Date; converted: boolean }[]>`
-    SELECT n.id, n.phone, n."pageId", n."variantId", n."productText", n."ownerName", n.status::text, n."closeReason"::text AS "closeReason", n."createdAt",
-      (n.status = 'ORDERED' OR EXISTS (SELECT 1 FROM "Order" o WHERE (o.phone = n.phone OR o."extraPhone" = n.phone) AND o."createdAt" >= n."createdAt")) AS converted
-    FROM "CallNote" n WHERE n."createdAt" >= ${r.start} AND n."createdAt" < ${r.end} ORDER BY n.id DESC LIMIT 20000`;
-  const bucketOf = (x: (typeof rows)[number]) => (x.converted ? 'CONVERTED' : x.closeReason ? x.closeReason : x.createdAt < stale ? 'NONE' : 'OPEN');
+  // Тоолохыг database-д (хязгааргүй, мөр татахгүй); дугаарын жагсаалтыг зөвхөн сонгосон ангилалд, 2000 хүртэл
+  const notes = Prisma.sql`
+    SELECT n.id, n.phone, n."pageId", n."variantId", n."productText", n."ownerName", n."createdAt",
+      CASE WHEN n.status = 'ORDERED' OR EXISTS (SELECT 1 FROM "Order" o WHERE (o.phone = n.phone OR o."extraPhone" = n.phone) AND o."createdAt" >= n."createdAt") THEN 'CONVERTED'
+           WHEN n."closeReason" IS NOT NULL THEN n."closeReason"::text
+           WHEN n."createdAt" < ${stale} THEN 'NONE' ELSE 'OPEN' END AS bucket
+    FROM "CallNote" n WHERE n."createdAt" >= ${r.start} AND n."createdAt" < ${r.end}`;
+  const dimCol = p.by === 'page' ? Prisma.sql`COALESCE("pageId"::text, '')` : p.by === 'product' ? Prisma.sql`COALESCE('v' || "variantId", 't' || "productText", '')` : p.by === 'operator' ? Prisma.sql`"ownerName"` : Prisma.sql`''`;
+  const grouped = await db.$queryRaw<{ d: string; bucket: string; n: number }[]>`SELECT ${dimCol} AS d, bucket, count(*)::int AS n FROM (${notes}) x GROUP BY 1, 2`;
+  const phoneRows = p.bucket ? await db.$queryRaw<{ phone: string; pageId: number | null; variantId: number | null; productText: string | null; ownerName: string; createdAt: Date }[]>`
+    SELECT phone, "pageId", "variantId", "productText", "ownerName", "createdAt" FROM (${notes}) x WHERE bucket = ${p.bucket} ORDER BY id DESC LIMIT 2000` : [];
   const LABEL: Record<string, string> = { CONVERTED: 'Захиалга болсон', NONE: 'Шалтгаангүй', OPEN: 'Залгаж байгаа', ...CLOSE_LABEL };
-  const vids = [...new Set(rows.map((x) => x.variantId).filter((v): v is number => !!v))];
+  const vids = [...new Set([...grouped.map((g) => (g.d.startsWith('v') && p.by === 'product' ? Number(g.d.slice(1)) : 0)), ...phoneRows.map((x) => x.variantId ?? 0)].filter((v) => v > 0))];
   const [variants, pages] = await Promise.all([
     vids.length ? db.productVariant.findMany({ where: { id: { in: vids } }, select: { id: true, code: true, product: { select: { name: true } } } }) : [],
     db.page.findMany({ select: { id: true, name: true } }),
   ]);
   const vn = new Map(variants.map((v) => [v.id, `${v.product.name} (${v.code})`]));
   const pn = new Map(pages.map((x) => [x.id, x.name]));
-  const dim = (x: (typeof rows)[number]) => p.by === 'page' ? (x.pageId ? pn.get(x.pageId) ?? '—' : '—') : p.by === 'product' ? (x.variantId ? vn.get(x.variantId) ?? '—' : x.productText ?? '—') : p.by === 'operator' ? x.ownerName : 'all';
+  const dimLabel = (d: string) => p.by === 'page' ? (d ? pn.get(Number(d)) ?? '—' : '—') : p.by === 'product' ? (d.startsWith('v') ? vn.get(Number(d.slice(1))) ?? '—' : d.startsWith('t') ? d.slice(1) : '—') : d || '—';
   const summary = new Map<string, number>();
   const table = new Map<string, Record<string, number>>();
-  for (const x of rows) {
-    const b = bucketOf(x);
-    summary.set(b, (summary.get(b) ?? 0) + 1);
-    if (p.by) { const d = dim(x); const t = table.get(d) ?? {}; t[b] = (t[b] ?? 0) + 1; t.total = (t.total ?? 0) + 1; table.set(d, t); }
+  for (const g of grouped) {
+    summary.set(g.bucket, (summary.get(g.bucket) ?? 0) + g.n);
+    if (p.by) { const k = dimLabel(g.d); const t = table.get(k) ?? {}; t[g.bucket] = (t[g.bucket] ?? 0) + g.n; t.total = (t.total ?? 0) + g.n; table.set(k, t); }
   }
-  const total = rows.length;
+  const total = [...summary.values()].reduce((a, b) => a + b, 0);
   return {
     from: r.from, to: r.to, total, converted: summary.get('CONVERTED') ?? 0,
     buckets: [...summary.entries()].map(([k, n]) => ({ key: k, label: LABEL[k] ?? k, n, pct: total ? Math.round((n / total) * 1000) / 10 : 0 })).sort((a, b) => (a.key === 'CONVERTED' ? -1 : b.key === 'CONVERTED' ? 1 : b.n - a.n)),
     by: p.by ?? null,
     table: [...table.entries()].map(([k, v]) => ({ key: k, ...v } as { key: string; total?: number } & Record<string, number | string>)).sort((a, b) => (Number(b.total) || 0) - (Number(a.total) || 0)).slice(0, 200),
-    phones: p.bucket ? rows.filter((x) => bucketOf(x) === p.bucket).slice(0, 2000).map((x) => ({ phone: x.phone, product: x.variantId ? vn.get(x.variantId) ?? null : x.productText, page: x.pageId ? pn.get(x.pageId) ?? null : null, operator: x.ownerName, createdAt: x.createdAt })) : [],
+    phones: phoneRows.map((x) => ({ phone: x.phone, product: x.variantId ? vn.get(x.variantId) ?? null : x.productText, page: x.pageId ? pn.get(x.pageId) ?? null : null, operator: x.ownerName, createdAt: x.createdAt })),
     labels: LABEL,
   };
 }

@@ -2,7 +2,7 @@ import { Prisma, type OrderStatus } from '@prisma/client';
 import { db } from '../../db';
 import { badRequest, forbidden, notFound } from '../../errors';
 import { canEditOrders, canMarkPaid, canReviewDiscounts, canSuperviseOperators, canView } from '../../permissions';
-import { fullAddress } from '../../geo';
+import { fullAddress, PROVINCES, UB_DISTRICTS } from '../../geo';
 import { mediaUrl } from '../../storage';
 import { normalizePhone, isValidPhone } from '../../phone';
 import { ubDay, ubDayStart, dateOnly, ymdOf, isYmd } from '../../ubdate';
@@ -62,12 +62,19 @@ async function searchIds(q: string): Promise<number[] | null> {
     return rows.map((r) => r.id);
   }
   if (s.length < 2) return [];
-  const rows = await db.$queryRaw<{ id: number }[]>`
+  // Түгээмэл үг (40k+ таарц) бол PK-аар буцаж уншина, ховор үг бол trigram индекс — үг бүрт тохирох төлөвлөгөө сонгуулна
+  const [, rows] = await db.$transaction([db.$executeRaw`SET LOCAL plan_cache_mode = force_custom_plan`, db.$queryRaw<{ id: number }[]>`
     (SELECT id FROM "Order" WHERE "addressDetail" ILIKE ${like} ORDER BY id DESC LIMIT 500)
     UNION (SELECT id FROM "Order" WHERE note ILIKE ${like} ORDER BY id DESC LIMIT 200)
     UNION (SELECT "orderId" FROM "OrderLine" WHERE name ILIKE ${like} OR code ILIKE ${like} ORDER BY "orderId" DESC LIMIT 500)
-    UNION (SELECT id FROM "Order" WHERE district ILIKE ${like} OR province ILIKE ${like} ORDER BY id DESC LIMIT 200)`;
-  return rows.map((r) => r.id);
+  `]);
+  // Дүүрэг/аймаг цөөн тогтмол утгатай — индексгүй ILIKE (бүтэн уншилт) биш, жагсаалтаас тааруулж тэнцүүгээр хайна
+  const low = s.toLowerCase();
+  const dists = Object.keys(UB_DISTRICTS).filter((d) => d.toLowerCase().includes(low));
+  const provs = PROVINCES.filter((x) => x.toLowerCase().includes(low));
+  const geo = dists.length || provs.length ? await db.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "Order" WHERE district = ANY(${dists}::text[]) OR province = ANY(${provs}::text[]) ORDER BY id DESC LIMIT 200` : [];
+  return [...new Set([...rows, ...geo].map((r) => r.id))];
 }
 
 export async function listOrders(actor: UserActor, p: ListParams) {

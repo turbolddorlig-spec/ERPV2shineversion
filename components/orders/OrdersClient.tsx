@@ -45,6 +45,7 @@ export function StatusChip({ o }: { o: Pick<OItem, 'displayStatus' | 'statusLabe
 function HourlyBoard() {
   const [h, setH] = useState<Hourly | null>(null);
   const [open, setOpen] = useState(true);
+  const [all, setAll] = useState(false);
   useEffect(() => {
     const load = () => api<Hourly>('/api/orders/hourly').then(setH).catch(() => undefined);
     load();
@@ -64,7 +65,7 @@ function HourlyBoard() {
           <table className="w-full min-w-[480px] text-[13px]">
             <thead><tr className="text-left text-[11.5px] text-muted"><th className="px-2 py-1">#</th><th className="px-2 py-1">Оператор</th>{h.cuts.map((c) => <th key={c} className="px-2 py-1 text-right">–{c}</th>)}<th className="px-2 py-1 text-right">Нийт</th></tr></thead>
             <tbody>
-              {h.rows.map((r) => (
+              {(all ? h.rows : h.rows.filter((r) => r.rank <= 5 || r.me)).map((r) => (
                 <tr key={r.name} className={clsx(r.me && 'bg-accent-soft font-bold')}>
                   <td className="px-2 py-1">{medal[r.rank - 1] ?? r.rank}</td>
                   <td className="px-2 py-1">{r.name}{r.me ? ' (та)' : ''}</td>
@@ -74,6 +75,7 @@ function HourlyBoard() {
               ))}
             </tbody>
           </table>
+          {h.rows.length > 6 ? <button type="button" onClick={() => setAll(!all)} className="mt-1 w-full rounded-lg py-2 text-[13px] font-semibold text-accent-ink hover:bg-surface2">{all ? 'Хураах' : `Бүх ${h.rows.length} операторыг харах`}</button> : null}
         </div>
       ) : open ? <p className="px-4 pb-3 text-[13px] text-muted">Өнөөдөр баталгаажсан захиалга алга</p> : null}
     </section>
