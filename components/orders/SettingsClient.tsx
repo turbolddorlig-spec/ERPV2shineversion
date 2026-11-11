@@ -14,7 +14,7 @@ interface Resp {
   meta: { pixelId: string; tokenSet: boolean; tokenHint: string | null; testCode: string; counts: Record<string, number>; recent: { id: number; orderNumber?: string; total?: number; status: string; attempts: number; lastError: string | null; sentAt: string | null; createdAt: string }[] };
 }
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа гарлаа');
-const sec = 'flex flex-col gap-3 rounded-[18px] border border-line bg-surface p-4 shadow-card';
+const sec = 'flex min-w-0 flex-col gap-3 rounded-[18px] border border-line bg-surface p-4 shadow-card';
 const META_LABEL: Record<string, string> = { PENDING: 'Дараалалд', SENT: 'Илгээсэн', FAILED: 'Алдаатай', SKIPPED: 'Алгассан' };
 
 export function SettingsClient() {
@@ -38,7 +38,7 @@ export function SettingsClient() {
   }
   if (!d) return error ? <Notice>{error}</Notice> : <p className="text-muted">Ачаалж байна…</p>;
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <div className="lg:col-span-2">{flash ? <Notice tone="ok">{flash}</Notice> : null}{error ? <Notice>{error}</Notice> : null}</div>
       <section className={sec}>
         <h2 className="text-[16px] font-extrabold">Хүргэлт ба төлбөр</h2>

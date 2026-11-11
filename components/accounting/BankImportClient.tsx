@@ -7,6 +7,7 @@ import { Notice } from '@/components/ui/Notice';
 import { Badge } from '@/components/ui/Badge';
 import { api, ApiError } from '@/components/ui/api';
 import { money, ubDateTime } from '@/lib/format';
+import { GmailSettings } from './GmailSettings';
 
 /**
  * Банкны импорт (Модуль 6, хуучнаар нь, #83): Хаан банкны CSV / Gmail → утас + дүнгээр «Төлбөр хүлээж буй» захиалга «Мөнгө орсон».
@@ -16,7 +17,7 @@ interface Tx { id: number; txDate: string; description: string; amount: number; 
 interface ListResp { page: number; total: number; pages: number; canEdit: boolean; items: Tx[] }
 type Agg = { count: number; amount: number };
 interface Stats { total: Agg; matched: Agg; unmatched: Agg; partial: Agg; excess: Agg; duplicate: Agg; refunded: Agg }
-interface Gmail { configured: boolean; canEdit: boolean; settings: { sender: string; autoSync: boolean; minutes: number; days: number; lastSyncAt: string | null; lastResult: string | null } }
+interface Gmail { configured: boolean; canEdit: boolean; settings: { email: string; sender: string; autoSync: boolean; minutes: number; days: number; lastSyncAt: string | null; lastResult: string | null; lastOk: boolean | null } }
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа гарлаа');
 const TABS: [string, string, keyof Stats | null][] = [['all', 'Бүгд', 'total'], ['MATCHED', 'Таарсан', 'matched'], ['UNMATCHED', 'Таараагүй', 'unmatched'], ['PARTIAL_PAYMENT', 'Хэсэгчлэн', 'partial'], ['EXCESS_AMOUNT', 'Илүү', 'excess'], ['DUPLICATE', 'Давхардсан', 'duplicate'], ['REFUNDED', 'Буцаасан', 'refunded'], ['changes', 'Дүн өөрчлөгдсөн', null]];
 const TONE: Record<string, 'ok' | 'bad' | 'warn' | 'info' | 'neutral' | 'accent'> = { MATCHED: 'ok', UNMATCHED: 'bad', PARTIAL_PAYMENT: 'warn', EXCESS_AMOUNT: 'info', DUPLICATE: 'neutral' };
@@ -76,12 +77,12 @@ export function BankImportClient() {
         <div className="flex flex-wrap gap-2">
           {canEdit ? <><input ref={file} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => e.target.files?.[0] && void upload(e.target.files[0])} />
             <Button variant="primary" size="sm" loading={busy} onClick={() => file.current?.click()}>CSV импорт</Button>
-            <Button size="sm" loading={busy} disabled={!gmail?.configured} onClick={() => void sync()} title={gmail?.configured ? '' : 'Gmail холбогдоогүй'}>Gmail sync</Button>
+            <Button size="sm" loading={busy} disabled={!gmail?.configured} onClick={() => void sync()} title={gmail?.configured ? '' : 'Gmail холбогдоогүй — «Gmail тохиргоо»'}>Gmail sync</Button>
             <Button size="sm" onClick={() => setGset(true)}>Gmail тохиргоо</Button></> : null}
           <a href={`/api/bank/export?${qs()}`} className="inline-flex h-9 items-center rounded-[11px] border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2">CSV экспорт</a>
         </div>
       </div>
-      {gmail ? <p className="text-[12.5px] text-subtle">{gmail.configured ? `Gmail холбогдсон${gmail.settings.autoSync ? ` · автомат ${gmail.settings.minutes} мин тутам` : ' · автомат унтраалттай'}${gmail.settings.lastSyncAt ? ` · сүүлд ${ubDateTime(gmail.settings.lastSyncAt)}: ${gmail.settings.lastResult ?? ''}` : ''}` : 'Gmail холбогдоогүй — CSV-ээр импортлоно (Gmail-ийг серверт тохируулсны дараа ажиллана)'}</p> : null}
+      {gmail ? <p className="text-[12.5px] text-subtle">{gmail.configured ? `Gmail ${gmail.settings.email}${gmail.settings.autoSync ? ` · автомат ${gmail.settings.minutes} мин тутам` : ' · автомат унтраалттай'}${gmail.settings.lastSyncAt ? ` · сүүлд ${ubDateTime(gmail.settings.lastSyncAt)}: ${gmail.settings.lastResult ?? ''}` : ''}` : 'Gmail холбогдоогүй — «Gmail тохиргоо» дээр хаяг, 16 оронтой App Password бичээд холбоно (эсвэл CSV-ээр импортлоно)'}</p> : null}
       {err ? <Notice>{err}</Notice> : null}
       {info ? <Notice tone="ok">{info}</Notice> : null}
       {stats ? (
@@ -133,7 +134,7 @@ export function BankImportClient() {
         </div>
       )}
       {match ? <MatchDialog t={match} onClose={() => setMatch(null)} onDone={async (m) => { setMatch(null); setInfo(m); await load(); }} /> : null}
-      {gset && gmail ? <GmailSettings g={gmail} onClose={() => setGset(false)} onDone={async () => { setGset(false); await load(); }} /> : null}
+      {gset ? <GmailSettingsModal onClose={() => setGset(false)} onDone={() => void load()} /> : null}
     </div>
   );
 }
@@ -169,23 +170,10 @@ function MatchDialog({ t, onClose, onDone }: { t: Tx; onClose: () => void; onDon
   );
 }
 
-function GmailSettings({ g, onClose, onDone }: { g: Gmail; onClose: () => void; onDone: () => void }) {
-  const [s, setS] = useState(g.settings);
-  const [err, setErr] = useState<string | null>(null);
-  const save = async () => { try { await api('/api/bank/gmail', { method: 'POST', json: { action: 'settings', ...s } }); onDone(); } catch (e) { setErr(msg(e)); } };
+function GmailSettingsModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   return (
-    <Modal open onClose={onClose} title="Gmail тохиргоо" subtitle={g.configured ? 'Gmail холбогдсон' : 'Gmail холбогдоогүй — серверт нэвтрэх эрх тохируулсны дараа ажиллана'}
-      footer={<><Button onClick={onClose}>Болих</Button><Button variant="primary" onClick={() => void save()}>Хадгалах</Button></>}>
-      <div className="flex flex-col gap-2">
-        <label className="text-[13px] font-semibold text-muted" htmlFor="gs">Хаан банкны илгээгч имэйл</label>
-        <input id="gs" value={s.sender} onChange={(e) => setS({ ...s, sender: e.target.value })} placeholder="info@khanbank.com" className="h-11 rounded-xl border border-line bg-surface px-3" />
-        <div className="grid grid-cols-2 gap-2">
-          <label className="flex flex-col gap-1 text-[13px] font-semibold text-muted">Хэдэн хоногийн<input type="number" value={s.days} onChange={(e) => setS({ ...s, days: Number(e.target.value) })} className="h-11 rounded-xl border border-line bg-surface px-3 text-ink" /></label>
-          <label className="flex flex-col gap-1 text-[13px] font-semibold text-muted">Давтамж (мин)<input type="number" value={s.minutes} onChange={(e) => setS({ ...s, minutes: Number(e.target.value) })} className="h-11 rounded-xl border border-line bg-surface px-3 text-ink" /></label>
-        </div>
-        <label className="flex items-center gap-2 text-[14px] font-semibold"><input type="checkbox" className="h-5 w-5" checked={s.autoSync} onChange={(e) => setS({ ...s, autoSync: e.target.checked })} />Автоматаар татах</label>
-        {err ? <Notice>{err}</Notice> : null}
-      </div>
+    <Modal open onClose={() => { onClose(); onDone(); }} size="xl" title="Gmail — Хаан банкны мэдэгдэл" subtitle="Gmail хаяг, 16 оронтой App Password бичээд «Хадгалаад Sync»" footer={<Button onClick={() => { onClose(); onDone(); }}>Хаах</Button>}>
+      <GmailSettings onSynced={onDone} />
     </Modal>
   );
 }

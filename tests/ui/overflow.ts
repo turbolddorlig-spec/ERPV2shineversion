@@ -137,6 +137,7 @@ async function main() {
     { name: 'Нягтлан: OKEY', path: '/accounting', act: async (p) => { await p.getByRole('button', { name: 'OKEY', exact: true }).click(); await p.waitForTimeout(1200); } },
     { name: 'Нягтлан: гүйцэтгэл солих', path: '/accounting', act: async (p) => { await p.getByRole('button', { name: 'Гүйцэтгэл солих' }).click(); await p.waitForTimeout(1200); } },
     { name: 'Нягтлан: цалингийн дүрэм', path: '/accounting', act: async (p) => { await p.getByRole('button', { name: 'Цалингийн дүрэм' }).click(); await p.waitForTimeout(1200); } },
+    { name: 'Тохиргоо (Gmail)', path: '/settings' },
     { name: 'Банкны импорт', path: '/bank-import' },
     { name: 'Банкны импорт: дүн өөрчлөгдсөн', path: '/bank-import', act: async (p) => { await p.getByRole('button', { name: 'Дүн өөрчлөгдсөн' }).click(); await p.waitForTimeout(1000); } },
     { name: 'Жолооч: орлого', path: '/driver', as: DRIVER, act: async (p) => { await p.getByRole('tab', { name: 'Орлого' }).click(); await p.waitForTimeout(1500); } },

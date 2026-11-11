@@ -22,6 +22,8 @@
     "bcryptjs": "^2.4.3",
     "clsx": "^2.1.1",
     "exceljs": "^4.4.0",
+    "imapflow": "^1.7.8",
+    "mailparser": "^3.14.3",
     "next": "^14.2.15",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -30,6 +32,7 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
+    "@types/mailparser": "^3.9.0",
     "@types/node": "^20.17.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

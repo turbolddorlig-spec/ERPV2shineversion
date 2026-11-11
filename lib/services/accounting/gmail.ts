@@ -1,106 +1,164 @@
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import { db } from '../../db';
 import { badRequest, forbidden } from '../../errors';
 import { writeAudit, SYSTEM_ACTOR, type Actor } from '../../audit';
-import { canBankImport, canView } from '../../permissions';
+import { canBankImport, canEdit, canView } from '../../permissions';
 import type { UserActor } from '../orders/core';
 import { importTransactions, parseKhanMessage, type TxIn } from './bank';
 
 /**
- * Gmail sync (хуучин шиг): Хаан банкны мэдэгдэл ирдэг Gmail-аас сүүлийн N хоногийн имэйлийг уншиж импортлоно.
- * Нэвтрэх эрх (OAuth): серверийн .env — GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN (эзэн тохируулна; нууц үг кодонд хэзээ ч бичигдэхгүй).
- * Автомат: тохиргоо асаалттай бол арын ажил N минут тутам (хуучин IDLE/polling-ийн оронд — нэг л апп ажиллуулна).
+ * Gmail холболт (хуучин ERP шиг IMAP + «App Password»): Тохиргоо хуудсанд Gmail хаяг + 16 оронтой App Password бичээд «Sync» —
+ * Хаан банкны мэдэгдлийн имэйлийг (сүүлийн N хоног) уншиж импортлоно. Автомат: N минут тутам (арын ажил).
+ * Нууц үг database-д ШИФРЛЭГДЭЖ хадгалагдана (AES-256-GCM, түлхүүр нь серверийн орчноос — database-д байхгүй), API хариунд хэзээ ч гарахгүй.
  * Нэг имэйл нэг л удаа (emailMessageId давхардахгүй). Зөвхөн орлого.
  */
 const KEY = 'bank.gmail';
-export interface GmailSettings { sender: string; autoSync: boolean; minutes: number; days: number; lastSyncAt: string | null; lastResult: string | null }
-const DEFAULTS: GmailSettings = { sender: '', autoSync: false, minutes: 5, days: 3, lastSyncAt: null, lastResult: null };
+export interface GmailSettings {
+  email: string; passwordEnc: string | null; sender: string; autoSync: boolean; minutes: number; days: number;
+  lastSyncAt: string | null; lastResult: string | null; lastOk: boolean | null;
+}
+const DEFAULTS: GmailSettings = { email: '', passwordEnc: null, sender: '', autoSync: true, minutes: 5, days: 3, lastSyncAt: null, lastResult: null, lastOk: null };
 
-export const gmailConfigured = () => !!(process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN);
+// ───────── нууц үг шифрлэх ─────────
+const secretKey = () => createHash('sha256').update(`zahialga-gmail|${process.env.APP_SECRET ?? process.env.DATABASE_URL ?? ''}`).digest();
+export function encrypt(plain: string): string {
+  const iv = randomBytes(12);
+  const c = createCipheriv('aes-256-gcm', secretKey(), iv);
+  const enc = Buffer.concat([c.update(plain, 'utf8'), c.final()]);
+  return `v1:${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${enc.toString('base64')}`;
+}
+export function decrypt(s: string): string | null {
+  try {
+    const [v, iv, tag, data] = s.split(':');
+    if (v !== 'v1' || !iv || !tag || !data) return null;
+    const d = createDecipheriv('aes-256-gcm', secretKey(), Buffer.from(iv, 'base64'));
+    d.setAuthTag(Buffer.from(tag, 'base64'));
+    return Buffer.concat([d.update(Buffer.from(data, 'base64')), d.final()]).toString('utf8');
+  } catch { return null; }
+}
 
 export async function readGmailSettings(): Promise<GmailSettings> {
   const s = await db.appSetting.findUnique({ where: { key: KEY } });
   return { ...DEFAULTS, ...((s?.value as object | null) ?? {}) };
 }
-async function saveSettings(v: GmailSettings, by?: string) {
-  await db.appSetting.upsert({ where: { key: KEY }, create: { key: KEY, value: v as unknown as Prisma.InputJsonValue, updatedById: by }, update: { value: v as unknown as Prisma.InputJsonValue, updatedById: by } });
+async function saveSettings(v: GmailSettings, by?: string | null) {
+  await db.appSetting.upsert({ where: { key: KEY }, create: { key: KEY, value: v as unknown as Prisma.InputJsonValue, updatedById: by ?? null }, update: { value: v as unknown as Prisma.InputJsonValue, updatedById: by ?? null } });
 }
+export const isConfigured = (s: GmailSettings) => !!(s.email && s.passwordEnc);
+/** API-д гаргах (нууц үггүй) */
+const publicView = (s: GmailSettings) => ({ email: s.email, hasPassword: !!s.passwordEnc, sender: s.sender, autoSync: s.autoSync, minutes: s.minutes, days: s.days, lastSyncAt: s.lastSyncAt, lastResult: s.lastResult, lastOk: s.lastOk });
+const canSet = (a: UserActor) => canEdit(a.roles, 'settings') || canBankImport(a.roles);
 
 export async function gmailStatus(actor: UserActor) {
-  if (!canView(actor.roles, 'bank-import')) throw forbidden();
-  return { configured: gmailConfigured(), settings: await readGmailSettings(), canEdit: canBankImport(actor.roles) };
+  if (!canView(actor.roles, 'bank-import') && !canEdit(actor.roles, 'settings')) throw forbidden();
+  const s = await readGmailSettings();
+  return { configured: isConfigured(s), settings: publicView(s), canEdit: canSet(actor) };
 }
 
-export async function setGmailSettings(actor: UserActor, input: { sender?: unknown; autoSync?: unknown; minutes?: unknown; days?: unknown }) {
-  if (!canBankImport(actor.roles)) throw forbidden();
+/** Gmail хаяг, App Password (хоосон бол хуучнаараа), илгээгч, автомат, давтамж */
+export async function setGmailSettings(actor: UserActor, input: { email?: unknown; appPassword?: unknown; sender?: unknown; autoSync?: unknown; minutes?: unknown; days?: unknown; disconnect?: unknown }) {
+  if (!canSet(actor)) throw forbidden();
   const cur = await readGmailSettings();
+  if (input.disconnect === true) {
+    const v = { ...cur, passwordEnc: null, autoSync: false, lastResult: 'Салгасан', lastOk: null };
+    await saveSettings(v, actor.id);
+    await writeAudit(actor, 'bank.gmail_disconnected', 'AppSetting', KEY, { email: cur.email }, db, ['settings', 'bank']);
+    return publicView(v);
+  }
+  const email = String(input.email ?? cur.email).trim().toLowerCase().slice(0, 120);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw badRequest('Gmail хаягаа зөв бичнэ үү', 'bad_email');
+  const rawPw = String(input.appPassword ?? '').replace(/\s+/g, '');
+  if (rawPw && !/^[a-zA-Z]{16}$/.test(rawPw)) throw badRequest('App Password нь 16 үсэг байна (зайтай бичсэн ч болно). Энгийн Gmail нууц үг биш', 'bad_app_password');
+  if (!rawPw && !cur.passwordEnc) throw badRequest('16 оронтой App Password-оо бичнэ үү', 'bad_app_password');
   const sender = String(input.sender ?? cur.sender).trim().slice(0, 120);
-  if (sender && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sender)) throw badRequest('Илгээгчийн имэйл буруу');
+  if (sender && !/^[^\s@]*@?[^\s@]+$/.test(sender)) throw badRequest('Илгээгчийн имэйл буруу');
   const minutes = Number(input.minutes ?? cur.minutes);
   if (!Number.isInteger(minutes) || minutes < 1 || minutes > 120) throw badRequest('Давтамж 1–120 минут');
   const days = Number(input.days ?? cur.days);
   if (!Number.isInteger(days) || days < 1 || days > 30) throw badRequest('Хоног 1–30');
-  const v = { ...cur, sender, minutes, days, autoSync: input.autoSync === undefined ? cur.autoSync : input.autoSync === true };
+  const v: GmailSettings = {
+    ...cur, email, sender, minutes, days, autoSync: input.autoSync === undefined ? cur.autoSync : input.autoSync === true,
+    ...(rawPw ? { passwordEnc: encrypt(rawPw.toLowerCase()), lastOk: null, lastResult: null } : {}),
+  };
   await saveSettings(v, actor.id);
-  await writeAudit(actor, 'bank.gmail_settings', 'AppSetting', KEY, { sender, autoSync: v.autoSync, minutes, days }, db, ['settings', 'bank']);
-  return v;
+  await writeAudit(actor, 'bank.gmail_settings', 'AppSetting', KEY, { email, sender, autoSync: v.autoSync, minutes, days, passwordChanged: !!rawPw }, db, ['settings', 'bank']);
+  return publicView(v);
 }
 
-async function token(): Promise<string> {
-  const r = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: process.env.GMAIL_CLIENT_ID!, client_secret: process.env.GMAIL_CLIENT_SECRET!, refresh_token: process.env.GMAIL_REFRESH_TOKEN!, grant_type: 'refresh_token' }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  const j = await r.json().catch(() => ({})) as { access_token?: string; error?: string };
-  if (!r.ok || !j.access_token) throw badRequest(`Gmail нэвтрэлт амжилтгүй (${j.error ?? r.status}) — GMAIL_REFRESH_TOKEN-ийг шалгана уу`, 'gmail_auth');
-  return j.access_token;
-}
+// ───────── IMAP уншилт ─────────
 
-interface Part { mimeType?: string; body?: { data?: string }; parts?: Part[] }
-const b64 = (s: string) => Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
-function textOf(p: Part | undefined): string {
-  if (!p) return '';
-  if (p.mimeType === 'text/plain' && p.body?.data) return b64(p.body.data);
-  for (const c of p.parts ?? []) { const t = textOf(c); if (t) return t; }
-  if (p.mimeType === 'text/html' && p.body?.data) return b64(p.body.data).replace(/<[^>]+>/g, ' ');
-  return '';
-}
+export interface MailItem { id: string; date: Date; text: string }
+/** Тест/орлуулах боломжтой: IMAP-аас имэйл унших */
+export type MailFetcher = (o: { email: string; password: string; sender: string; days: number }) => Promise<MailItem[]>;
 
-/** Gmail-аас уншиж импортлох (гараар эсвэл арын ажил) */
-export async function gmailSync(actor: Actor, opts: { days?: number } = {}) {
-  if (!gmailConfigured()) throw badRequest('Gmail холбоогүй байна — серверт GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN тохируулна', 'gmail_not_configured');
-  const s = await readGmailSettings();
-  const days = Math.min(30, Math.max(1, opts.days ?? s.days));
-  const at = await token();
-  const q = [s.sender ? `from:${s.sender}` : '', `newer_than:${days}d`].filter(Boolean).join(' ');
-  const list = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=100&q=${encodeURIComponent(q)}`, { headers: { Authorization: `Bearer ${at}` }, signal: AbortSignal.timeout(20_000) });
-  const lj = await list.json().catch(() => ({})) as { messages?: { id: string }[] };
-  if (!list.ok) throw badRequest(`Gmail уншиж чадсангүй (${list.status})`, 'gmail_error');
-  const ids = (lj.messages ?? []).map((m) => m.id);
-  const known = new Set((await db.bankTransaction.findMany({ where: { emailMessageId: { in: ids } }, select: { emailMessageId: true } })).map((x) => x.emailMessageId));
-  const txs: TxIn[] = [];
-  let skipped = 0;
-  for (const id of ids.filter((i) => !known.has(i))) {
-    const m = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, { headers: { Authorization: `Bearer ${at}` }, signal: AbortSignal.timeout(20_000) });
-    if (!m.ok) { skipped++; continue; }
-    const mj = await m.json() as { internalDate?: string; snippet?: string; payload?: Part & { headers?: { name: string; value: string }[] } };
-    const subject = mj.payload?.headers?.find((h) => h.name.toLowerCase() === 'subject')?.value ?? '';
-    const body = `${subject}\n${textOf(mj.payload) || mj.snippet || ''}`;
-    const p = parseKhanMessage(body, new Date(Number(mj.internalDate ?? Date.now())));
-    if (!p || !p.income) { skipped++; continue; }
-    txs.push({ date: p.date, description: p.description, amount: p.amount, phone: p.phone, emailMessageId: id });
+const imapFetch: MailFetcher = async ({ email, password, sender, days }) => {
+  const { ImapFlow } = await import('imapflow');
+  const { simpleParser } = await import('mailparser');
+  const client = new ImapFlow({ host: 'imap.gmail.com', port: 993, secure: true, auth: { user: email, pass: password }, logger: false, socketTimeout: 60_000, greetingTimeout: 20_000, connectionTimeout: 20_000 });
+  try {
+    await client.connect();
+  } catch (e) {
+    const err = e as { authenticationFailed?: boolean; responseText?: string; code?: string; message?: string };
+    if (err.authenticationFailed || /auth|credentials|invalid/i.test(err.responseText ?? err.message ?? '')) throw badRequest('Gmail нэвтэрч чадсангүй — Gmail хаяг, 16 оронтой App Password-оо шалгана уу (Google бүртгэлд 2 шаттай баталгаажуулалт асаалттай байх ёстой)', 'gmail_auth');
+    throw badRequest(`Gmail-тай холбогдож чадсангүй (${err.code ?? err.message ?? 'сүлжээ'}) — серверийн интернэтийг шалгана уу`, 'gmail_network');
   }
-  const r = txs.length ? await importTransactions(actor, txs, 'GMAIL') : { imported: 0, matched: 0, partial: 0, duplicates: 0, errors: [] as string[] };
-  await saveSettings({ ...s, lastSyncAt: new Date().toISOString(), lastResult: `${ids.length} имэйл · ${r.imported} импорт · ${r.matched} таарсан · ${r.duplicates + known.size} давхардсан · ${skipped} алгассан` });
-  return { ...r, emails: ids.length, alreadyImported: known.size, skipped };
+  const out: MailItem[] = [];
+  try {
+    const lock = await client.getMailboxLock('INBOX');
+    try {
+      const since = new Date(Date.now() - days * 86_400_000);
+      const found = await client.search({ since, ...(sender ? { from: sender } : {}) }, { uid: true });
+      const uids = (Array.isArray(found) ? found : []).slice(-300);
+      if (uids.length) {
+        for await (const m of client.fetch(uids, { uid: true, source: true, envelope: true, internalDate: true }, { uid: true })) {
+          if (!m.source) continue;
+          const p = await simpleParser(m.source);
+          const text = `${p.subject ?? ''}\n${p.text ?? (typeof p.html === 'string' ? p.html.replace(/<[^>]+>/g, ' ') : '')}`;
+          const when = m.internalDate instanceof Date ? m.internalDate : p.date ?? new Date();
+          out.push({ id: `gmail:${email}:${m.envelope?.messageId ?? p.messageId ?? m.uid}`.slice(0, 300), date: when, text });
+        }
+      }
+    } finally { lock.release(); }
+  } finally { await client.logout().catch(() => undefined); }
+  return out;
+};
+let fetcher: MailFetcher = imapFetch;
+/** Зөвхөн тестэд */
+export function _setMailFetcher(f: MailFetcher | null) { fetcher = f ?? imapFetch; }
+
+/** «Sync»: Gmail-аас уншиж импортлох (гараар эсвэл арын ажил) */
+export async function gmailSync(actor: Actor, opts: { days?: number } = {}) {
+  const s = await readGmailSettings();
+  if (!isConfigured(s)) throw badRequest('Gmail холбоогүй байна — Тохиргоо → Gmail хэсэгт хаяг, 16 оронтой App Password-оо бичнэ үү', 'gmail_not_configured');
+  const password = decrypt(s.passwordEnc!);
+  if (!password) throw badRequest('Хадгалсан App Password-ыг уншиж чадсангүй — Тохиргоо хэсэгт дахин бичнэ үү', 'gmail_password_lost');
+  const days = Math.min(30, Math.max(1, opts.days ?? s.days));
+  try {
+    const mails = await fetcher({ email: s.email, password, sender: s.sender, days });
+    const known = new Set((await db.bankTransaction.findMany({ where: { emailMessageId: { in: mails.map((m) => m.id) } }, select: { emailMessageId: true } })).map((x) => x.emailMessageId));
+    const txs: TxIn[] = [];
+    let skipped = 0;
+    for (const m of mails) {
+      if (known.has(m.id)) continue;
+      const p = parseKhanMessage(m.text, m.date);
+      if (!p || !p.income || p.amount <= 0) { skipped++; continue; }
+      txs.push({ date: p.date, description: p.description, amount: p.amount, phone: p.phone, emailMessageId: m.id });
+    }
+    const r = txs.length ? await importTransactions(actor, txs, 'GMAIL') : { imported: 0, matched: 0, partial: 0, duplicates: 0, errors: [] as string[] };
+    const res = { ...r, emails: mails.length, alreadyImported: known.size, skipped };
+    await saveSettings({ ...(await readGmailSettings()), lastSyncAt: new Date().toISOString(), lastOk: true, lastResult: `${mails.length} имэйл · ${r.imported} шинэ гүйлгээ · ${r.matched} таарсан · ${known.size + r.duplicates} өмнө орсон · ${skipped} банкны биш/зарлага` });
+    return res;
+  } catch (e) {
+    await saveSettings({ ...(await readGmailSettings()), lastSyncAt: new Date().toISOString(), lastOk: false, lastResult: `Алдаа: ${(e as Error).message}` });
+    throw e;
+  }
 }
 
 /** Арын ажил: автомат sync (тохиргоогоор) */
 export async function autoGmailSync() {
-  if (!gmailConfigured()) return null;
   const s = await readGmailSettings();
-  if (!s.autoSync) return null;
+  if (!isConfigured(s) || !s.autoSync) return null;
   if (s.lastSyncAt && Date.now() - Date.parse(s.lastSyncAt) < s.minutes * 60_000) return null;
-  return gmailSync(SYSTEM_ACTOR).catch(async (e) => { await saveSettings({ ...s, lastSyncAt: new Date().toISOString(), lastResult: `Алдаа: ${(e as Error).message}` }); return null; });
+  return gmailSync(SYSTEM_ACTOR).catch(() => null);
 }

@@ -25,6 +25,7 @@ let C: typeof import('@/lib/services/accounting/calc');
 let S: typeof import('@/lib/services/accounting/settle');
 let DB: typeof import('@/lib/services/accounting/debts');
 let B: typeof import('@/lib/services/accounting/bank');
+let GM: typeof import('@/lib/services/accounting/gmail');
 
 beforeAll(async () => {
   process.env.DISABLE_JOBS = '1';
@@ -44,6 +45,7 @@ beforeAll(async () => {
   S = await import('@/lib/services/accounting/settle');
   DB = await import('@/lib/services/accounting/debts');
   B = await import('@/lib/services/accounting/bank');
+  GM = await import('@/lib/services/accounting/gmail');
 });
 
 let seq = 0;
@@ -427,5 +429,41 @@ describe('банкны импорт (хуучнаар нь)', () => {
     await B.setRefunded(acc, free.id, { refunded: true });
     expect((await B.priceChanges(acc, {})).items).toHaveLength(0);
     expect((await B.listTransactions(acc, { tab: 'REFUNDED' })).items).toHaveLength(1);
+  });
+
+  it('Gmail (Тохиргоо): хаяг + 16 оронтой App Password шифрлэгдэж хадгалагдана, API-д гарахгүй; Sync → импорт, давтахад давхардахгүй; буруу нууц үг', async () => {
+    await err(GM.setGmailSettings(op, { email: 'a@gmail.com', appPassword: 'abcdefghijklmnop' }), 403);
+    await err(GM.setGmailSettings(sa, { email: 'a@gmail.com', appPassword: '12345' }), 400, 'bad_app_password');
+    await err(GM.gmailSync(sa), 400, 'gmail_not_configured');
+    const v = await GM.setGmailSettings(sa, { email: 'Shop@Gmail.com', appPassword: 'abcd efgh ijkl mnop', autoSync: true });
+    expect(v).toMatchObject({ email: 'shop@gmail.com', hasPassword: true });
+    expect(JSON.stringify(v)).not.toContain('abcdefghijklmnop');
+    const raw = JSON.stringify((await db.appSetting.findUniqueOrThrow({ where: { key: 'bank.gmail' } })).value);
+    expect(raw).not.toContain('abcdefghijklmnop');
+    expect(JSON.stringify(await GM.gmailStatus(sa))).not.toContain('passwordEnc');
+    const o = (await O.createOrder(op, ub({ prepaidWait: true }))).order;
+    let seen: { email: string; password: string } | null = null;
+    GM._setMailFetcher(async (x) => { seen = x; return [
+      { id: 'm1', date: new Date(), text: `Khan Bank: 5102xxxx dansand 30,000.00 MNT orlogo orson. Guilgeenii utga: ${o.phone} tulbur. Uldegdel: 1,000.00 MNT` },
+      { id: 'm2', date: new Date(), text: 'Khan Bank: 5102xxxx dansnaas 5,000.00 MNT zarlaga garsan. Guilgeenii utga: 88112233' },
+      { id: 'm3', date: new Date(), text: 'Сайн байна уу, энэ банкны мэдэгдэл биш' },
+    ]; });
+    try {
+      const r = await GM.gmailSync(sa);
+      expect(seen).toEqual({ email: 'shop@gmail.com', password: 'abcdefghijklmnop', sender: '', days: 3 });
+      expect([r.emails, r.imported, r.matched, r.skipped]).toEqual([3, 1, 1, 2]);
+      expect((await db.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe('NEW');
+      const r2 = await GM.gmailSync(sa);
+      expect([r2.imported, r2.alreadyImported]).toEqual([0, 1]);
+      expect((await GM.gmailStatus(sa)).settings.lastOk).toBe(true);
+      GM._setMailFetcher(async () => { throw new (await import('@/lib/errors')).AppError(400, 'Gmail нэвтэрч чадсангүй', 'gmail_auth'); });
+      await err(GM.gmailSync(sa), 400, 'gmail_auth');
+      expect((await GM.gmailStatus(sa)).settings).toMatchObject({ lastOk: false });
+      // Нууц үг хоосон үлдээвэл хуучнаараа
+      await GM.setGmailSettings(sa, { email: 'shop@gmail.com', sender: 'khanbank' });
+      expect((await GM.gmailStatus(sa)).settings.hasPassword).toBe(true);
+      await GM.setGmailSettings(sa, { disconnect: true });
+      expect((await GM.gmailStatus(sa)).configured).toBe(false);
+    } finally { GM._setMailFetcher(null); }
   });
 });
