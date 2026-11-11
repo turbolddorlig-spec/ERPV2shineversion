@@ -8,6 +8,7 @@ import { dateOnly, isYmd, ubDayStart, ymdOf } from '../ubdate';
 import { hashPassword, verifyPassword } from '../password';
 import { addDays } from './delivery/core';
 import { chargeLoanTx } from './stock/loans';
+import { evaluationSalary } from './outflow';
 import type { UserActor } from './users';
 
 type Tx = Prisma.TransactionClient;
@@ -20,6 +21,8 @@ type Tx = Prisma.TransactionClient;
  * цоож тайлахад торгууль, өр буцна (зээл барааны хөдөлгөөнтэй тул хэвээр); цоожны кодыг Супер админ тохируулна (hash).
  */
 const KEY_CODE = 'salary.lockCode';
+/** Маркетингийн үнэлгээний цалин — сервер автоматаар нэмнэ (#104) */
+export const EVAL_LABEL = 'Үнэлгээний цалин (автомат)';
 const EXCLUDED_ROLES: Role[] = ['DRIVER', 'DRIVER_LEAD', 'SUPER_ADMIN', 'SUPPLIER'];
 const ROLE_PENALTY: Partial<Record<Role, PenaltyType>> = { OPERATOR: 'OPP_ERROR', OPERATOR_LEAD: 'OPP_ERROR', MARKETING: 'MARKETING_ERROR', MARKETING_LEAD: 'MARKETING_ERROR', WAREHOUSE: 'WAREHOUSE_ERROR' };
 export const DAY_TYPE_LABEL: Record<string, string> = { LEAVE: 'Чөлөөтэй', SICK: 'Өвчтэй', ABSENT: 'Тасалсан', DAY_OFF: 'Амарсан' };
@@ -198,7 +201,9 @@ async function computeInputs(tx: Tx | typeof db, st: Staff, p: Period) {
     .map((l) => { const open = l.lines.map((x) => ({ q: x.qty - x.returnedQty - x.chargedQty, d: x.deduction ?? 0 })).filter((x) => x.q > 0); return { id: l.id, issuedAt: l.issuedAt, pieces: open.reduce((s, x) => s + x.q, 0), amount: open.reduce((s, x) => s + x.q * x.d, 0), note: l.note }; })
     .filter((l) => l.pieces > 0);
   const debts = (await tx.staffDebt.findMany({ where: { staffKey: st.key, isActive: true }, orderBy: { createdAt: 'asc' } })).map((d) => ({ id: d.id, description: d.description, totalAmount: d.totalAmount, remainingAmount: d.remainingAmount }));
-  return { cfg, isOpp, totalDays, workingDays, offDays, dailyRate, calcBase, orderCount, penalties, loans, debts };
+  // Модуль 7г (#104): маркетингийн үнэлгээний цалин — «Нэмэлт орлого»-д автоматаар (давхардахгүй)
+  const evalSalary = st.external || !st.roles.some((r) => r === 'MARKETING' || r === 'MARKETING_LEAD') ? 0 : await evaluationSalary(tx, st.userId!, p.start, p.end);
+  return { cfg, isOpp, totalDays, workingDays, offDays, dailyRate, calcBase, orderCount, penalties, loans, debts, evalSalary };
 }
 
 export async function prepareSalary(actor: UserActor, staffKeyIn: unknown, ymIn: unknown, halfIn: unknown) {
@@ -229,7 +234,8 @@ export async function saveSalary(actor: UserActor, input: SaveInput) {
     const baseSalary = orderBased ? 0 : input.baseSalary === undefined ? inp.calcBase : cleanInt(input.baseSalary, 'Үндсэн цалин');
     const bonusSalary = input.bonusSalary === undefined ? inp.cfg.bonusSalary : cleanInt(input.bonusSalary, 'Урамшуулал');
     const orderSalary = orderBased ? inp.orderCount * inp.cfg.oppRatePerOrder : 0;
-    const additions = cleanLines(input.additions, 'Нэмэлт орлого');
+    const additions = cleanLines(input.additions, 'Нэмэлт орлого').filter((x) => x.label !== EVAL_LABEL);
+    if (inp.evalSalary > 0) additions.push({ label: EVAL_LABEL, amount: inp.evalSalary });
     const deductions = cleanLines(input.deductions, 'Суутгал');
     const penaltyTotal = inp.penalties.reduce((s, x) => s + x.remaining, 0);
     const penaltyDeducted = input.penaltyDeducted === undefined ? penaltyTotal : cleanInt(input.penaltyDeducted, 'Хасах торгууль');

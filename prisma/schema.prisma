@@ -1413,3 +1413,102 @@ model SupplierAdjustment {
   @@index([shopId, appliedDayId])
   @@index([sourceDayId])
 }
+
+// ───────────── Модуль 7г — Барааны гарц, маркетинг (#104–#110) ─────────────
+
+/// Барааны маркетингийн мэдээлэл: хариуцагч, «Хийсэн ✓», тэмдэглэл, одоогийн бүүст ($, бүс, AD)
+model ProductMarketing {
+  productId     Int       @id
+  ownerId       String?   @db.Uuid
+  ownerName     String?
+  doneAt        DateTime?
+  doneByName    String?
+  note          String    @default("")
+  /// Нэг бүүстийн өдрийн доллар (анх 5)
+  dollar        Int       @default(5)
+  /// Бүүстийн тоо (0 = унтарсан)
+  zones         Int       @default(0)
+  adNumber      Int?
+  /// Одоогийн бүүст асаасан мөч (0 → >0); унтраахад null
+  boostOnAt     DateTime?
+  updatedAt     DateTime  @updatedAt
+  updatedByName String?
+
+  @@index([ownerId])
+  @@index([zones])
+}
+
+/// Бүүстийн өөрчлөлт бүр (цагтай) — өдөр бүрийн бүүст, асаах/унтраах түүх, зардлыг цагаар бодно
+model BoostEvent {
+  id        Int      @id @default(autoincrement())
+  productId Int
+  at        DateTime @default(now())
+  dollar    Int
+  zones     Int
+  adNumber  Int?
+  byId      String?  @db.Uuid
+  byName    String
+
+  @@index([productId, at])
+  @@index([at])
+}
+
+/// Маркетингийн пэйж: нэг пэйж — нэг маркетинг
+model MarketingPage {
+  pageId        Int      @id
+  userId        String   @db.Uuid
+  userName      String
+  updatedByName String?
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId])
+}
+
+/// Ажлын цонх: бараа сонгох (нэг барааг нэг л хүн — partial unique)
+model WorkClaim {
+  id          Int       @id @default(autoincrement())
+  productId   Int
+  userId      String    @db.Uuid
+  userName    String
+  claimedAt   DateTime  @default(now())
+  /// ACTIVE | COMPLETED | RETURNED | CANCELLED | EXPIRED
+  status      String    @default("ACTIVE")
+  progress    Int       @default(0)
+  endedAt     DateTime?
+  endedByName String?
+
+  @@index([userId, status])
+  @@index([productId])
+  @@index([status])
+}
+
+/// Маркетингийн өдрийн үнэлгээ (оноо, цалин → «Ажилтны цалин»-д нэмэлт орлого)
+model MarketingScore {
+  id           Int      @id @default(autoincrement())
+  userId       String   @db.Uuid
+  userName     String
+  date         DateTime @db.Date
+  score        Int?
+  salaryAmount Int      @default(0)
+  note         String   @default("")
+  boostCount   Int      @default(0)
+  orderCount   Int      @default(0)
+  scoredById   String   @db.Uuid
+  scoredByName String
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, date])
+  @@index([date])
+}
+
+/// «1 өдөр ажиглах» — анхааруулгыг тэр хүртэл нууна
+model BoostWatch {
+  id        Int      @id @default(autoincrement())
+  productId Int
+  until     DateTime
+  byId      String   @db.Uuid
+  byName    String
+  createdAt DateTime @default(now())
+
+  @@index([productId, until])
+}

@@ -598,6 +598,32 @@ async function main() {
     await req('/api/supplier', { cookie: sa8.cookie, method: 'POST', body: { action: 'active', shopId: sid, active: false } });
   }
 
+  // ───── Модуль 7г: Барааны гарц ─────
+  {
+    const sa9 = await loginAs('80000001');
+    const mk9 = await loginAs('80000144');
+    const op9 = await loginAs('80000006');
+    const t = await req('/api/goods-outflow?view=table', { cookie: mk9.cookie });
+    const tj = JSON.parse(t.text);
+    check('гарцын хүснэгт (маркетинг)', t.status === 200 && Array.isArray(tj.rows) && tj.days?.length === 7, t.text.slice(0, 100));
+    check('маркетинг ашгийн дүн харахгүй', tj.rows.every((r: { profit?: unknown }) => r.profit === undefined), '');
+    const pid = tj.rows[tj.rows.length - 1]?.id;
+    const pr = await req(`/api/goods-outflow?view=profit&id=${pid}`, { cookie: mk9.cookie });
+    check('ашгийн задаргаа — маркетинг 403', pr.status === 403, String(pr.status));
+    const pr2 = await req(`/api/goods-outflow?view=profit&id=${pid}`, { cookie: sa9.cookie });
+    check('ашгийн задаргаа — Супер админ', pr2.status === 200 && Array.isArray(JSON.parse(pr2.text).days), pr2.text.slice(0, 100));
+    const opT = await req('/api/goods-outflow?view=table', { cookie: op9.cookie });
+    check('оператор барааны гарц харахгүй (403)', opT.status === 403, String(opT.status));
+    const cf = await req('/api/goods-outflow', { cookie: mk9.cookie, method: 'POST', body: { action: 'config', oppCost: 1 } });
+    check('маркетинг тохиргоо өөрчлөхгүй (403)', cf.status === 403, String(cf.status));
+    const sc = await req('/api/goods-outflow', { cookie: mk9.cookie, method: 'POST', body: { action: 'score', userId: 'x', date: '2026-01-01', score: 10, salaryAmount: 999999 } });
+    check('маркетинг өөрийгөө үнэлэхгүй (403)', sc.status === 403, String(sc.status));
+    const al = await req('/api/goods-outflow?view=alerts', { cookie: mk9.cookie });
+    check('анхааруулга жагсаалт', al.status === 200 && Array.isArray(JSON.parse(al.text).red), al.text.slice(0, 80));
+    const ww = await req('/api/goods-outflow?view=work', { cookie: mk9.cookie });
+    check('ажлын цонх', ww.status === 200 && JSON.parse(ww.text).target > 0, ww.text.slice(0, 80));
+  }
+
   // ───── «Зөвхөн ажлын байрнаас» (#86) ─────
   {
     const sa7 = await loginAs('80000001');

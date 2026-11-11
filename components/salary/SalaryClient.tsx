@@ -13,6 +13,7 @@ import { money, ubDateTime } from '@/lib/format';
  * цалин бодох цонх (үндсэн/захиалга, урамшуулал, нэмэлт, суутгал, торгууль, зээлсэн бараа, өр), цоож, шилжүүлсэн;
  * ажлын хуваарь, ажилтны өр, гадны ажилтан, жолоочийн торгууль.
  */
+const EVAL_LABEL = 'Үнэлгээний цалин (автомат)';
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа гарлаа');
 const thisYm = () => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 7);
 const shiftYm = (ym: string, n: number) => { const [y, m] = ym.split('-').map(Number) as [number, number]; const d = new Date(Date.UTC(y, m - 1 + n, 1)); return d.toISOString().slice(0, 7); };
@@ -144,7 +145,7 @@ interface Prep {
   period: { start: string; end: string; label: string };
   auto: { cfg: { salaryType: string; baseSalary: number; bonusSalary: number; oppRatePerOrder: number; dailyRate: number; bankName: string; bankAccount: string }; isOpp: boolean; totalDays: number; workingDays: number; offDays: Record<string, number>; dailyRate: number; calcBase: number; orderCount: number; orderSalary: number;
     penalties: { id: number; category: string; createdAt: string; amount: number; remaining: number }[]; penaltyTotal: number;
-    loans: { id: number; issuedAt: string; pieces: number; amount: number; note: string | null }[]; debts: { id: number; description: string; totalAmount: number; remainingAmount: number }[] };
+    loans: { id: number; issuedAt: string; pieces: number; amount: number; note: string | null }[]; debts: { id: number; description: string; totalAmount: number; remainingAmount: number }[]; evalSalary?: number };
   record: null | { id: number; version: number; baseSalary: number; bonusSalary: number; additions: { label: string; amount: number }[]; deductions: { label: string; amount: number }[]; penaltyDeducted: number; penaltyTotal: number;
     loans: { loanId: number; label: string; amount: number }[]; debtPayments: { debtId: number; label: string; amount: number }[]; notes: string | null; bankName: string; bankAccount: string; transferSalary: number; transferred: boolean; isLocked: boolean; lockedByName: string | null; lockedAt: string | null; orderCount: number; orderSalary: number };
   dayLabels: Record<string, string>;
@@ -184,7 +185,7 @@ function RecordDialog({ ym, row, half, isSA, hasLockCode, onClose, onDone, onUnl
       const rec = r.record; const a = r.auto;
       const s = (n: number) => String(n);
       setF({ base: s(rec ? rec.baseSalary : a.calcBase), bonus: s(rec ? rec.bonusSalary : a.cfg.bonusSalary), penalty: s(rec ? rec.penaltyDeducted : a.penaltyTotal), notes: rec?.notes ?? '', bankName: rec?.bankName ?? a.cfg.bankName, bankAccount: rec?.bankAccount ?? a.cfg.bankAccount });
-      setAdds((rec?.additions ?? []).map((x) => ({ label: x.label, amount: s(x.amount) })));
+      setAdds((rec?.additions ?? []).filter((x) => x.label !== EVAL_LABEL).map((x) => ({ label: x.label, amount: s(x.amount) })));
       setDeds((rec?.deductions ?? []).map((x) => ({ label: x.label, amount: s(x.amount) })));
       setLoanIds(rec ? rec.loans.map((l) => l.loanId) : a.loans.map((l) => l.id));
       setDebtPay(Object.fromEntries((rec?.debtPayments ?? []).map((x) => [x.debtId, s(x.amount)])));
@@ -199,7 +200,8 @@ function RecordDialog({ ym, row, half, isSA, hasLockCode, onClose, onDone, onUnl
   const loanSel = locked ? (p?.record?.loans ?? []).map((l) => ({ id: l.loanId, amount: l.amount })) : (a?.loans ?? []).filter((l) => loanIds.includes(l.id));
   const loanTotal = loanSel.reduce((s, l) => s + l.amount, 0);
   const debtTotal = Object.values(debtPay).reduce((s, v) => s + num(v), 0);
-  const gross = (orderBased ? (a?.orderSalary ?? 0) : num(f.base)) + num(f.bonus) + sumL(adds);
+  const evalSal = a?.evalSalary ?? 0;
+  const gross = (orderBased ? (a?.orderSalary ?? 0) : num(f.base)) + num(f.bonus) + sumL(adds) + evalSal;
   const transfer = gross - sumL(deds) - num(f.penalty) - debtTotal - loanTotal;
   const save = async () => {
     setBusy('save'); setErr(null);
@@ -244,6 +246,7 @@ function RecordDialog({ ym, row, half, isSA, hasLockCode, onClose, onDone, onUnl
             </section>
             <section className="grid gap-3 rounded-[14px] border border-line p-3 sm:grid-cols-2">
               <Lines title="Нэмэлт орлого" items={adds} set={setAdds} disabled={locked} placeholder="Жишээ: илүү цаг" />
+              {evalSal > 0 ? <p className="text-[12.5px] text-muted">+ {EVAL_LABEL}: <b className="text-ink">{money(evalSal)}</b> — «Барааны гарц → Үнэлгээ»-ээс автоматаар</p> : null}
               <Lines title="Хоцролт / Суутгал" items={deds} set={setDeds} disabled={locked} placeholder="Жишээ: хоцролт 3 удаа" />
             </section>
             {!p.staff.external ? (
@@ -280,7 +283,7 @@ function RecordDialog({ ym, row, half, isSA, hasLockCode, onClose, onDone, onUnl
             </section>
           </div>
           <aside className="flex h-fit flex-col gap-1 rounded-[16px] bg-surface2 p-4 lg:sticky lg:top-0">
-            {([[orderBased ? 'Захиалгын цалин' : 'Үндсэн цалин', orderBased ? a.orderSalary : num(f.base), ''], ['Урамшуулал', num(f.bonus), '+'], ['Нэмэлт орлого', sumL(adds), '+'], ['Суутгал', sumL(deds), '−'], ['Торгууль', num(f.penalty), '−'], ['Өрийн суутгал', debtTotal, '−'], ['Зээлсэн бараа', loanTotal, '−']] as const).map(([l, v, s]) => (
+            {([[orderBased ? 'Захиалгын цалин' : 'Үндсэн цалин', orderBased ? a.orderSalary : num(f.base), ''], ['Урамшуулал', num(f.bonus), '+'], ['Нэмэлт орлого', sumL(adds) + evalSal, '+'], ['Суутгал', sumL(deds), '−'], ['Торгууль', num(f.penalty), '−'], ['Өрийн суутгал', debtTotal, '−'], ['Зээлсэн бараа', loanTotal, '−']] as const).map(([l, v, s]) => (
               <div key={l} className="flex justify-between gap-2 text-[13.5px]"><span className="text-muted">{s} {l}</span><b className={clsx(s === '−' && v ? 'text-bad-ink' : '')}>{money(v)}</b></div>
             ))}
             <div className="mt-2 border-t border-line pt-2"><div className="text-[12.5px] font-semibold text-muted">Шилжүүлэх цалин</div><div className={clsx('text-[26px] font-extrabold', transfer < 0 && 'text-bad-ink')}>{money(transfer)}</div></div>

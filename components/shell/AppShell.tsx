@@ -32,7 +32,7 @@ async function logout() {
 export interface StockAlert { kind: 'mismatch' | 'stale'; count: number; at: string | null; since: string | null }
 const ubTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString('mn-MN', { timeZone: 'Asia/Ulaanbaatar', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 
-export function AppShell({ user, nav, alert, children }: { user: { name: string; roleLabels: string[] }; nav: NavItem[]; alert?: StockAlert | null; children: ReactNode }) {
+export function AppShell({ user, nav, alert, boostAlert, children }: { user: { name: string; roleLabels: string[] }; nav: NavItem[]; alert?: StockAlert | null; boostAlert?: { red: number; orange: number } | null; children: ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [pathname]);
@@ -127,6 +127,18 @@ export function AppShell({ user, nav, alert, children }: { user: { name: string;
                 ? <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">Үлдэгдлийн тулгалтад {alert.count} зөрүү илэрлээ (журнал ≠ үлдэгдэл){alert.since ? ` · ${ubTime(alert.since)}-аас` : ''}. Агуулах руу орж шалгана уу.</span>
                 : <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">Цаг тутмын автомат тулгалт {ubTime(alert.at)}-аас хойш ажиллаагүй байна. Агуулах → «Дахин шалгах».</span>}
               <span className="text-[12.5px] underline">Агуулах →</span>
+            </Link>
+          ) : null}
+          {boostAlert ? (
+            <Link href={boostAlert.red ? '/goods-outflow?tab=red' : '/goods-outflow?tab=orange'} role="alert" data-boost-alert
+              className={clsx('mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] border px-4 py-3 text-[13.5px] font-semibold hover:brightness-95',
+                boostAlert.red ? 'animate-pulse border-bad/40 bg-bad-soft text-bad-ink' : 'border-warn/40 bg-warn-soft text-warn')}>
+              <span className="text-[16px]">{boostAlert.red ? '🔴' : '🟠'}</span>
+              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+                {boostAlert.red ? `Алдагдалтай бүүст: ${boostAlert.red} бараа — яаралтай шалгаж унтраана уу.` : ''}
+                {boostAlert.orange ? ` Ашиг багассан / өсөлтгүй бүүст: ${boostAlert.orange} бараа.` : ''}
+              </span>
+              <span className="text-[12.5px] underline">Барааны гарц →</span>
             </Link>
           ) : null}
           {children}

@@ -8,6 +8,7 @@ import { pendingIssueCount } from '@/lib/services/delivery/driver';
 import { canView } from '@/lib/permissions';
 import { unreviewedDiscounts } from '@/lib/services/orders/queries';
 import { canReviewDiscounts } from '@/lib/permissions';
+import { alertBanner } from '@/lib/services/outflow';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +17,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Шалгаагүй барааны засварын тоо — шалгах эрхтэй хүнд цэс дээр харагдана
   const actor = { id: user.id, name: user.name, roles: user.roles };
   // Агуулахын «Өнөөдрийн ажил»-ын тоо (дүүргэх, ирэх шилжүүлэг, зээлийн хүсэлт, батлах тооллого)
-  const [pending, whWork, discounts, recAlert, issues] = await Promise.all([
+  const [pending, whWork, discounts, recAlert, issues, boost] = await Promise.all([
     unreviewedCount(actor).catch(() => 0),
     warehouseBadge(actor).catch(() => 0),
     // Супер админд: шалгаагүй үнийн хөнгөлөлт / хүргэлтийн өөрчлөлт (#43 2)
@@ -25,6 +26,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     reconcileAlert(user.roles).catch(() => null),
     // Модуль 5: шийдээгүй «Опп-руу явуулах»
     canView(user.roles, 'issues') ? pendingIssueCount().catch(() => 0) : Promise.resolve(0),
+    // Модуль 7г: алдагдалтай / ашиг багассан бүүст (СА, Админ, маркетинг)
+    alertBanner(user.roles).catch(() => null),
   ]);
   const nav: NavItem[] = visiblePages(user.roles).map((p) => ({
     key: p.key, label: p.label, short: p.short, href: p.href, group: p.group, icon: p.icon,
@@ -33,6 +36,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }));
   return (
     <AppShell user={{ name: user.name, roleLabels: user.roles.map((r) => ROLE_LABEL[r]) }} nav={nav}
+      boostAlert={boost}
       alert={recAlert ? { kind: recAlert.kind, count: recAlert.status?.count ?? 0, at: recAlert.status?.at ?? null, since: recAlert.status?.since ?? null } : null}>
       {children}
     </AppShell>

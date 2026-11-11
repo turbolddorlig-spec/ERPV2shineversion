@@ -15,6 +15,7 @@ const PW = process.env.UI_PASSWORD ?? 'Test1234';
 const MARK = 'Зайгүймаашуртүг';
 const DRIVER = process.env.UI_DRIVER ?? '80000099';
 const SUPPLIER = process.env.UI_SUPPLIER ?? '80000150';
+const MARKETER = process.env.UI_MARKETER ?? '80000144';
 
 type Issue = { kind: string; text: string; w: number; box: number };
 
@@ -158,6 +159,18 @@ async function main() {
     { name: 'Нийлүүлэгч: нэвтрэх эрх', path: '/supplier', act: async (p) => { await p.locator('[data-shop-open]').first().click(); await p.waitForTimeout(1200); await p.getByRole('button', { name: 'Нэвтрэх эрх', exact: true }).click(); await p.waitForTimeout(600); } },
     { name: 'Нийлүүлэгч: анхдагч суутгал', path: '/supplier', act: async (p) => { await p.getByRole('button', { name: 'Анхдагч суутгал' }).click(); await p.waitForTimeout(600); } },
     { name: 'Нийлүүлэгч өөрөө', path: '/supplier', as: SUPPLIER },
+    // Модуль 7г: барааны гарц
+    { name: 'Барааны гарц', path: '/goods-outflow' },
+    { name: 'Барааны гарц: алдагдалтай', path: '/goods-outflow?tab=red' },
+    { name: 'Барааны гарц: ашиг бага', path: '/goods-outflow?tab=orange' },
+    { name: 'Барааны гарц: ашгийн задаргаа', path: '/goods-outflow', act: async (p) => { await p.getByRole('button', { name: 'задаргаа' }).first().click().catch(async () => { await p.locator('td button.underline').first().click(); }); await p.waitForTimeout(1500); } },
+    { name: 'Барааны гарц: ажлын цонх', path: '/goods-outflow', act: async (p) => { await p.getByRole('button', { name: 'Ажлын цонх' }).click(); await p.waitForTimeout(1500); } },
+    { name: 'Барааны гарц: үнэлгээ', path: '/goods-outflow', act: async (p) => { await p.getByRole('button', { name: 'Үнэлгээ' }).click(); await p.waitForTimeout(1500); } },
+    { name: 'Барааны гарц: өдрийн дэлгэрэнгүй', path: '/goods-outflow', act: async (p) => { await p.getByRole('button', { name: 'Үнэлгээ' }).click(); await p.waitForTimeout(800); await p.getByRole('button', { name: 'Өдрийн дэлгэрэнгүй' }).click(); await p.waitForTimeout(1500); } },
+    { name: 'Барааны гарц: пэйж', path: '/goods-outflow', act: async (p) => { await p.getByRole('button', { name: 'Пэйж хувиарлах' }).click(); await p.waitForTimeout(1000); } },
+    { name: 'Барааны гарц: статистик', path: '/goods-outflow', act: async (p) => { await p.getByRole('button', { name: 'Статистик' }).click(); await p.waitForTimeout(1000); } },
+    { name: 'Барааны гарц: тохиргоо', path: '/goods-outflow', act: async (p) => { await p.getByRole('button', { name: 'Тохиргоо' }).click(); await p.waitForTimeout(800); } },
+    { name: 'Барааны гарц (маркетинг): өөрийн ажил', path: '/goods-outflow', as: MARKETER, act: async (p) => { await p.getByRole('button', { name: 'Өөрийн ажил' }).click(); await p.waitForTimeout(1200); } },
     { name: 'Банкны импорт', path: '/bank-import' },
     { name: 'Банкны импорт: дүн өөрчлөгдсөн', path: '/bank-import', act: async (p) => { await p.getByRole('button', { name: 'Дүн өөрчлөгдсөн' }).click(); await p.waitForTimeout(1000); } },
     { name: 'Жолооч: орлого', path: '/driver', as: DRIVER, act: async (p) => { await p.getByRole('tab', { name: 'Орлого' }).click(); await p.waitForTimeout(1500); } },
@@ -168,7 +181,7 @@ async function main() {
     const ctx = await browser.newContext({ viewport: { width, height: 900 } });
     await ctx.addCookies([{ name: 'zs', value: m[1]!, domain: url.hostname, path: '/' }]);
     const page = await ctx.newPage();
-    for (const s of steps) {
+    for (const s of steps.filter((x) => !process.env.ONLY || x.name.includes(process.env.ONLY))) {
       try {
         await ctx.clearCookies();
         await ctx.addCookies([{ name: 'zs', value: s.as ? await cookieOf(s.as) : m[1]!, domain: url.hostname, path: '/' }]);
