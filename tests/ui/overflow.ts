@@ -162,6 +162,9 @@ async function main() {
     { name: 'Нийлүүлэгч өөрөө: нөөцийн цонх', path: '/supplier', as: SUPPLIER, act: async (p) => { await p.locator('[data-sup-cover]:visible').first().click(); await p.waitForTimeout(1500); } },
     { name: 'Нийлүүлэгч: барааны гарц (СА)', path: '/supplier', act: async (p) => { await p.locator('[data-shop-open]').first().click(); await p.waitForTimeout(1200); await p.getByRole('button', { name: 'Барааны гарц', exact: true }).click(); await p.waitForTimeout(1500); } },
     // Модуль 7г: барааны гарц
+    { name: 'Хянах самбар', path: '/dashboard' },
+    { name: 'Хянах самбар: 30 хоног', path: '/dashboard', act: async (p) => { await p.locator('[data-range="month"]').click(); await p.waitForTimeout(1800); } },
+    { name: 'Хянах самбар: хүснэгт', path: '/dashboard', act: async (p) => { await p.locator('[data-range="week"]').click(); await p.waitForTimeout(1500); await p.getByRole('button', { name: 'Хүснэгт' }).click(); await p.waitForTimeout(500); } },
     { name: 'Барааны гарц', path: '/goods-outflow' },
     { name: 'Барааны гарц: алдагдалтай', path: '/goods-outflow?tab=red' },
     { name: 'Барааны гарц: ашиг бага', path: '/goods-outflow?tab=orange' },

@@ -611,6 +611,25 @@ async function main() {
     await req('/api/supplier', { cookie: sa8.cookie, method: 'POST', body: { action: 'active', shopId: sid, active: false } });
   }
 
+  // ───── Хянах самбар (#123) ─────
+  {
+    const saD = await loginAs('80000001'); const admD = await loginAs('80000002'); const opD = await loginAs('80000006');
+    const sm = await req('/api/dashboard?view=summary&range=week', { cookie: admD.cookie });
+    const smj = sm.status === 200 ? JSON.parse(sm.text) : null;
+    check('самбар 7 хоног (Админ)', !!smj && smj.trend.length === 7 && smj.kpi.total === smj.trend.reduce((a: number, d: { total: number }) => a + d.total, 0), sm.text.slice(0, 100));
+    check('самбар: хувь ÷ нийт', !!smj && (smj.kpi.total === 0 || Math.abs(smj.kpi.cancelRate - Math.round(smj.kpi.cancelled / smj.kpi.total * 1000) / 10) < 0.01), JSON.stringify(smj?.kpi));
+    const at = await req('/api/dashboard?view=attention', { cookie: admD.cookie });
+    check('анхаарах зүйлс — Админд бараа татах алга', at.status === 200 && !JSON.parse(at.text).items.some((x: { key: string }) => x.key === 'reorder'), at.text.slice(0, 100));
+    const atS = await req('/api/dashboard?view=attention', { cookie: saD.cookie });
+    check('анхаарах зүйлс (СА)', atS.status === 200 && Array.isArray(JSON.parse(atS.text).items), atS.text.slice(0, 80));
+    const smO = await req('/api/dashboard?view=summary', { cookie: opD.cookie });
+    check('оператор самбар харахгүй (403)', smO.status === 403, String(smO.status));
+    const bad = await req('/api/dashboard?view=summary&date=2026-99-99', { cookie: saD.cookie });
+    check('буруу огноо → 400', bad.status === 400, String(bad.status));
+    const pg = await req('/dashboard', { cookie: saD.cookie });
+    check('/dashboard хуудас', pg.status === 200 && pg.text.includes('Хянах самбар'), String(pg.status));
+  }
+
   // ───── Модуль 7г: Барааны гарц ─────
   {
     const sa9 = await loginAs('80000001');

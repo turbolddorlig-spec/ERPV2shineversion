@@ -62,7 +62,7 @@ export function OutflowClient() {
   const [d, setD] = useState<Table | null>(null);
   const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
   const [sel, setSel] = useState<Set<number>>(new Set());
-  const [dlg, setDlg] = useState<null | { k: 'alert'; row: Row } | { k: 'reorder'; row: Row } | { k: 'edit'; row: Row } | { k: 'profit'; id: number } | { k: 'bulk'; ids: number[] } | { k: 'pages' | 'stats' | 'work' | 'my' | 'eval' | 'config' | 'pageshort' }>(null);
+  const [dlg, setDlg] = useState<null | { k: 'alert'; row: Row } | { k: 'reorder'; row: Row } | { k: 'edit'; row: Row } | { k: 'profit'; id: number } | { k: 'bulk'; ids: number[] } | { k: 'pages' | 'stats' | 'work' | 'my' | 'eval' | 'config' | 'pageshort' }>(sp.get('dlg') === 'pageshort' ? { k: 'pageshort' } : null);
   const [menu, setMenu] = useState(false);
   const [open, setOpen] = useState<Set<number>>(new Set());
   const toggle = (id: number) => { const n = new Set(open); if (n.has(id)) n.delete(id); else n.add(id); setOpen(n); };
