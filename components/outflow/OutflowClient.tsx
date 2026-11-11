@@ -143,7 +143,7 @@ export function OutflowClient() {
                   <tr key={r.id} className={clsx('border-t border-line', r.alert === 'RED' && 'shadow-[inset_3px_0_0_var(--bad)]', r.alert === 'ORANGE' && 'shadow-[inset_3px_0_0_var(--warn-ink)]')}>
                     {d.isLead ? <td className="px-2"><input type="checkbox" aria-label={`${r.name} сонгох`} checked={sel.has(r.id)} onChange={(e) => { const n = new Set(sel); if (e.target.checked) n.add(r.id); else n.delete(r.id); setSel(n); }} /></td> : null}
                     <td className="w-[160px] min-w-[160px] max-w-[160px] px-2 py-1.5" onMouseEnter={(e) => setHover({ id: r.id, x: e.clientX, y: e.clientY })} onMouseLeave={() => setHover(null)}>
-                      <div className="[overflow-wrap:anywhere] font-semibold">{r.name}</div>
+                      <div title={r.name} className="line-clamp-2 [overflow-wrap:anywhere] font-semibold">{r.name}</div>
                       <div className="[overflow-wrap:anywhere] text-[11.5px] text-muted">{r.code} · {money(r.price)}{r.doneAt ? ` · ✓ ${r.doneByName ?? ''}` : ''}</div>
                     </td>
                     <BoostCell row={r} field="dollar" post={post} />
@@ -156,7 +156,7 @@ export function OutflowClient() {
                     <td className="hidden px-2 py-1 text-right min-[1360px]:table-cell">{r.avg}</td>
                     <td className={clsx('px-2 py-1 text-right', (r.stock?.available ?? 0) < r.avg && 'font-bold text-bad-ink')}>{r.stock?.available ?? 0}</td>
                     {d.isSA ? <td className="px-2 py-1 text-right">{r.profit?.status ? <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className={clsx('font-bold underline', STATUS[r.profit.status].cls)}>{STATUS[r.profit.status].icon} {money(r.profit.perUnit)}</button> : <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className="text-subtle underline">задаргаа</button>}</td> : null}
-                    <td className="w-[110px] min-w-[110px] max-w-[110px] px-1.5 py-1"><div className="[overflow-wrap:anywhere] text-[12.5px] font-semibold">{r.ownerName ?? '—'}</div>{r.note ? <div title={r.note} className="line-clamp-2 [overflow-wrap:anywhere] text-[11.5px] text-muted">{r.note}</div> : null}</td>
+                    <td className="w-[110px] min-w-[110px] max-w-[110px] px-1.5 py-1"><div className="line-clamp-1 [overflow-wrap:anywhere] text-[12.5px] font-semibold">{r.ownerName ?? '—'}</div>{r.note ? <div title={r.note} className="line-clamp-1 [overflow-wrap:anywhere] text-[11.5px] text-muted">{r.note}</div> : null}</td>
                     <td className="px-1 py-1"><div className="flex items-center justify-end gap-1"><button type="button" aria-label={`${r.name} засах`} title="Засах" onClick={() => setDlg({ k: 'edit', row: r })} className="h-8 w-8 rounded-lg border border-line bg-surface text-[14px] hover:bg-surface2">✎</button><AlertChip r={r} onOpen={() => setDlg({ k: 'alert', row: r })} /></div></td>
                   </tr>
                 ))}
