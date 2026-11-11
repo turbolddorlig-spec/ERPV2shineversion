@@ -5,7 +5,7 @@ import { badRequest, forbidden } from '../../errors';
 import { writeAudit, SYSTEM_ACTOR, type Actor } from '../../audit';
 import { canBankImport, canEdit, canView } from '../../permissions';
 import type { UserActor } from '../orders/core';
-import { importTransactions, parseKhanMessage, type TxIn } from './bank';
+import { importTransactions, parseKhanMessages, type TxIn } from './bank';
 
 /**
  * Gmail холболт (хуучин ERP шиг IMAP + «App Password»): Тохиргоо хуудсанд Gmail хаяг + 16 оронтой App Password бичээд «Sync» —
@@ -108,7 +108,8 @@ const imapFetch: MailFetcher = async ({ email, password, sender, days }) => {
     const lock = await client.getMailboxLock('INBOX');
     try {
       const since = new Date(Date.now() - days * 86_400_000);
-      const found = await client.search({ since, ...(sender ? { from: sender } : {}) }, { uid: true });
+      // Зөвхөн «Khan Bank» гэсэн имэйл (бусдыг огт уншихгүй)
+      const found = await client.search({ since, body: 'Khan Bank', ...(sender ? { from: sender } : {}) }, { uid: true });
       const uids = (Array.isArray(found) ? found : []).slice(-300);
       if (uids.length) {
         for await (const m of client.fetch(uids, { uid: true, source: true, envelope: true, internalDate: true }, { uid: true })) {
@@ -136,18 +137,24 @@ export async function gmailSync(actor: Actor, opts: { days?: number } = {}) {
   const days = Math.min(30, Math.max(1, opts.days ?? s.days));
   try {
     const mails = await fetcher({ email: s.email, password, sender: s.sender, days });
-    const known = new Set((await db.bankTransaction.findMany({ where: { emailMessageId: { in: mails.map((m) => m.id) } }, select: { emailMessageId: true } })).map((x) => x.emailMessageId));
     const txs: TxIn[] = [];
     let skipped = 0;
     for (const m of mails) {
-      if (known.has(m.id)) continue;
-      const p = parseKhanMessage(m.text, m.date);
-      if (!p || !p.income || p.amount <= 0) { skipped++; continue; }
-      txs.push({ date: p.date, description: p.description, amount: p.amount, phone: p.phone, emailMessageId: m.id });
+      // Нэг имэйлд олон мессеж байж болно — мессеж бүр өөрийн дугаартай (давхардахгүй)
+      const ps = parseKhanMessages(m.text, m.date);
+      if (!ps.length) { skipped++; continue; }
+      ps.forEach((p, i) => {
+        const id = ps.length > 1 ? `${m.id}#${i}` : m.id;
+        if (!p.income) { skipped++; return; }
+        txs.push({ date: p.date, description: p.description, amount: p.amount, phone: p.phone, emailMessageId: id });
+      });
     }
-    const r = txs.length ? await importTransactions(actor, txs, 'GMAIL') : { imported: 0, matched: 0, partial: 0, duplicates: 0, errors: [] as string[] };
-    const res = { ...r, emails: mails.length, alreadyImported: known.size, skipped };
-    await saveSettings({ ...(await readGmailSettings()), lastSyncAt: new Date().toISOString(), lastOk: true, lastResult: `${mails.length} имэйл · ${r.imported} шинэ гүйлгээ · ${r.matched} таарсан · ${known.size + r.duplicates} өмнө орсон · ${skipped} банкны биш/зарлага` });
+    const knownTx = new Set((await db.bankTransaction.findMany({ where: { emailMessageId: { in: txs.map((t) => t.emailMessageId!) } }, select: { emailMessageId: true } })).map((x) => x.emailMessageId));
+    const fresh = txs.filter((t) => !knownTx.has(t.emailMessageId!));
+    const already = txs.length - fresh.length;
+    const r = fresh.length ? await importTransactions(actor, fresh, 'GMAIL') : { imported: 0, matched: 0, partial: 0, duplicates: 0, errors: [] as string[] };
+    const res = { ...r, emails: mails.length, alreadyImported: already, skipped };
+    await saveSettings({ ...(await readGmailSettings()), lastSyncAt: new Date().toISOString(), lastOk: true, lastResult: `${mails.length} имэйл · ${r.imported} шинэ гүйлгээ · ${r.matched} таарсан · ${already + r.duplicates} өмнө орсон · ${skipped} зарлага/бусад` });
     return res;
   } catch (e) {
     await saveSettings({ ...(await readGmailSettings()), lastSyncAt: new Date().toISOString(), lastOk: false, lastResult: `Алдаа: ${(e as Error).message}` });
@@ -161,4 +168,22 @@ export async function autoGmailSync() {
   if (!isConfigured(s) || !s.autoSync) return null;
   if (s.lastSyncAt && Date.now() - Date.parse(s.lastSyncAt) < s.minutes * 60_000) return null;
   return gmailSync(SYSTEM_ACTOR).catch(() => null);
+}
+
+/**
+ * Gmail-аас буруу импортлогдсон гүйлгээг цэвэрлэх (задлагч сайжрахаас өмнө Хаан банкны биш имэйл орсон, #89):
+ * Gmail-аас орсон, захиалгад ХОЛБОГДООГҮЙ, буцаагаагүй гүйлгээг устгаад дахин Sync — жинхэнэ Хаан банкны мессеж шинэ задлагчаар дахин орно.
+ * Захиалгад холбогдсон (таарсан) гүйлгээнд хүрэхгүй — тэдгээрийг «Таарсан» табаас шалгана.
+ */
+export async function cleanupGmailImports(actor: UserActor) {
+  if (!canEdit(actor.roles, 'settings')) throw forbidden('Цэвэрлэгээг админ хийнэ');
+  const where = { source: 'GMAIL', orderId: null, refunded: false };
+  const n = await db.bankTransaction.count({ where });
+  const linked = await db.bankTransaction.count({ where: { source: 'GMAIL', orderId: { not: null } } });
+  await db.bankTransaction.deleteMany({ where });
+  await writeAudit(actor, 'bank.gmail_cleanup', 'BankTransaction', 'GMAIL', { deleted: n, linkedKept: linked }, db, ['money', 'bank']);
+  let resync: Awaited<ReturnType<typeof gmailSync>> | null = null;
+  let resyncError: string | null = null;
+  try { resync = await gmailSync(actor); } catch (e) { resyncError = (e as Error).message; }
+  return { deleted: n, linkedKept: linked, resync, resyncError };
 }

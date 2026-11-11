@@ -391,6 +391,12 @@ describe('банкны импорт (хуучнаар нь)', () => {
     expect(B.extractPhones('tulbur 88001122, 99887766 12345678 199887766')).toEqual(['88001122', '99887766']);
     const c = B.parseCsv('Огноо,Утга,Дүн\n2026-11-11 10:00,"99112233, захиалга",35000\n2026.11.11,зарлага,-5000\nбуруу\n11/11/2026,88001122,12,000');
     expect(c.rows.map((r) => [r.description, r.amount])).toEqual([['99112233, захиалга', 35000]]);
+    // Жинхэнэ Хаан банкны мессеж (эзний илгээсэн хэлбэр), нэг имэйлд олон; Хаан банкны биш → алгасна
+    const real = 'Khan Bank:Tany\n5***2327 dansand\nORLOGO:18,000.00MNT orj\nULDEGDEL:1,600,559.00MNT\nbolloo.Utga:88588868 dornod\n\nKhan Bank:Tany\n5***2327 dansand\nORLOGO:24,000.00MNT orj\nULDEGDEL:1,684,409.00MNT\nlloo.Utga:Bayan-olgii.65429490\n\nKhan Bank:Tany\n5***2327 dansand\nORLOGO:15,000.00MNT orj\nULDEGDEL:1,699,409.00MNT\nbolloo.Utga:\n\nKhan Bank:Tany\n5***2327 dansnaas\nZARLAGA:5,000.00MNT garj\nbolloo.Utga:x';
+    expect(B.parseKhanMessages(real).map((x) => [x.income, x.amount, x.phone])).toEqual([[true, 18000, '88588868'], [true, 24000, '65429490'], [true, 15000, null], [false, 5000, null]]);
+    expect(B.parseKhanMessage('Таны захиалга 25,000 MNT, хямдрал 99112233')).toBe(null);
+    expect(B.parseKhanMessage('Khan Bank: шинэ үйлчилгээ 99112233')).toBe(null);
+    expect(B.extractPhones('5***2327 1,600,559.00 55112233 66112233 77112233')).toEqual(['55112233', '66112233', '77112233']);
     expect([c.debits, c.skipped >= 1]).toEqual([1, true]);
   });
 
@@ -447,14 +453,22 @@ describe('банкны импорт (хуучнаар нь)', () => {
       { id: 'm1', date: new Date(), text: `Khan Bank: 5102xxxx dansand 30,000.00 MNT orlogo orson. Guilgeenii utga: ${o.phone} tulbur. Uldegdel: 1,000.00 MNT` },
       { id: 'm2', date: new Date(), text: 'Khan Bank: 5102xxxx dansnaas 5,000.00 MNT zarlaga garsan. Guilgeenii utga: 88112233' },
       { id: 'm3', date: new Date(), text: 'Сайн байна уу, энэ банкны мэдэгдэл биш' },
+      { id: 'm4', date: new Date(), text: 'Khan Bank:Tany\n5***2327 dansand\nORLOGO:20,000.00MNT orj\nULDEGDEL:1,000.00MNT\nbolloo.Utga:' },
+      { id: 'm5', date: new Date(), text: 'Khan Bank:Tany\n5***2327 dansand\nORLOGO:20,000.00MNT orj\nULDEGDEL:1,020.00MNT\nbolloo.Utga:' },
     ]; });
     try {
       const r = await GM.gmailSync(sa);
       expect(seen).toEqual({ email: 'shop@gmail.com', password: 'abcdefghijklmnop', sender: '', days: 3 });
-      expect([r.emails, r.imported, r.matched, r.skipped]).toEqual([3, 1, 1, 2]);
+      expect([r.emails, r.imported, r.matched, r.skipped]).toEqual([5, 3, 1, 2]); // утгагүй ижил дүнтэй 2 өөр гүйлгээ давхардал биш
       expect((await db.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe('NEW');
       const r2 = await GM.gmailSync(sa);
-      expect([r2.imported, r2.alreadyImported]).toEqual([0, 1]);
+      expect([r2.imported, r2.alreadyImported]).toEqual([0, 3]);
+      // Цэвэрлэгээ: холбогдоогүй Gmail гүйлгээ устаж дахин орно, таарсан нь хэвээр
+      await db.bankTransaction.create({ data: { txDate: new Date(), description: 'хог имэйл', amount: 999, source: 'GMAIL', emailMessageId: 'junk1', importedByName: 'x' } });
+      await err(GM.cleanupGmailImports(op), 403);
+      const cl = await GM.cleanupGmailImports(sa);
+      expect([cl.deleted, cl.linkedKept, cl.resync?.imported]).toEqual([3, 1, 2]);
+      expect(await db.bankTransaction.count({ where: { emailMessageId: 'junk1' } })).toBe(0);
       expect((await GM.gmailStatus(sa)).settings.lastOk).toBe(true);
       GM._setMailFetcher(async () => { throw new (await import('@/lib/errors')).AppError(400, 'Gmail нэвтэрч чадсангүй', 'gmail_auth'); });
       await err(GM.gmailSync(sa), 400, 'gmail_auth');

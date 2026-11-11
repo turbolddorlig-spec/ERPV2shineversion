@@ -30,7 +30,7 @@ const assertEdit = (a: UserActor) => { if (!canBankImport(a.roles)) throw forbid
 
 export function extractPhones(text: string): string[] {
   const out: string[] = [];
-  const re = /(?:^|[^0-9])([89]\d{7})(?=[^0-9]|$)/g;
+  const re = /(?:^|[^0-9*])([5-9]\d{7})(?=[^0-9]|$)/g; // 5, 6, 7, 8, 9-өөр эхэлсэн 8 оронтой
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) if (!out.includes(m[1]!)) out.push(m[1]!);
   return out;
@@ -38,27 +38,35 @@ export function extractPhones(text: string): string[] {
 
 export interface ParsedTx { amount: number; date: Date; description: string; phone: string | null; income: boolean }
 
-/** Хаан банкны SMS/имэйл: «Khan Bank: ... 50,000.00 MNT orlogo orson ... Guilgeenii utga: 99112233 ...» */
+/**
+ * Хаан банкны мессеж (хуучин ERP шиг ЗӨВХӨН «Khan Bank» гэсэн толгойтой). Бусад имэйл (сурталчилгаа г.м.) → null.
+ *   Шинэ хэлбэр: «Khan Bank:Tany 5***2327 dansand ORLOGO:18,000.00MNT orj ULDEGDEL:1,600,559.00MNT bolloo.Utga:80020023Sainshand»
+ *   Хуучин хэлбэр: «Khan Bank: ... 35,000.00 MNT orlogo orson. Guilgeenii utga: 99112233 ...»
+ * Утас зөвхөн гүйлгээний утгаас (данс, үлдэгдлээс биш). Утга хоосон / өөр бичсэн бол утасгүй → «Таараагүй» (гараар тааруулна).
+ */
 export function parseKhanMessage(text: string, when: Date = new Date()): ParsedTx | null {
-  const n = text.replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim();
+  const n = text.replace(/\r?\n/g, ' ').replace(/[ \t\u00a0]+/g, ' ').trim();
+  const head = n.search(/Khan\s*Bank/i);
+  if (head < 0) return null;
+  const body = n.slice(head);
   let income = true;
-  let m = n.match(/Khan\s*Bank[:\s]+.*?(\d+(?:,\d{3})*(?:\.\d{2})?)\s*MNT\s+orlogo\s+orson/i);
-  if (!m) { m = n.match(/Khan\s*Bank[:\s]+.*?(\d+(?:,\d{3})*(?:\.\d{2})?)\s*MNT\s+zarlaga\s+garsan/i); if (m) income = false; }
-  if (!m) m = n.match(/Khan\s*Bank[:\s]+.*?(\d+(?:,\d{3})*(?:\.\d{2})?)\s*MNT/i);
+  let m = body.match(/ORLOGO\s*:?\s*([\d,]+(?:\.\d{1,2})?)\s*MNT/i) ?? body.match(/([\d,]+(?:\.\d{1,2})?)\s*MNT\s+orlogo/i);
   if (!m) {
-    // Имэйлийн бусад хэлбэр: «Дүн: 50,000 MNT», «ORLOGO: ...»
-    m = n.match(/(?:ORLOGO|Дүн|Дансны\s+дүн|Amount)[:\s]*(\d+(?:,\d{3})*(?:\.\d{2})?)\s*(?:MNT|₮|төгрөг)?/i) ?? n.match(/(\d+(?:,\d{3})*(?:\.\d{2})?)\s*(?:MNT|₮|төгрөг)/i);
+    m = body.match(/ZARLAGA\s*:?\s*([\d,]+(?:\.\d{1,2})?)\s*MNT/i) ?? body.match(/([\d,]+(?:\.\d{1,2})?)\s*MNT\s+zarlaga/i);
     if (!m) return null;
-    if (/zarlaga|зарлага/i.test(n)) income = false;
+    income = false;
   }
   const amount = Math.round(parseFloat(m[1]!.replace(/,/g, '')));
-  const utga = n.match(/(?:Guilgeenii\s+utga|Гүйлгээний\s+утга|Утга|Description)[:：\s]+(.+?)(?:\.\s|\.$|Uldegdel|$)/i);
-  let description = (utga ? utga[1]! : n).trim().replace(/\.$/, '').slice(0, 500);
-  if (!utga) {
-    const rest = n.slice(n.indexOf(m[0]) + m[0].length).replace(/Uldegdel[:\s]*\d+(?:,\d{3})*(?:\.\d{2})?\s*MNT\.?/i, '').trim();
-    if (rest) description = rest.replace(/\.$/, '').slice(0, 500);
-  }
-  return { amount, date: when, description, phone: extractPhones(description)[0] ?? extractPhones(n)[0] ?? null, income };
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const u = body.match(/(?:Guilgeenii\s+)?utga\s*:\s*(.*)$/i);
+  const description = (u ? u[1]! : '').replace(/\s*Uldegdel\s*:?\s*[\d,]+(?:\.\d{1,2})?\s*MNT\.?/i, '').trim().replace(/\.$/, '').slice(0, 300);
+  return { amount, date: when, description: description || 'Хаан банк (утгагүй)', phone: description ? extractPhones(description)[0] ?? null : null, income };
+}
+
+/** Нэг имэйлд олон мессеж байж болно — «Khan Bank» бүрээр хувааж задлана */
+export function parseKhanMessages(text: string, when: Date = new Date()): ParsedTx[] {
+  const parts = text.split(/(?=Khan\s*Bank)/i).filter((x) => /Khan\s*Bank/i.test(x));
+  return parts.map((x) => parseKhanMessage(x, when)).filter((x): x is ParsedTx => !!x);
 }
 
 /** CSV мөр: огноо, утга, дүн (хуучин шиг эхний мөр гарчиг). Дүн «-»-тэй (зарлага) бол алгасна */
@@ -164,7 +172,8 @@ export async function importTransactions(actor: Actor, list: TxIn[], source: 'CS
         const phone = phones[0] ?? null;
         if (raw.emailMessageId && (await tx.bankTransaction.findUnique({ where: { emailMessageId: raw.emailMessageId } }))) { res.duplicates++; return; }
         const day = ubDay(raw.date);
-        const same = await tx.bankTransaction.findMany({
+        // Gmail: мессеж бүр өөрийн дугаартай тул яг давхардлыг дугаараар нь л (утгагүй ижил дүнтэй 2 өөр хүнийг давхардал гэхгүй)
+        const same = raw.emailMessageId ? [] : await tx.bankTransaction.findMany({
           where: { txDate: { gte: ubDayStart(day), lt: ubDayStart(addDays(day, 1)) }, amount, isDuplicate: false, ...(phone ? { phone } : { phone: null, description }) },
           select: { orderId: true },
         });

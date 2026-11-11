@@ -39,6 +39,16 @@ export function GmailSettings({ onSynced }: { onSynced?: () => void }) {
       onSynced?.();
     } catch (e) { setErr(msg(e)); } finally { setBusy(null); await load(); }
   };
+  const cleanup = async () => {
+    if (!window.confirm('Gmail-аас орсон, захиалгад холбогдоогүй бүх гүйлгээг устгаад дахин Sync хийх үү? (Жинхэнэ Хаан банкны мессеж дахин орно)')) return;
+    setBusy('clean'); setErr(null); setOk(null);
+    try {
+      const r = await api<{ deleted: number; linkedKept: number; resync: { imported: number; matched: number } | null; resyncError: string | null }>('/api/bank/gmail', { method: 'POST', json: { action: 'cleanup' } });
+      setOk(`${r.deleted} буруу/холбогдоогүй гүйлгээ устгав${r.resync ? ` · дахин ${r.resync.imported} Хаан банкны гүйлгээ орж ${r.resync.matched} таарав` : ''}${r.linkedKept ? ` · захиалгад холбогдсон ${r.linkedKept}-ыг хэвээр үлдээв («Таарсан» табаас шалгана уу)` : ''}`);
+      if (r.resyncError) setErr(r.resyncError);
+      onSynced?.();
+    } catch (e) { setErr(msg(e)); } finally { setBusy(null); await load(); }
+  };
   const disconnect = async () => {
     setBusy('off'); setErr(null); setOk(null);
     try { await api('/api/bank/gmail', { method: 'POST', json: { action: 'disconnect' } }); setOk('Gmail салгагдлаа'); } catch (e) { setErr(msg(e)); } finally { setBusy(null); await load(); }
@@ -66,6 +76,7 @@ export function GmailSettings({ onSynced }: { onSynced?: () => void }) {
       {canEdit ? (
         <div className="flex flex-wrap gap-2">
           <Button variant="primary" loading={busy === 'sync'} onClick={() => void saveAndSync()}>Хадгалаад Sync</Button>
+          {s.hasPassword ? <Button loading={busy === 'clean'} onClick={() => void cleanup()}>Буруу импортыг цэвэрлээд дахин Sync</Button> : null}
           {s.hasPassword ? <Button variant="danger" loading={busy === 'off'} onClick={() => void disconnect()}>Салгах</Button> : null}
         </div>
       ) : null}
