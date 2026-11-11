@@ -53,7 +53,7 @@ footer{font-size:13px;color:var(--subtle)}
   <header style="display:flex;flex-direction:column;gap:10px">
     <span class="eyebrow"><span class="brand">zahialga<span>•</span></span> · ERP V2</span>
     <h1>Ажлын жагсаалт</h1>
-    <p class="sub">Дууссан ажил <strong style="color:var(--done)">ногоон, зураастай</strong>. Одоо хийж буй нь <strong style="color:var(--now)">улбар шар</strong>. Шинэчлэгдсэн: 2026.11.11 · Модуль 2 батлагдсан</p>
+    <p class="sub">Дууссан ажил <strong style="color:var(--done)">ногоон, зураастай</strong>. Одоо хийж буй нь <strong style="color:var(--now)">улбар шар</strong>. Шинэчлэгдсэн: 2026.11.11 · Модуль 4 батлагдсан, Модуль 5 дууссан</p>
     <div class="legend">
       <span><span class="pill p-done">ДУУССАН</span></span>
       <span><span class="pill p-now">ОДОО</span></span>
@@ -157,8 +157,8 @@ footer{font-size:13px;color:var(--subtle)}
     </ul>
   </div>
 
-  <div class="mod">
-    <div class="head"><h2>Модуль 4 · Падаан (Жолоочид бараа өгөх)</h2><span class="pill p-done">БАТЛАГДСАН</span></div>
+  <div class="mod is-done">
+    <div class="head"><h2>Модуль 4 · Падаан (Жолоочид бараа өгөх)</h2><span class="pill p-done">ДУУССАН · БАТЛАГДСАН</span></div>
     <p class="sub">358 + 906 тест, 1 сая захиалга, 150 хэрэглэгч — алдаа 0, тулгалт 0 зөрүү.</p>
     <ul>
       <li class="d">Логик ярилцах (хуучин урсгалаар, OKEY, Check заавал)</li>
@@ -167,20 +167,22 @@ footer{font-size:13px;color:var(--subtle)}
       <li class="d">Хүлээлгэж өгөх → бараа жолоочийн гарт (журналаар)</li>
       <li class="d">Падаан хэвлэх ба түүх</li>
       <li class="d">Тест ба тайлан</li>
-      <li>Таны баталгаа</li>
+      <li class="d">Таны баталгаа (2026.11.11)</li>
     </ul>
   </div>
 
-  <div class="mod">
+  <div class="mod is-now">
     <div class="head"><h2>Модуль 5 · Жолооч</h2><span class="pill p-now">ДУУССАН · ТАНЫ БАТАЛГАА ХҮЛЭЭЖ БУЙ</span></div>
+    <p class="sub">387 + 991 тест, 1 сая захиалга, 150 хэрэглэгч (40 жолооч бодитоор хүргэв) — алдаа 0, тулгалт 0 зөрүү.</p>
     <ul>
-      <li>Логик ярилцах (Q3 маргааш болгох) — хуучин ERP-ийн «Маргааш» логикийг судалж, жишээтэй тайлбарлан батлуулна (#57)</li>
-      <li>Гар утасны апп</li>
-      <li>Хүргэх, цуцлах, хойшлуулах, асуудал мэдэгдэх</li>
-      <li>Буцаалт хүлээн авах (агуулах)</li>
-      <li>Нэмэлт бараа</li>
-      <li>Жолоочийн хяналт (админ)</li>
-      <li>Тест ба таны зөвшөөрөл</li>
+      <li class="d">Логик ярилцах — хуучин «Маргааш»-ийг судалж батлуулсан (#73)</li>
+      <li class="d">Гар утасны апп (табууд, утас залгах, «#» дараалал)</li>
+      <li class="d">Хүргэсэн (хэсэгчилсэн, Бэлэн/Данс/Өр), цуцлах, маргааш (2 удаа), асуудал мэдэгдэх</li>
+      <li class="d">Буцаалт хүлээн авах (агуулах)</li>
+      <li class="d">Нэмэлт бараа, жолооч өөрөө авах (Pickup)</li>
+      <li class="d">Жолоочийн хяналт (админ), Асуудал хуудас</li>
+      <li class="d">Тест ба тайлан</li>
+      <li class="n">Таны баталгаа</li>
     </ul>
   </div>
 
@@ -200,7 +202,7 @@ footer{font-size:13px;color:var(--subtle)}
     <div class="head"><h2>Модуль 7+ · Бусад</h2><span class="pill p-todo">ХҮЛЭЭГДЭЖ БУЙ</span></div>
     <ul>
       <li>Хянах самбар</li>
-      <li>Асуудал (жолоочийн мэдэгдэл)</li>
+      <li class="d">Асуудал (жолоочийн мэдэгдэл — Модуль 5-д)</li>
       <li>Торгууль (Алдаа удирдлага, Миний торгууль)</li>
       <li>Ажилтны цалин</li>
       <li>Нийлүүлэгч</li>
