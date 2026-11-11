@@ -45,8 +45,10 @@ export interface OutflowConfig {
   stockDays: number;
   /** Бараа татах (#119, СА): Хятадаас ирэх хоног — нөөц ≤ энэ бол 🟠; ≤ urgentDays бол 🔴 */
   leadDays: number; urgentDays: number;
+  /** Нийлүүлэгчийн дэлгүүрт оноосон барааг СА-ын «Бараа татах»-д харуулахгүй (#120) */
+  hideSupplierReorder: boolean;
 }
-export const DEFAULT_CFG: OutflowConfig = { claimTarget: 5, claimExpireDays: 7, watchHours: 8, defaultDollar: 5, oppCost: 1200, deliveryCost: 5000, rate: 3600, costPct: 35, lowProfit: 1500, bulkMin: 5, stockDays: 1, leadDays: 15, urgentDays: 7 };
+export const DEFAULT_CFG: OutflowConfig = { claimTarget: 5, claimExpireDays: 7, watchHours: 8, defaultDollar: 5, oppCost: 1200, deliveryCost: 5000, rate: 3600, costPct: 35, lowProfit: 1500, bulkMin: 5, stockDays: 1, leadDays: 15, urgentDays: 7, hideSupplierReorder: true };
 let cfgCache: { at: number; v: OutflowConfig } | null = null;
 export async function getConfig(tx: Tx | typeof db = db): Promise<OutflowConfig> {
   if (tx === db && cfgCache && Date.now() - cfgCache.at < 30_000) return cfgCache.v;
@@ -70,6 +72,7 @@ export async function setConfig(actor: UserActor, b: Record<string, unknown>) {
   if (b.claimTarget !== undefined) next.claimTarget = cleanInt(b.claimTarget, '«Хийсэн» захиалгын тоо', 1, 1000);
   if (b.claimExpireDays !== undefined) next.claimExpireDays = cleanInt(b.claimExpireDays, 'Чөлөөлөх хоног', 1, 365);
   if (b.stockDays !== undefined) next.stockDays = cleanInt(b.stockDays, 'Дуусах анхааруулга (өдөр)', 1, 30);
+  if (b.hideSupplierReorder !== undefined) { assertSA(actor); next.hideSupplierReorder = b.hideSupplierReorder === true || b.hideSupplierReorder === 'true'; }
   const money = ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar', 'bulkMin', 'leadDays', 'urgentDays'] as const;
   if (money.some((k) => b[k] !== undefined)) {
     assertSA(actor);
@@ -193,7 +196,7 @@ export interface BoostAlert {
   watchedUntil: Date | null; watchedBy: string | null; boostOnAt: Date | null; zones: number; dollar: number; ownerName: string | null;
 }
 let alertCache: { at: number; list: BoostAlert[] } | null = null;
-export function bustOutflowCache() { alertCache = null; reorderCache = null; }
+export function bustOutflowCache() { alertCache = null; reorderCache = null; shortCache = null; }
 
 /** Одоо бүүст асаалттай бараануудын анхааруулга (60 сек кэш) */
 export async function computeAlerts(fresh = false): Promise<BoostAlert[]> {
@@ -419,7 +422,7 @@ export async function outflowTable(actor: UserActor, p: TableParams) {
   let prof = new Map<number, DayProfit>();
   if (sa) prof = await yesterdayProfits(rows.filter((r) => r.zones > 0 || p.status).map((r) => r.id));
   if (sa && p.status) rows = rows.filter((r) => prof.get(r.id)?.status === p.status);
-  const ro = sa ? await computeReorder() : new Map<number, ReorderInfo>();
+  const ro = sa ? await ownerReorder() : new Map<number, ReorderInfo>();
   if (sa && p.tab === 'reorder') rows = rows.filter((r) => NEEDS.includes(ro.get(r.id)?.level as ReorderLevel));
   if (sa && p.tab === 'ordered') rows = rows.filter((r) => ro.get(r.id)?.order);
   const dir = p.dir === 'asc' ? 1 : -1;
@@ -450,7 +453,7 @@ export async function outflowTable(actor: UserActor, p: TableParams) {
     all: all.length, boost: all.filter((r) => r.zones > 0).length, noboost: all.filter((r) => r.zones === 0).length,
     red: alerts.filter((a) => a.level === 'RED' && !(a.watchedUntil && a.watchedUntil.getTime() > now)).length,
     orange: alerts.filter((a) => a.level === 'ORANGE' && !(a.watchedUntil && a.watchedUntil.getTime() > now)).length,
-    watched: watchedN,
+    watched: watchedN, pageShort: (await pageShortfall()).length,
     ...(sa ? { reorder: [...ro.values()].filter((x) => NEEDS.includes(x.level)).length, ordered: [...ro.values()].filter((x) => x.order).length } : {}),
   };
   const days = Array.from({ length: 7 }, (_, i) => addDays(ubDay(), -i));
@@ -949,10 +952,18 @@ export type ReorderLevel = 'OK' | 'ORDER' | 'URGENT' | 'ORDERED' | 'LATE';
 const NEEDS: ReorderLevel[] = ['ORDER', 'URGENT', 'LATE'];
 export interface ReorderInfo {
   productId: number; available: number; pace: number; days: number | null; runOutDay: string | null; level: ReorderLevel;
+  /** Нийлүүлэгчийн дэлгүүрт оноогдсон бол тэр дэлгүүр (#120) */
+  shopId: number | null;
   basis: { avg7: number; avg3: number; today: number; fullDays: number };
   order: { id: number; qty: number; expectedDay: string; orderedAt: Date; byName: string; note: string } | null;
 }
 let reorderCache: { at: number; map: Map<number, ReorderInfo> } | null = null;
+/** Супер админы «Бараа татах»: тохиргоогоор нийлүүлэгчийн барааг хасна */
+async function ownerReorder(): Promise<Map<number, ReorderInfo>> {
+  const [m, cfg] = await Promise.all([computeReorder(), getConfig()]);
+  if (!cfg.hideSupplierReorder) return m;
+  return new Map([...m].filter(([, x]) => x.shopId === null));
+}
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
 export async function computeReorder(fresh = false): Promise<Map<number, ReorderInfo>> {
@@ -978,6 +989,8 @@ export async function computeReorder(fresh = false): Promise<Map<number, Reorder
   const ids = [...new Set([...aggs.filter((a) => a.qty - a.bulkQty > 0).map((a) => a.productId), ...orders.map((o) => o.productId)])];
   const stock = await productStockTotals(ids);
   const om = new Map(orders.map((o) => [o.productId, o]));
+  const sp = ids.length ? await db.supplierProduct.findMany({ where: { productId: { in: ids }, OR: [{ toDate: null }, { toDate: { gt: dateOnly(today) } }] }, select: { productId: true, shopId: true } }) : [];
+  const shopOf = new Map(sp.map((x) => [x.productId, x.shopId]));
   const map = new Map<number, ReorderInfo>();
   for (const id of ids) {
     const v = full.map((d) => net.get(`${id}|${d}`) ?? 0);
@@ -996,7 +1009,7 @@ export async function computeReorder(fresh = false): Promise<Map<number, Reorder
     else if (days !== null && days <= cfg.urgentDays) level = 'URGENT';
     else if (days !== null && days <= cfg.leadDays) level = 'ORDER';
     map.set(id, {
-      productId: id, available, pace: r1(pace), days, runOutDay: days === null ? null : addDays(today, days), level,
+      productId: id, shopId: shopOf.get(id) ?? null, available, pace: r1(pace), days, runOutDay: days === null ? null : addDays(today, days), level,
       basis: { avg7: r1(avg7), avg3: r1(avg3), today: td, fullDays },
       order: o ? { id: o.id, qty: o.qty, expectedDay: o.expectedDay, orderedAt: o.orderedAt, byName: o.byName, note: o.note } : null,
     });
@@ -1008,7 +1021,7 @@ export async function computeReorder(fresh = false): Promise<Map<number, Reorder
 /** Бүх хуудасны дээрх сануулга — зөвхөн Супер админд */
 export async function reorderBanner(roles: Role[]): Promise<{ urgent: number; order: number; late: number } | null> {
   if (!roles.includes('SUPER_ADMIN')) return null;
-  const m = await computeReorder();
+  const m = await ownerReorder();
   let urgent = 0, order = 0, late = 0;
   for (const x of m.values()) { if (x.level === 'URGENT') urgent++; else if (x.level === 'ORDER') order++; else if (x.level === 'LATE') late++; }
   return urgent || order || late ? { urgent, order, late } : null;
@@ -1058,4 +1071,55 @@ export async function reorderDetail(actor: UserActor, productIdIn: unknown) {
   const cfg = await getConfig();
   const history = await db.reorderOrder.findMany({ where: { productId: id }, orderBy: { orderedAt: 'desc' }, take: 10 });
   return { info: m.get(id) ?? null, leadDays: cfg.leadDays, urgentDays: cfg.urgentDays, defaultExpected: addDays(ubDay(), cfg.leadDays), history };
+}
+
+// ───────────── Гаралтаа хангаагүй пэйж (#121) ─────────────
+/**
+ * Бүүст ≥ 1, 5+ хоног тасралтгүй асаалттай бараа. Пэйж = операторын захиалгад сонгосон пэйж (сүүлийн 14 бүтэн өдөрт захиалга орсон бүх пэйж).
+ * Пэйж бүрийн сүүлийн 2 бүтэн өдрийн (уржигдар + өчигдөр) захиалгын тоо < $ бол 🔴 хангаагүй. Зөвхөн анхааруулга — унтраах эсэхийг хүн шийднэ.
+ */
+export const SHORT_BOOST_DAYS = 5;
+export interface PageShortRow {
+  productId: number; code: string; name: string; zones: number; dollar: number; adNumber: number | null; ownerName: string | null; boostDays: number;
+  days: [string, string];
+  pages: { pageId: number; name: string; d2: number; d1: number; total: number; short: boolean }[];
+}
+let shortCache: { at: number; list: PageShortRow[] } | null = null;
+async function pageShortfall(fresh = false): Promise<PageShortRow[]> {
+  if (!fresh && shortCache && Date.now() - shortCache.at < 60_000) return shortCache.list;
+  const now = Date.now();
+  const today = ubDay(); const yest = addDays(today, -1); const d2 = addDays(today, -2);
+  const pms = await db.productMarketing.findMany({ where: { zones: { gte: 1 }, boostOnAt: { lte: new Date(now - SHORT_BOOST_DAYS * 24 * HOUR) } } });
+  if (!pms.length) { shortCache = { at: now, list: [] }; return []; }
+  const ids = pms.map((x) => x.productId);
+  const [products, rows] = await Promise.all([
+    db.product.findMany({ where: { id: { in: ids } }, select: { id: true, code: true, name: true } }),
+    db.$queryRaw<{ productId: number; pageId: number; name: string; d2: number; d1: number }[]>`
+      SELECT l."productId", o."pageId", p.name,
+        count(DISTINCT o.id) FILTER (WHERE (o."confirmedAt" + interval '8 hours')::date = ${dateOnly(d2)}::date)::int AS d2,
+        count(DISTINCT o.id) FILTER (WHERE (o."confirmedAt" + interval '8 hours')::date = ${dateOnly(yest)}::date)::int AS d1
+      FROM "Order" o JOIN "OrderLine" l ON l."orderId" = o.id JOIN "Page" p ON p.id = o."pageId"
+      WHERE o."confirmedAt" >= ${ubDayStart(addDays(today, -14))} AND o."confirmedAt" < ${ubDayStart(today)} AND ${COUNTED} AND l."productId" IN (${Prisma.join(ids)})
+      GROUP BY 1, 2, 3`,
+  ]);
+  const pmap = new Map(products.map((p) => [p.id, p]));
+  const byP = new Map<number, typeof rows>();
+  for (const r of rows) { const a = byP.get(r.productId) ?? []; a.push(r); byP.set(r.productId, a); }
+  const list: PageShortRow[] = [];
+  for (const m of pms) {
+    const p = pmap.get(m.productId); const pg = byP.get(m.productId);
+    if (!p || !pg?.length) continue;
+    const pages = pg.map((r) => ({ pageId: r.pageId, name: r.name, d2: r.d2, d1: r.d1, total: r.d2 + r.d1, short: r.d2 + r.d1 < m.dollar }))
+      .sort((a, b) => Number(b.short) - Number(a.short) || a.total - b.total || a.name.localeCompare(b.name));
+    if (!pages.some((x) => x.short)) continue;
+    list.push({ productId: p.id, code: p.code, name: p.name, zones: m.zones, dollar: m.dollar, adNumber: m.adNumber, ownerName: m.ownerName,
+      boostDays: Math.floor((now - m.boostOnAt!.getTime()) / (24 * HOUR)), days: [d2, yest], pages });
+  }
+  list.sort((a, b) => b.pages.filter((x) => x.short).length - a.pages.filter((x) => x.short).length || a.name.localeCompare(b.name));
+  shortCache = { at: now, list };
+  return list;
+}
+export async function pageShortView(actor: UserActor) {
+  assertView(actor);
+  return { rows: await pageShortfall(), boostDays: SHORT_BOOST_DAYS };
 }

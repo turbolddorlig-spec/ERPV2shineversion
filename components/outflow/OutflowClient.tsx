@@ -39,7 +39,7 @@ interface Reorder {
   order: { id: number; qty: number; expectedDay: string; orderedAt: string; byName: string; note: string } | null;
 }
 interface Table {
-  rows: Row[]; total: number; page: number; pages: number; days: string[]; counts: { all: number; boost: number; noboost: number; red: number; orange: number; watched: number; reorder?: number; ordered?: number };
+  rows: Row[]; total: number; page: number; pages: number; days: string[]; counts: { all: number; boost: number; noboost: number; red: number; orange: number; watched: number; pageShort: number; reorder?: number; ordered?: number };
   totals: { today: number; yesterday: number }; dollars: number[]; owners: { id: string; name: string }[]; isLead: boolean; isSA: boolean;
 }
 
@@ -62,7 +62,7 @@ export function OutflowClient() {
   const [d, setD] = useState<Table | null>(null);
   const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
   const [sel, setSel] = useState<Set<number>>(new Set());
-  const [dlg, setDlg] = useState<null | { k: 'alert'; row: Row } | { k: 'reorder'; row: Row } | { k: 'edit'; row: Row } | { k: 'profit'; id: number } | { k: 'bulk'; ids: number[] } | { k: 'pages' | 'stats' | 'work' | 'my' | 'eval' | 'config' }>(null);
+  const [dlg, setDlg] = useState<null | { k: 'alert'; row: Row } | { k: 'reorder'; row: Row } | { k: 'edit'; row: Row } | { k: 'profit'; id: number } | { k: 'bulk'; ids: number[] } | { k: 'pages' | 'stats' | 'work' | 'my' | 'eval' | 'config' | 'pageshort' }>(null);
   const [menu, setMenu] = useState(false);
   const [open, setOpen] = useState<Set<number>>(new Set());
   const toggle = (id: number) => { const n = new Set(open); if (n.has(id)) n.delete(id); else n.add(id); setOpen(n); };
@@ -114,6 +114,7 @@ export function OutflowClient() {
           <button type="button" data-alert-tab="red" onClick={() => go('red')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'red' ? 'border-bad bg-bad text-white' : 'border-bad/40 bg-bad-soft text-bad-ink', d.counts.red > 0 && tab !== 'red' && 'animate-pulse')}>🔴 Алдагдалтай ({d.counts.red})</button>
           <button type="button" data-alert-tab="orange" onClick={() => go('orange')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'orange' ? 'border-warn bg-warn text-white' : 'border-warn/40 bg-warn-soft text-warn')}>🟠 Ашиг бага ({d.counts.orange})</button>
           <button type="button" onClick={() => go('watched')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'watched' ? 'border-ink bg-ink text-surface' : 'border-line bg-surface')}>👁 Ажиглаж буй ({d.counts.watched})</button>
+          <button type="button" data-pageshort-btn onClick={() => setDlg({ k: 'pageshort' })} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', d.counts.pageShort ? 'border-bad/40 bg-bad-soft text-bad-ink' : 'border-line bg-surface')}>⚠ Гаралтаа хангаагүй пэйж ({d.counts.pageShort})</button>
           {d.isSA ? <button type="button" onClick={() => { go('diamond'); setStatus('DIAMOND'); }} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'diamond' ? 'border-info bg-info text-white' : 'border-line bg-surface')}>💎 Маш ашигтай</button> : null}
           {d.isSA ? <button type="button" data-reorder-tab onClick={() => go('reorder')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'reorder' ? 'border-warn bg-warn text-white' : 'border-warn/40 bg-warn-soft text-warn')}>🚚 Бараа татах ({d.counts.reorder ?? 0})</button> : null}
           {d.isSA ? <button type="button" onClick={() => go('ordered')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'ordered' ? 'border-ink bg-ink text-surface' : 'border-line bg-surface')}>📦 Захиалсан ({d.counts.ordered ?? 0})</button> : null}
@@ -216,6 +217,7 @@ export function OutflowClient() {
       ) : <p className="text-muted">Ачаалж байна…</p>}
       {hover ? <HoverCard id={hover.id} x={hover.x} y={hover.y} /> : null}
       {dlg?.k === 'alert' ? <AlertDialog row={dlg.row} onClose={() => setDlg(null)} post={post} /> : null}
+      {dlg?.k === 'pageshort' ? <PageShortDialog onClose={() => setDlg(null)} post={post} /> : null}
       {dlg?.k === 'reorder' ? <ReorderDialog row={dlg.row} onClose={() => setDlg(null)} post={post} /> : null}
       {dlg?.k === 'edit' ? <EditDialog row={dlg.row} lead={!!d?.isLead} owners={d?.owners ?? []} onClose={() => setDlg(null)} post={post} /> : null}
       {dlg?.k === 'bulk' ? <BulkDialog ids={dlg.ids} owners={d?.owners ?? []} onClose={() => setDlg(null)} onDone={async (m) => { setDlg(null); setSel(new Set()); setOk(m); await load(); }} /> : null}
@@ -349,6 +351,37 @@ function ReorderDialog({ row, onClose, post }: { row: Row; onClose: () => void; 
           ) : null}
         </div>
       ) : null}
+    </Modal>
+  );
+}
+
+interface PageShort { boostDays: number; rows: { productId: number; code: string; name: string; zones: number; dollar: number; adNumber: number | null; ownerName: string | null; boostDays: number; days: [string, string]; pages: { pageId: number; name: string; d2: number; d1: number; total: number; short: boolean }[] }[] }
+/** Гаралтаа хангаагүй пэйж (#121): 5+ хоног бүүстэй бараа, пэйж бүрийн сүүлийн 2 өдрийн захиалга < $ */
+function PageShortDialog({ onClose, post }: { onClose: () => void; post: (j: Record<string, unknown>, m?: string) => Promise<unknown> }) {
+  const [d, setD] = useState<PageShort | null>(null); const [err, setErr] = useState<string | null>(null);
+  const load = useCallback(() => api<PageShort>('/api/goods-outflow?view=pageshort').then(setD).catch((e) => setErr(msg(e))), []);
+  useEffect(() => { void load(); }, [load]);
+  const off = async (r: PageShort['rows'][number]) => { if (confirm(`«${r.name}»-ийн бүүстийг унтраах уу? (Бүүст = 0)`)) { await post({ action: 'boost', productId: r.productId, zones: 0 }, `«${r.name}» бүүст унтарлаа`); await load(); } };
+  return (
+    <Modal open onClose={onClose} size="xl" title="⚠ Гаралтаа хангаагүй пэйж" subtitle={`Бүүст ${d?.boostDays ?? 5}+ хоног асаалттай бараа · пэйж бүрийн сүүлийн 2 өдрийн захиалга $-оос бага бол 🔴 · пэйжийг операторын сонголтоор`} footer={<Button onClick={onClose}>Хаах</Button>}>
+      {err ? <Notice>{err}</Notice> : null}
+      {d ? (d.rows.length ? (
+        <div className="flex flex-col gap-3">
+          {d.rows.map((r) => { const bad = r.pages.filter((x) => x.short); const good = r.pages.length - bad.length; return (
+            <div key={r.productId} data-pageshort-row className="flex min-w-0 flex-col gap-2 rounded-2xl border border-line p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0 flex-1"><b className="[overflow-wrap:anywhere]">{r.name}</b><div className="[overflow-wrap:anywhere] text-[12px] text-muted">{r.code} · {r.zones} бүүст × ${r.dollar}{r.adNumber !== null ? ` · AD${r.adNumber}` : ''} · {r.boostDays} хоног{r.ownerName ? ` · ${r.ownerName}` : ''}</div></div>
+                <Button size="sm" variant="primary" onClick={() => void off(r)}>Бүүст унтраах</Button>
+              </div>
+              <p className="[overflow-wrap:anywhere] text-[13.5px] font-semibold text-bad-ink">{good ? `${good} пэйж хангасан, ` : ''}{bad.map((x) => `${x.name} (2 хоногт ${x.total})`).join(', ')} хангахгүй байна — шалгана уу</p>
+              <div className="overflow-x-auto"><table className="w-full min-w-[360px] text-[13px]">
+                <thead><tr className="text-[12px] text-muted"><th className="py-1 text-left">Пэйж</th><th className="px-2 text-right">{md(r.days[0])}</th><th className="px-2 text-right">{md(r.days[1])}</th><th className="px-2 text-right">2 хоног</th><th className="px-2 text-right">Босго</th></tr></thead>
+                <tbody>{r.pages.map((x) => <tr key={x.pageId} className={clsx('border-t border-line', x.short && 'bg-bad-soft text-bad-ink')}><td className="max-w-[220px] py-1 [overflow-wrap:anywhere]">{x.short ? '🔴 ' : '✅ '}{x.name}</td><td className="px-2 text-right">{x.d2}</td><td className="px-2 text-right">{x.d1}</td><td className="px-2 text-right font-bold">{x.total}</td><td className="px-2 text-right text-muted">{r.dollar}</td></tr>)}</tbody>
+              </table></div>
+            </div>); })}
+          <p className="text-[12px] text-muted">Оператор пэйжийг андуурч сонгох тохиолдол байдаг тул тоо бага зэрэг зөрж болно. Энэ нь зөвхөн анхааруулга — унтраах эсэхээ өөрөө шийднэ.</p>
+        </div>
+      ) : <p className="p-4 text-center text-muted">Гаралтаа хангаагүй пэйж алга 👍</p>) : <p className="text-muted">Ачаалж байна…</p>}
     </Modal>
   );
 }
@@ -718,7 +751,7 @@ function ConfigDialog({ sa, onClose, onDone }: { sa: boolean; onClose: () => voi
   const save = async () => {
     try {
       const keys = ['claimTarget', 'claimExpireDays', 'stockDays', ...(sa ? ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar', 'bulkMin', 'leadDays', 'urgentDays'] : [])];
-      await api('/api/goods-outflow', { method: 'POST', json: { action: 'config', ...Object.fromEntries(keys.map((k) => [k, Number(v?.[k])])) } }); onDone();
+      await api('/api/goods-outflow', { method: 'POST', json: { action: 'config', ...Object.fromEntries(keys.map((k) => [k, Number(v?.[k])])), ...(sa ? { hideSupplierReorder: v?.hideSupplierReorder !== 'false' } : {}) } }); onDone();
     } catch (e) { setErr(msg(e)); }
   };
   return (
@@ -733,6 +766,7 @@ function ConfigDialog({ sa, onClose, onDone }: { sa: boolean; onClose: () => voi
             <div className="grid grid-cols-2 gap-3">{f('oppCost', 'Опп цалин (₮/захиалга)')}{f('deliveryCost', 'Хүргэлтийн цалин (₮/захиалга)')}{f('rate', 'Долларын ханш (₮)')}{f('defaultDollar', 'Анхдагч $ (бүүст)')}{f('costPct', 'Өртөг оруулаагүй бол үнийн %')}{f('lowProfit', '🟠 Ашгийн босго (₮/захиалга)')}{f('bulkMin', '📦 Бөөний захиалга (ширхэгээс)')}{f('watchHours', 'Ажиглах цаг (асаасан цагаас)')}</div>
             <b className="text-[14px]">🚚 Бараа татах (зөвхөн Супер админ)</b>
             <div className="grid grid-cols-2 gap-3">{f('leadDays', '🟠 Бараа ирэх хоног (нөөц үүнээс бага бол «татах»)')}{f('urgentDays', '🔴 Яаралтай (нөөц үүнээс бага)')}</div>
+            <label className="flex items-start gap-2 text-[13px] font-semibold"><input type="checkbox" className="mt-0.5" checked={v.hideSupplierReorder !== 'false'} onChange={(e) => setV({ ...v, hideSupplierReorder: String(e.target.checked) })} /><span className="min-w-0 [overflow-wrap:anywhere]">Нийлүүлэгчийн дэлгүүрт оноосон барааг миний «Бараа татах»-д харуулахгүй (нийлүүлэгч өөрийн хуудаснаас харна)</span></label>
           </>) : null}
         </div>
       ) : null}

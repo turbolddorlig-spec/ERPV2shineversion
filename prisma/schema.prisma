@@ -1529,3 +1529,13 @@ model ReorderOrder {
 
   @@index([productId, orderedAt])
 }
+
+/// Нийлүүлэгчийн өөрийн өртөг (#122) — зөвхөн тэр нийлүүлэгч бичиж, өөрөө харна (цэвэр ашгийн тооцоонд)
+model SupplierOwnCost {
+  shopId    Int
+  productId Int
+  cost      Int
+  updatedAt DateTime @updatedAt
+
+  @@id([shopId, productId])
+}

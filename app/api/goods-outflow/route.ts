@@ -28,6 +28,7 @@ export async function GET(req: NextRequest) {
       case 'profit': return json(await S.profitDetail(ctx.actor, g('id')));
       case 'config': return json(await S.configView(ctx.actor));
       case 'reorder': return json(await S.reorderDetail(ctx.actor, g('id')));
+      case 'pageshort': return json(await S.pageShortView(ctx.actor));
       default: throw notFound();
     }
   } catch (e) { return errorResponse(e); }

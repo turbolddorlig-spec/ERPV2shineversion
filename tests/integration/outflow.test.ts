@@ -162,8 +162,48 @@ describe('бараа татах — нөөц хоног (#119, зөвхөн СА
     await OF.cancelReorder(sa, o2.id);
     expect((await OF.computeReorder()).get(prod)!.level).toBe('ORDER');
     expect((await OF.reorderDetail(sa, prod)).history).toHaveLength(2);
+    // #120: нийлүүлэгчийн дэлгүүрт оноовол СА-ын «Бараа татах»-д харагдахгүй (тохиргоо анх асаалттай); унтраавал харагдана
+    const SP = await import('@/lib/services/supplier');
+    const shop = await SP.saveShop(sa, { name: 'Нийлүүлэгч А' });
+    await SP.assignProduct(sa, { shopId: shop.id, productId: prod });
+    OF.bustOutflowCache(); OF.bustTable();
+    expect((await OF.computeReorder()).get(prod)?.shopId).toBe(shop.id);
+    expect(await OF.reorderBanner(['SUPER_ADMIN'])).toBeNull();
+    let t2 = await OF.outflowTable(sa, {});
+    expect([t2.counts.reorder, t2.rows.find((r) => r.id === prod)?.reorder]).toEqual([0, null]);
+    await err(OF.setConfig(lead, { hideSupplierReorder: false }), 403);
+    await OF.setConfig(sa, { hideSupplierReorder: false });
+    t2 = await OF.outflowTable(sa, {});
+    expect([t2.counts.reorder, t2.rows.find((r) => r.id === prod)?.reorder?.level]).toEqual([1, 'ORDER']);
     // үлдэгдэлд хүрэхгүй: журнал = үлдэгдэл
     expect(await db.auditLog.count({ where: { action: { startsWith: 'outflow.reorder' } } })).toBe(3);
+    expect(await db.auditLog.count({ where: { action: 'outflow.config' } })).toBe(1);
+  });
+});
+
+describe('гаралтаа хангаагүй пэйж (#121)', () => {
+  it('5+ хоног бүүст; пэйж бүрийн 2 өдрийн захиалга < $ → 🔴; 14 хоногт орсон пэйж 0 болсон ч гарна; унтраавал алга', async () => {
+    const page3 = (await A.savePage(sa, { name: 'yellowshopy' })).id;
+    const page4 = (await A.savePage(sa, { name: 'redshopy' })).id;
+    const many = async (pageId: number, daysAgo: number, n: number) => { for (let i = 0; i < n; i++) await order({ pageId, daysAgo }); };
+    await many(page1, 2, 2); await many(page1, 1, 3);   // 5 ✅
+    await many(page2, 2, 3); await many(page2, 1, 3);   // 6 ✅
+    await many(page3, 2, 1); await many(page3, 1, 3);   // 4 🔴
+    await many(page4, 10, 2);                           // 0 🔴 (10 хоногийн өмнө орж байсан)
+    await order({ pageId: page3, daysAgo: 0, qty: 3 }); // өнөөдрийнх тоологдохгүй
+    // 3 хоногийн бүүст — хамаарахгүй
+    await boostAt(2, new Date(Date.now() - 3 * 24 * H));
+    expect((await OF.pageShortView(mk)).rows).toEqual([]);
+    await boostAt(2, new Date(Date.now() - 6 * 24 * H));
+    const r = (await OF.pageShortView(mk)).rows;
+    expect(r).toHaveLength(1);
+    expect(r[0]!.pages.map((x) => [x.name, x.d2, x.d1, x.short])).toEqual([['redshopy', 0, 0, true], ['yellowshopy', 1, 3, true], ['greenshopy', 2, 3, false], ['blackshopy', 3, 3, false]]);
+    expect([r[0]!.boostDays, r[0]!.dollar]).toEqual([6, 5]);
+    OF.bustTable();
+    expect((await OF.outflowTable(adm, {})).counts.pageShort).toBe(1);
+    await err(OF.pageShortView(op), 403);
+    await OF.saveBoost(mk, { productId: prod, zones: 0 });
+    expect((await OF.pageShortView(mk)).rows).toEqual([]);
   });
 });
 

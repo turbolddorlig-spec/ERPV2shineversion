@@ -628,6 +628,10 @@ async function main() {
     check('анхааруулга жагсаалт', al.status === 200 && Array.isArray(JSON.parse(al.text).red), al.text.slice(0, 80));
     const ww = await req('/api/goods-outflow?view=work', { cookie: mk9.cookie });
     check('ажлын цонх', ww.status === 200 && JSON.parse(ww.text).target > 0, ww.text.slice(0, 80));
+    const ps = await req('/api/goods-outflow?view=pageshort', { cookie: mk9.cookie });
+    check('гаралтаа хангаагүй пэйж (маркетинг)', ps.status === 200 && Array.isArray(JSON.parse(ps.text).rows) && typeof tj.counts.pageShort === 'number', ps.text.slice(0, 80));
+    const psO = await req('/api/goods-outflow?view=pageshort', { cookie: op9.cookie });
+    check('хангаагүй пэйж — оператор 403', psO.status === 403, String(psO.status));
     // #119 Бараа татах — зөвхөн Супер админ
     check('нөөц хоног — Админ, маркетинг харахгүй', tA.rows.every((r: { reorder?: unknown }) => r.reorder === undefined) && tj.counts.reorder === undefined, '');
     const roM = await req(`/api/goods-outflow?view=reorder&id=${pid}`, { cookie: mk9.cookie });
