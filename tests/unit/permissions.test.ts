@@ -24,7 +24,7 @@ const MATRIX: Record<PageKey, string> = {
   penalties:      'E E E - - - E - - - E -',
   salary:         'E E - - - - E - - - - -',
   'my-penalties': 'E E E E E E E E E E E -',
-  supplier:       'E - - - - - - - - - - V',
+  supplier:       'E E - - - - - - - - - V', // #96: хуучин шиг Супер админ, Админ
   users:          'E E E - E - - - E - - -',
   settings:       'E E - - - - - - - - - -',
   'product-history': 'E E - - - - - V E V V -',

@@ -1287,3 +1287,129 @@ model StaffDebtPayment {
   @@index([debtId])
   @@index([recordId])
 }
+
+// ───────────── Модуль 7в — Нийлүүлэгч (гадны дэлгүүр, #96–#98) ─────────────
+
+/// Гадны дэлгүүр (нийлүүлэгч). Барааг нь бид зарж, суутгалаа хасаад цэвэр дүнг шилжүүлнэ
+model SupplierShop {
+  id           Int      @id @default(autoincrement())
+  name         String   @unique
+  contactName  String   @default("")
+  contactPhone String   @default("")
+  /// Нийлүүлэгчийн нэвтрэх эрх (SUPPLIER роль) — зөвхөн өөрийн тооцоог харна
+  userId       String?  @unique @db.Uuid
+  isActive     Boolean  @default(true)
+  version      Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  products    SupplierProduct[]
+  deductions  SupplierDeduction[]
+  days        SupplierDay[]
+  adjustments SupplierAdjustment[]
+}
+
+/// Бараа ↔ дэлгүүр: [fromDate, toDate) хугацаанд (падааны өдрөөр). Нэг бараа нэг л нээлттэй хувиарлалттай (partial unique)
+model SupplierProduct {
+  id            Int          @id @default(autoincrement())
+  shopId        Int
+  shop          SupplierShop @relation(fields: [shopId], references: [id])
+  productId     Int
+  fromDate      DateTime     @db.Date
+  /// Энэ өдрөөс эхлэн хамаарахгүй (хасагдсан). null = одоо хамаарна
+  toDate        DateTime?    @db.Date
+  createdByName String
+  endedByName   String?
+  createdAt     DateTime     @default(now())
+
+  @@index([shopId])
+  @@index([productId])
+}
+
+/// 1 ширхэгээс хасах суутгал (хуучин SupplierProductDeduction)
+model SupplierDeduction {
+  shopId        Int
+  shop          SupplierShop @relation(fields: [shopId], references: [id])
+  productId     Int
+  operatorCost  Int          @default(0)
+  deliveryCost  Int          @default(0)
+  marketingCost Int          @default(0)
+  otherCost     Int          @default(0)
+  otherNote     String       @default("")
+  updatedAt     DateTime     @updatedAt
+  updatedByName String?
+
+  @@id([shopId, productId])
+}
+
+/// Падааны өдрийн тооцоо. OPEN — шууд тооцогдоно; TRANSFERRED — хуулбараар түгжигдсэн
+model SupplierDay {
+  id                Int               @id @default(autoincrement())
+  shopId            Int
+  shop              SupplierShop      @relation(fields: [shopId], references: [id])
+  date              DateTime          @db.Date
+  status            String            @default("OPEN")
+  /// Супер админы гараар засвар: { [productId]: { operatorCost, deliveryCost, marketingCost, otherCost, note } } (нийт дүн)
+  overrides         Json?
+  /// Шилжүүлэх үеийн бүтэн тооцоо (мөрүүд, нэмэгдэл/хасалт)
+  snapshot          Json?
+  sales             Int               @default(0)
+  deductions        Int               @default(0)
+  net               Int               @default(0)
+  adjustments       Int               @default(0)
+  payable           Int               @default(0)
+  transferredAt     DateTime?
+  transferredByName String?
+  version           Int               @default(1)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  items             SupplierDayItem[]
+
+  @@unique([shopId, date])
+  @@index([status])
+}
+
+/// Шилжүүлсэн өдрийн захиалга × бараа бүрийн хэсэг — дараа нь буцаалт/нэмэгдлийг илрүүлэхэд
+model SupplierDayItem {
+  id          Int         @id @default(autoincrement())
+  dayId       Int
+  day         SupplierDay @relation(fields: [dayId], references: [id], onDelete: Cascade)
+  /// "o:<orderId>" эсвэл "d:<driverDocId>" (жолоочийн нэмэлт борлуулалт)
+  source      String
+  orderNumber String
+  productId   Int
+  qty         Int
+  sales       Int
+  /// Энэ хэсэгт ногдох суутгал (нийт)
+  deduction   Int
+  /// Дараа нь тохируулсан тоо (+ буцаалт, − нэмэгдэл)
+  adjustedQty Int         @default(0)
+
+  @@unique([dayId, source, productId])
+}
+
+/// Шилжүүлсний дараах буцаалт (−) / нэмэгдэл (+) / шилжүүлгэд багтаагүй өр (CARRY, −) — дараагийн шилжүүлгээс тооцогдоно
+model SupplierAdjustment {
+  id           Int          @id @default(autoincrement())
+  shopId       Int
+  shop         SupplierShop @relation(fields: [shopId], references: [id])
+  kind         String
+  /// Аль шилжүүлсэн өдрөөс үүссэн
+  sourceDayId  Int?
+  sourceDate   DateTime?    @db.Date
+  orderNumber  String?
+  productId    Int?
+  productName  String?
+  qty          Int          @default(0)
+  sales        Int          @default(0)
+  deduction    Int          @default(0)
+  /// Шилжүүлэх дүнд нөлөөлөх (тэмдэгтэй): буцаалт −(sales − deduction)
+  amount       Int
+  reason       String
+  /// Аль өдрийн шилжүүлэгт тооцогдсон (null = дараагийн шилжүүлэгт)
+  appliedDayId Int?
+  createdAt    DateTime     @default(now())
+
+  @@index([shopId, appliedDayId])
+  @@index([sourceDayId])
+}

@@ -14,6 +14,7 @@ const PHONE = process.env.UI_PHONE ?? '80000001';
 const PW = process.env.UI_PASSWORD ?? 'Test1234';
 const MARK = 'Зайгүймаашуртүг';
 const DRIVER = process.env.UI_DRIVER ?? '80000099';
+const SUPPLIER = process.env.UI_SUPPLIER ?? '80000150';
 
 type Issue = { kind: string; text: string; w: number; box: number };
 
@@ -148,6 +149,14 @@ async function main() {
     { name: 'Ажилтны цалин: бодох', path: '/salary', act: async (p) => { await p.fill('input[aria-label="Ажилтан хайх"]', 'Оператор 1'); await p.waitForTimeout(400); await p.getByRole('button', { name: /1–15/ }).first().click(); await p.waitForTimeout(1500); } },
     { name: 'Ажилтны цалин: хуваарь', path: '/salary', act: async (p) => { await p.getByRole('tab', { name: 'Ажлын хуваарь' }).click(); await p.waitForTimeout(1200); } },
     { name: 'Ажилтны цалин: өр', path: '/salary', act: async (p) => { await p.getByRole('tab', { name: 'Ажилтны өр' }).click(); await p.waitForTimeout(1000); } },
+    // Модуль 7в: нийлүүлэгч
+    { name: 'Нийлүүлэгч', path: '/supplier' },
+    { name: 'Нийлүүлэгч: өдрийн тооцоо', path: '/supplier', act: async (p) => { await p.locator('[data-shop-open]').first().click(); await p.waitForTimeout(1800); } },
+    { name: 'Нийлүүлэгч: нэгтгэл', path: '/supplier', act: async (p) => { await p.locator('[data-shop-open]').first().click(); await p.waitForTimeout(1200); await p.getByRole('button', { name: 'Нэгтгэл', exact: true }).click(); await p.waitForTimeout(1500); } },
+    { name: 'Нийлүүлэгч: бараа', path: '/supplier', act: async (p) => { await p.locator('[data-shop-open]').first().click(); await p.waitForTimeout(1200); await p.getByRole('button', { name: /^Бараа/ }).click(); await p.waitForTimeout(800); } },
+    { name: 'Нийлүүлэгч: буцаалт', path: '/supplier', act: async (p) => { await p.locator('[data-shop-open]').first().click(); await p.waitForTimeout(1200); await p.getByRole('button', { name: /^Буцаалт/ }).click(); await p.waitForTimeout(800); } },
+    { name: 'Нийлүүлэгч: нэвтрэх эрх', path: '/supplier', act: async (p) => { await p.locator('[data-shop-open]').first().click(); await p.waitForTimeout(1200); await p.getByRole('button', { name: 'Нэвтрэх эрх', exact: true }).click(); await p.waitForTimeout(600); } },
+    { name: 'Нийлүүлэгч өөрөө', path: '/supplier', as: SUPPLIER },
     { name: 'Банкны импорт', path: '/bank-import' },
     { name: 'Банкны импорт: дүн өөрчлөгдсөн', path: '/bank-import', act: async (p) => { await p.getByRole('button', { name: 'Дүн өөрчлөгдсөн' }).click(); await p.waitForTimeout(1000); } },
     { name: 'Жолооч: орлого', path: '/driver', as: DRIVER, act: async (p) => { await p.getByRole('tab', { name: 'Орлого' }).click(); await p.waitForTimeout(1500); } },

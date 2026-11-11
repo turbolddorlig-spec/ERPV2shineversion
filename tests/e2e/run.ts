@@ -564,6 +564,38 @@ async function main() {
     check('Супер админ тайлав (код тохируулаагүй үед) эсвэл код шаардав', ul2.status === 200 || ul2.status === 403, String(ul2.status));
   }
 
+  // ───── Модуль 7в: Нийлүүлэгч ─────
+  {
+    const sa8 = await loginAs('80000001');
+    const op8 = await loginAs('80000006');
+    const sup8 = await loginAs('80000150');
+    const nm = `E2E дэлгүүр ${Date.now()}`;
+    const cr = await req('/api/supplier', { cookie: sa8.cookie, method: 'POST', body: { action: 'shop', name: nm, contactName: 'E2E' } });
+    const sid = JSON.parse(cr.text).id;
+    check('дэлгүүр үүсгэв', cr.status === 200 && sid > 0, cr.text.slice(0, 100));
+    const ov = await req('/api/supplier', { cookie: sa8.cookie });
+    check('самбар (дэлгүүр, 3 өдрийн захиалга)', ov.status === 200 && JSON.parse(ov.text).orderDays?.length === 3, ov.text.slice(0, 100));
+    const srch = JSON.parse((await req('/api/supplier?search=', { cookie: sa8.cookie })).text) as { id: number; shop: { id: number } | null }[];
+    const taken = srch.find((x) => x.shop && x.shop.id !== sid);
+    if (taken) {
+      const dup = await req('/api/supplier', { cookie: sa8.cookie, method: 'POST', body: { action: 'assign', shopId: sid, productId: taken.id } });
+      check('өөр нийлүүлэгчийн барааг оноохгүй (409)', dup.status === 409, dup.text.slice(0, 100));
+    }
+    const day = await req(`/api/supplier?shop=${sid}&day=${new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10)}`, { cookie: sa8.cookie });
+    check('өдрийн тооцоо', day.status === 200 && JSON.parse(day.text).status === 'OPEN', day.text.slice(0, 100));
+    const ovr = await req('/api/supplier', { cookie: (await loginAs('80000002')).cookie, method: 'POST', body: { action: 'override', shopId: sid, date: '2026-01-01', productId: 1 } });
+    check('Админ гараар суутгал засахгүй (403)', ovr.status === 403, `${ovr.status} ${ovr.text.slice(0, 80)}`);
+    const opS = await req('/api/supplier', { cookie: op8.cookie });
+    check('оператор нийлүүлэгчийн хуудас харахгүй (403)', opS.status === 403, String(opS.status));
+    const me = await req('/api/supplier?me=1', { cookie: sup8.cookie });
+    check('нийлүүлэгч зөвхөн өөрийнхийг харна', [200, 404].includes(me.status) && (me.status !== 200 || JSON.parse(me.text).login === null), `${me.status} ${me.text.slice(0, 80)}`);
+    const other = await req(`/api/supplier?shop=${sid}`, { cookie: sup8.cookie });
+    check('нийлүүлэгч өөр дэлгүүр харахгүй', other.status !== 200 || JSON.parse(other.text).shop.id !== sid, `${other.status}`);
+    const supPost = await req('/api/supplier', { cookie: sup8.cookie, method: 'POST', body: { action: 'shop', name: 'x' } });
+    check('нийлүүлэгч юу ч өөрчлөхгүй (403)', supPost.status === 403, String(supPost.status));
+    await req('/api/supplier', { cookie: sa8.cookie, method: 'POST', body: { action: 'active', shopId: sid, active: false } });
+  }
+
   // ───── «Зөвхөн ажлын байрнаас» (#86) ─────
   {
     const sa7 = await loginAs('80000001');

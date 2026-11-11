@@ -50,7 +50,7 @@ export const PAGES: PageDef[] = [
   { key: 'accounting', label: 'Хүргэлт нягтлан', short: 'Тооцоо', href: '/accounting', group: 'Санхүү', icon: 'calc', module: 6, edit: [...SA_A, 'ACCOUNTING'] },
   { key: 'penalties', label: 'Алдаа удирдлага', short: 'Алдаа', href: '/penalties', group: 'Санхүү', icon: 'shield', module: 7, edit: [...SA_A, 'OPERATOR_LEAD', 'ACCOUNTING', 'PENALTY_OFFICER'] },
   { key: 'salary', label: 'Ажилтны цалин', short: 'Цалин', href: '/salary', group: 'Санхүү', icon: 'wallet', module: 7, edit: [...SA_A, 'ACCOUNTING'] },
-  { key: 'supplier', label: 'Нийлүүлэгч', short: 'Нийлүүл.', href: '/supplier', group: 'Санхүү', icon: 'store', module: 7, edit: ['SUPER_ADMIN'], view: ['SUPPLIER'] },
+  { key: 'supplier', label: 'Нийлүүлэгч', short: 'Нийлүүл.', href: '/supplier', group: 'Санхүү', icon: 'store', module: 7, edit: SA_A, view: ['SUPPLIER'] },
   { key: 'my-penalties', label: 'Миний торгууль', short: 'Торгууль', href: '/my-penalties', group: 'Систем', icon: 'file', module: 7,
     edit: ['SUPER_ADMIN', 'ADMIN', 'OPERATOR_LEAD', 'OPERATOR', 'DRIVER_LEAD', 'DRIVER', 'ACCOUNTING', 'WAREHOUSE', 'MARKETING_LEAD', 'MARKETING', 'PENALTY_OFFICER'] },
   { key: 'users', label: 'Хэрэглэгч', short: 'Хэрэглэгч', href: '/users', group: 'Систем', icon: 'user', module: 0, edit: [...SA_A, 'OPERATOR_LEAD', 'DRIVER_LEAD', 'MARKETING_LEAD'] },
