@@ -28,7 +28,7 @@ interface ListResp { tab: string; today: string; counts: { delivery: number; del
 interface GItem { variantId: number; code: string; name: string; label: string; thumb: string | null; balance: number; held: number; returnable: number }
 interface GDoc { id: number; kind: string; kindLabel: string; at: string; byName: string; note: string | null; total: number; paymentLabel: string | null; lines: { variantId: number; name: string; label: string; qty: number; expected: number; unitPrice: number }[] }
 interface GoodsResp { items: GItem[]; totals: { balance: number; returnable: number }; docs: GDoc[] }
-interface PickOrder { id: number; number: string; phone: string; fullAddress: string; total: number; deliveryDate: string; postponeCount: number; note: string | null; lines: Line[] }
+interface PickOrder { id: number; number: string; fullAddress: string; deliveryDate: string; postponeCount: number; note: string | null }
 
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа гарлаа');
 const newKey = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `k-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -450,9 +450,8 @@ function PickupTab({ onTaken }: { onTaken: () => void }) {
             <label className={clsx('flex cursor-pointer gap-3 rounded-[14px] border bg-surface p-3', sel.has(o.id) ? 'border-accent bg-accent-soft/40' : 'border-line')}>
               <input type="checkbox" className="mt-1 h-6 w-6 shrink-0 accent-[var(--accent)]" checked={sel.has(o.id)} onChange={() => setSel((s) => { const n = new Set(s); if (n.has(o.id)) n.delete(o.id); else n.add(o.id); return n; })} />
               <span className="flex min-w-0 flex-1 flex-col gap-1">
-                <span className="flex flex-wrap items-center gap-2"><b className="text-[15px]">№{o.number}</b><span className="text-[12.5px] text-subtle">{o.deliveryDate}</span>{o.postponeCount ? <span className="rounded bg-warn-soft px-1.5 text-[11px] font-bold text-warn">Маргааш ×{o.postponeCount}</span> : null}<b className="ml-auto">{money(o.total)}</b></span>
+                <span className="flex flex-wrap items-center gap-2"><b className="text-[15px]">№{o.number}</b><span className="text-[12.5px] text-subtle">{o.deliveryDate}</span>{o.postponeCount ? <span className="rounded bg-warn-soft px-1.5 text-[11px] font-bold text-warn">Маргааш ×{o.postponeCount}</span> : null}</span>
                 <span className="text-[13.5px] [overflow-wrap:anywhere]">📍 {o.fullAddress}</span>
-                <span className="text-[12.5px] text-muted [overflow-wrap:anywhere]">{o.lines.map((l) => `${l.name}${l.label ? ` · ${l.label}` : ''} ${l.qty}ш`).join(', ')}</span>
                 {o.note ? <OperatorNote text={o.note} className="!line-clamp-2" /> : null}
               </span>
             </label>

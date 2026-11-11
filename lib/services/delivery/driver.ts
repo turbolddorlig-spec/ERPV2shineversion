@@ -467,7 +467,14 @@ export async function pickupList(actor: UserActor, p: { page?: number; district?
   const page = Math.max(1, Math.min(200, Math.floor(p.page ?? 1)));
   const where: Prisma.OrderWhereInput = { status: 'NEW', driverId: null, deliveryDate: { lte: dateOnly(ubDay(new Date(), 1)) }, ...(p.district ? { district: p.district } : {}) };
   const rows = await db.order.findMany({ where, orderBy: [{ deliveryDate: 'asc' }, { id: 'asc' }], skip: (page - 1) * 50, take: 51, include: { lines: true } });
-  return { page, hasMore: rows.length > 50, items: rows.slice(0, 50).map((o) => serializeOrder(o)) };
+  // Падаанаа хүлээн авахаас өмнөх карт шиг: зөвхөн дугаар, огноо, хаяг, санамж — бараа, дүн, утас харагдахгүй (#77)
+  return {
+    page, hasMore: rows.length > 50,
+    items: rows.slice(0, 50).map((o) => {
+      const s = serializeOrder(o);
+      return { id: s.id, number: s.number, deliveryDate: s.deliveryDate, fullAddress: s.fullAddress, district: s.district, note: s.note, postponeCount: s.postponeCount };
+    }),
+  };
 }
 
 export async function pickUp(actor: UserActor, input: { ids?: unknown }) {

@@ -313,6 +313,8 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     const b = (await O.createOrder(op, ub({ deliveryDate: today }))).order.id;
     await L.assignOrders(lead, { ids: [b], driverId: drv2.id });
     expect((await DR.pickupList(drv, {})).items.map((x) => x.id)).toEqual([a]);
+    // #77: «Авах» табд бараа, дүн, утас харагдахгүй (зөвхөн дугаар, огноо, хаяг, санамж)
+    expect(Object.keys((await DR.pickupList(drv, {})).items[0]!).sort()).toEqual(['deliveryDate', 'district', 'fullAddress', 'id', 'note', 'number', 'postponeCount']);
     const r = await DR.pickUp(drv, { ids: [a, b] });
     expect([r.assigned.map((x) => x.id), r.skipped.map((x) => x.id)]).toEqual([[a], [b]]);
     expect((await db.order.findUniqueOrThrow({ where: { id: a } })).driverId).toBe(drv.id);
