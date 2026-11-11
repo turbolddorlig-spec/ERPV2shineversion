@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const ctx = await requireApiUser(req, { allowMustChange: true });
+    const ctx = await requireApiUser(req, { allowMustChange: true, allowOutsideOffice: true });
     await logout(ctx.sessionId, ctx.actor);
     const res = json({ ok: true });
     res.cookies.delete(SESSION_COOKIE);

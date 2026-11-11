@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { AppError, forbidden, unauthorized } from './errors';
 import { resolveSession, SESSION_COOKIE, type SessionUser } from './session';
 import { accessTo, type PageKey } from './permissions';
+import { officeBlock } from './services/office';
 
 export function clientIp(req: NextRequest): string | null {
   const fwd = req.headers.get('x-forwarded-for');
@@ -40,12 +41,16 @@ export interface ApiContext {
 
 export async function requireApiUser(
   req: NextRequest,
-  opts: { page?: PageKey; need?: 'view' | 'edit'; allowMustChange?: boolean } = {},
+  opts: { page?: PageKey; need?: 'view' | 'edit'; allowMustChange?: boolean; allowOutsideOffice?: boolean } = {},
 ): Promise<ApiContext> {
   if (req.method !== 'GET' && req.method !== 'HEAD') assertSameOrigin(req);
   const r = await resolveSession(req.cookies.get(SESSION_COOKIE)?.value);
   if (!r) throw unauthorized();
   if (r.user.mustChangePassword && !opts.allowMustChange) throw new AppError(403, 'Эхлээд нууц үгээ солино уу', 'must_change_password');
+  if (!opts.allowOutsideOffice) {
+    const office = await officeBlock(r.user.roles, clientIp(req));
+    if (office) throw new AppError(403, office, 'office_only');
+  }
   if (opts.page) {
     const a = accessTo(r.user.roles, opts.page);
     if (a === 'none' || (opts.need === 'edit' && a !== 'edit')) throw forbidden();

@@ -519,6 +519,29 @@ async function main() {
     }
   }
 
+  // ───── «Зөвхөн ажлын байрнаас» (#86) ─────
+  {
+    const sa7 = await loginAs('80000001');
+    const op7 = await loginAs('80000006');
+    const on = await req('/api/settings/office', { cookie: sa7.cookie, method: 'POST', body: { enabled: true, roles: ['OPERATOR'], ips: [{ ip: '10.9.9.9', label: 'e2e оффис' }] } });
+    try {
+      check('ажлын IP тохиргоо хадгалагдав', on.status === 200, on.text.slice(0, 120));
+      const api7 = await req('/api/orders', { cookie: op7.cookie });
+      check('гаднаас оператор API → 403 office_only', api7.status === 403 && api7.text.includes('office_only'), `${api7.status} ${api7.text.slice(0, 80)}`);
+      const pg7 = await req('/orders', { cookie: op7.cookie });
+      check('гаднаас оператор хуудас → /office-only', [302, 307].includes(pg7.status) || pg7.text.includes('office-only'), String(pg7.status));
+      const lg7 = await req('/api/auth/login', { method: 'POST', body: { phone: '80000007', password: PW } });
+      check('гаднаас оператор нэвтрэхгүй → 403', lg7.status === 403, lg7.text.slice(0, 80));
+      const wh7 = await req('/api/stock?inStock=1', { cookie: (await loginAs('80000132')).cookie });
+      check('бусад роль (агуулах) хэвийн', wh7.status === 200, String(wh7.status));
+      const opSet = await req('/api/settings/office', { cookie: op7.cookie, method: 'POST', body: { enabled: false } });
+      check('оператор тохиргоо солихгүй', opSet.status === 403, String(opSet.status));
+    } finally {
+      const off = await req('/api/settings/office', { cookie: sa7.cookie, method: 'POST', body: { enabled: false, roles: ['OPERATOR'], ips: [] } });
+      check('хязгаарлалт унтраав → оператор дахин орно', off.status === 200 && (await req('/api/orders', { cookie: op7.cookie })).status === 200, off.text.slice(0, 80));
+    }
+  }
+
   console.log(`\nE2E: ${pass} амжилттай, ${fails.length} алдаатай`);
   if (fails.length) { console.log(fails.map((f) => '  ✗ ' + f).join('\n')); process.exit(1); }
 }

@@ -1,8 +1,9 @@
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { cache } from 'react';
 import { resolveSession, SESSION_COOKIE } from './session';
 import { accessTo, type PageKey } from './permissions';
+import { officeBlock } from './services/office';
 
 /** Server component-д: нэвтэрсэн хэрэглэгч (нэг хүсэлтэд нэг удаа уншина) */
 export const currentSession = cache(async () => resolveSession(cookies().get(SESSION_COOKIE)?.value));
@@ -11,6 +12,9 @@ export async function requireUser() {
   const s = await currentSession();
   if (!s) redirect('/login');
   if (s.user.mustChangePassword) redirect('/change-password');
+  const h = headers();
+  const ip = (h.get('x-forwarded-for')?.split(',')[0]?.trim() || h.get('x-real-ip')) ?? null;
+  if (await officeBlock(s.user.roles, ip)) redirect('/office-only');
   return s.user;
 }
 

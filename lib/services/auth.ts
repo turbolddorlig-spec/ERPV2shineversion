@@ -5,6 +5,7 @@ import { normalizePhone } from '../phone';
 import { dummyVerify, hashPassword, needsRehash, passwordProblem, verifyPassword } from '../password';
 import { hashToken, newSessionToken, revokeAllSessions, revokeSession } from '../session';
 import { AppError, badRequest } from '../errors';
+import { officeBlock } from './office';
 
 export const MAX_FAILED = 5;
 export const LOCK_MINUTES = 15;
@@ -55,6 +56,13 @@ export async function login(phoneInput: string, password: string, meta: ClientMe
     }
     await writeAudit(actor, 'auth.login_failed', 'User', user.id, { attempt: count });
     throw new AppError(401, GENERIC_FAIL, 'invalid_credentials');
+  }
+
+  // «Зөвхөн ажлын байрнаас» (#86): сонгосон ролтой бол ажлын IP-аас л
+  const office = await officeBlock(user.roles, meta.ip);
+  if (office) {
+    await writeAudit(actor, 'auth.office_blocked', 'User', user.id, { ip: meta.ip ?? null });
+    throw new AppError(403, office, 'office_only');
   }
 
   // Богино, нэг удаагийн гүйлгээ (interactive биш) — ачаалал ихтэй үед ч хугацаа хэтрэхгүй
