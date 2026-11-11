@@ -291,9 +291,22 @@ export function UsersClient({ assignable, canUnlock, selfId }: { assignable: Rol
 }
 
 function TempPasswordView({ name, phone, password }: { name: string; phone: string; password: string }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<boolean | null>(null);
+  // HTTP (домэйнгүй, IP хаягаар) үед navigator.clipboard байхгүй — хуучин аргаар хуулна; болохгүй бол ил хэлнэ
   async function copy() {
-    try { await navigator.clipboard.writeText(password); setCopied(true); } catch { setCopied(false); }
+    try {
+      if (window.isSecureContext && navigator.clipboard) { await navigator.clipboard.writeText(password); setCopied(true); return; }
+    } catch { /* доорх аргаар */ }
+    try {
+      const t = document.createElement('textarea');
+      t.value = password; t.setAttribute('readonly', ''); t.style.position = 'fixed'; t.style.opacity = '0';
+      // Нээлттэй цонх (dialog) гаднах элемент идэвхгүй тул цонх дотор нь үүсгэнэ
+      const host = (document.activeElement?.closest('dialog') as HTMLElement | null) ?? document.querySelector('dialog[open]') ?? document.body;
+      host.appendChild(t); t.focus(); t.select(); t.setSelectionRange(0, password.length);
+      const ok = document.execCommand('copy') && t.selectionEnd - t.selectionStart === password.length;
+      host.removeChild(t);
+      setCopied(ok);
+    } catch { setCopied(false); }
   }
   return (
     <div className="flex flex-col gap-3">
@@ -302,6 +315,8 @@ function TempPasswordView({ name, phone, password }: { name: string; phone: stri
         <code className="flex-1 select-all text-center text-[24px] font-extrabold tracking-[0.12em] text-accent-ink">{password}</code>
         <Button size="sm" onClick={copy} aria-label="Хуулах"><Icon name={copied ? 'check' : 'copy'} size={15} />{copied ? 'Хуулсан' : 'Хуулах'}</Button>
       </div>
+      {copied === false ? <Notice>Хуулж чадсангүй — нууц үгийг гараар бичиж өгнө үү (бүгд жижиг үсэг, тоо)</Notice> : null}
+      <p className="text-[12.5px] text-subtle">Бүгд жижиг латин үсэг ба тоо — том үсэг, зай байхгүй.</p>
       <Notice tone="warn">Энэ нууц үг зөвхөн одоо харагдана. Хаасны дараа дахин харах боломжгүй.</Notice>
     </div>
   );

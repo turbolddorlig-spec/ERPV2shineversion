@@ -35,7 +35,8 @@ export async function login(phoneInput: string, password: string, meta: ClientMe
     throw new AppError(423, lockMessage(user.lockedUntil), 'locked');
   }
 
-  const ok = await verifyPassword(password, user.passwordHash);
+  // Хуулж буулгахад өмнө/ард зай орсон бол (утсан дээр түгээмэл) тайрсан хувилбараар дахин шалгана
+  const ok = (await verifyPassword(password, user.passwordHash)) || (password.trim() !== password && password.trim().length > 0 && (await verifyPassword(password.trim(), user.passwordHash)));
   const actor = { id: user.id, name: user.name, ip: meta.ip ?? null };
 
   if (!ok) {

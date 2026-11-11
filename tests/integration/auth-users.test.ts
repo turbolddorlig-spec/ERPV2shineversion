@@ -49,6 +49,13 @@ describe('нэвтрэх', () => {
     const r = await login(`${u.phone.slice(0, 4)}-${u.phone.slice(4)}`, PW, meta);
     expect(r.token).toBeTruthy();
   });
+
+  it('хуулж буулгахад нууц үгийн өмнө/ард зай орсон бол нэвтэрнэ (HTTP сервер, утас)', async () => {
+    const u = await mk(['DRIVER']);
+    const r = await login(u.phone, ` ${PW} `, meta);
+    expect(r.token).toBeTruthy();
+    await expectErr(login(u.phone, `${PW}x `, meta), 401, 'invalid_credentials');
+  });
   it('буруу нууц үг ба байхгүй утас — ижил мессеж', async () => {
     const u = await mk(['OPERATOR']);
     const a = await expectErr(login(u.phone, 'wrong-pass', meta), 401, 'invalid_credentials');
