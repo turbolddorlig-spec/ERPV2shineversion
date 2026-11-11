@@ -883,6 +883,8 @@ model Handover {
   createdByName String
   preparedAt    DateTime?
   preparedBy    String?
+  /// Модуль 7а: бэлдсэн агуулахын ажилтан (агуулахын алдааны торгууль)
+  preparedById  String?         @db.Uuid
   handedOverAt  DateTime?
   handedOverBy  String?
   receivedAt    DateTime?
@@ -1111,4 +1113,50 @@ model BankTransaction {
   @@index([phone])
   @@index([orderId])
   @@index([status, txDate])
+}
+
+// ───────────────────────── Модуль 7а: Алдаа удирдлага (#90) ─────────────────────────
+
+enum PenaltyType {
+  OPP_ERROR
+  DELIVERY_ERROR
+  MARKETING_ERROR
+  WAREHOUSE_ERROR
+}
+
+/// Торгууль. Устгахгүй — шалтгаантай «Цуцлах» (status CANCELLED). Цалингаас хасагдсан бол deducted.
+model Penalty {
+  id              Int         @id @default(autoincrement())
+  type            PenaltyType
+  /// Алдааны нэр (тохиргооны жагсаалтаас эсвэл автомат)
+  category        String
+  amount          Int
+  description     String?
+  userId          String      @db.Uuid
+  userName        String
+  orderId         Int?
+  orderNumber     String?
+  pageName        String?
+  customerPhone   String?
+  customerName    String?
+  lateMinutes     Int?
+  /// Асуудлаас автоматаар үүссэн
+  auto            Boolean     @default(false)
+  createdById     String?     @db.Uuid
+  createdByName   String
+  createdAt       DateTime    @default(now())
+  /// ACTIVE | CANCELLED
+  status          String      @default("ACTIVE")
+  cancelledAt     DateTime?
+  cancelledByName String?
+  cancelNote      String?
+  deducted        Boolean     @default(false)
+  deductedAt      DateTime?
+  deductedByName  String?
+  version         Int         @default(1)
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@index([type, createdAt])
+  @@index([orderId])
 }

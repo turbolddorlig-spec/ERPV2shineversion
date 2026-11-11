@@ -212,7 +212,7 @@ export async function prepareHandover(actor: UserActor, idInput: unknown) {
   await inTx(async (tx) => {
     const h = await loadForChange(tx, id);
     if (h.status !== 'DRAFT') return;
-    await tx.handover.update({ where: { id }, data: { status: 'PREPARED', preparedAt: new Date(), preparedBy: actor.name, version: { increment: 1 } } });
+    await tx.handover.update({ where: { id }, data: { status: 'PREPARED', preparedAt: new Date(), preparedBy: actor.name, preparedById: actor.id, version: { increment: 1 } } });
     await writeAudit(actor, 'handover.prepared', 'Handover', String(id), { number: h.number }, tx, ['delivery']);
   });
   return handoverDetail(actor, id);

@@ -69,12 +69,13 @@ function ResolveModal({ o, action, onClose, onDone }: { o: IOrder; action: 'fix'
   const [err, setErr] = useState<string | null>(null);
   async function submit() {
     setBusy(true); setErr(null);
-    try { await api(`/api/issues/${o.id}`, { method: 'POST', json: { action, note, fault } }); await onDone(); } catch (e) { setErr(msg(e)); setBusy(false); }
+    try { const r = await api<{ penaltyWarning?: string | null }>(`/api/issues/${o.id}`, { method: 'POST', json: { action, note, fault } }); if (r.penaltyWarning) window.alert(r.penaltyWarning); await onDone(); } catch (e) { setErr(msg(e)); setBusy(false); }
   }
   return (
     <Modal open onClose={onClose} title={`№${o.number} — ${action === 'fix' ? 'Зассан' : 'Цуцлах'}`} subtitle={action === 'fix' ? 'Тайлбар жолоочид харагдана (жишээ: зөв утас, хаяг)' : 'Бараа жолоочид өгөгдсөн бол түүнд үлдэж агуулахад буцна'}
       footer={<><Button variant="ghost" onClick={onClose}>Болих</Button><Button variant={action === 'fix' ? 'primary' : 'danger'} loading={busy} disabled={note.trim().length < 5 || (action === 'cancel' && !fault)} onClick={submit}>{action === 'fix' ? 'Зассан' : 'Цуцлах'}</Button></>}>
       <div className="flex flex-col gap-3">
+        {action === 'cancel' ? <p className="text-[12.5px] text-muted">Опп / Маркетинг / Агуулахын алдаа бол хариуцагчид автоматаар торгууль тавигдана (Жолоочийн алдаа — торгуульгүй).</p> : null}
         {action === 'cancel' ? <div className="grid grid-cols-2 gap-2">{FAULTS.map(([k, l]) => <Button key={k} variant={fault === k ? 'dark' : 'secondary'} onClick={() => setFault(k)}>{l}</Button>)}</div> : null}
         <textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} data-autofocus placeholder="Тайлбар (5+ тэмдэгт)" className="rounded-[10px] border border-line bg-surface px-3 py-2 text-[14px]" />
         {err ? <Notice>{err}</Notice> : null}

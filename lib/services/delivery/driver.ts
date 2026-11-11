@@ -12,6 +12,7 @@ import { assignCore } from './assign';
 import { addDays, driverLocationId, lockDelivery, removeFromHandover, type Tx } from './core';
 import { assertDayOpen } from '../accounting/lock';
 import { syncShortageDebts } from '../accounting/debts';
+import { autoPenaltyForIssue } from '../penalties';
 
 /**
  * Модуль 5 — жолоочийн апп (хуучин ERP-ийн урсгал, #73/#74). Бараа бүр нэг журналаар (B2):
@@ -363,7 +364,8 @@ export async function resolveIssue(actor: UserActor, idIn: unknown, input: { act
     await lockDelivery(tx);
     if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
     const o = await tx.order.findUniqueOrThrow({ where: { id } });
-    if (o.issueStatus !== 'PENDING') return { order: o, duplicate: true };
+    if (o.issueStatus !== 'PENDING') return { order: o, duplicate: true, penaltyWarning: null as string | null };
+    let penaltyWarning: string | null = null;
     const base = { issueResolvedAt: new Date(), issueResolvedByName: actor.name, issueResolveNote: note };
     if (action === 'fix') {
       await tx.order.update({ where: { id }, data: { ...base, issueStatus: 'FIXED', version: { increment: 1 } } });
@@ -371,9 +373,11 @@ export async function resolveIssue(actor: UserActor, idIn: unknown, input: { act
       if (!['ASSIGNED', 'OUT_FOR_DELIVERY'].includes(o.status)) throw conflict('Захиалгын төлөв өөрчлөгдсөн байна', 'bad_status');
       await cancelCore(tx, o, actor.name, 'ISSUE', `${FAULT_LABEL[fault!]}: ${note}`);
       await tx.order.update({ where: { id }, data: { ...base, issueStatus: 'CANCELLED', issueFault: fault } });
+      // Модуль 7а (#90): хэний алдаагаар автомат торгууль (хуучин шиг; жолоочийн алдаа → торгуульгүй)
+      penaltyWarning = await autoPenaltyForIssue(tx, actor, o, fault!);
     }
     await writeAudit(actor, action === 'fix' ? 'order.issue_fixed' : 'order.issue_cancelled', 'Order', String(id), { number: o.number, note, ...(fault ? { fault } : {}) }, tx, ['order', 'delivery', 'issue']);
-    return { order: await tx.order.findUniqueOrThrow({ where: { id } }), duplicate: false };
+    return { order: await tx.order.findUniqueOrThrow({ where: { id } }), duplicate: false, penaltyWarning };
   });
   issueCountCache = null; bust();
   return r;

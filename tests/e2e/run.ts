@@ -519,6 +519,28 @@ async function main() {
     }
   }
 
+  // ───── Модуль 7а: Алдаа удирдлага ─────
+  {
+    const pen = await loginAs('80000004'); // ахлах оператор
+    const op8 = await loginAs('80000006');
+    const users8 = JSON.parse((await req('/api/penalties', { cookie: pen.cookie })).text);
+    const target = users8.staff?.find((u: { roles: string[] }) => u.roles.includes('OPERATOR'));
+    const cat = await req('/api/penalties/config', { cookie: pen.cookie, method: 'POST', body: { action: 'category', type: 'OPP_ERROR', name: `E2E алдаа ${Date.now()}`, defaultAmount: 4000 } });
+    check('алдааны нэр шинээр үүсгэв', cat.status === 200, cat.text.slice(0, 100));
+    const cr = await req('/api/penalties', { cookie: pen.cookie, method: 'POST', body: { userId: target?.id, categoryId: JSON.parse(cat.text).id, amount: 4000 } });
+    check('торгууль тавив', cr.status === 201, cr.text.slice(0, 100));
+    const opTry = await req('/api/penalties', { cookie: op8.cookie, method: 'POST', body: { userId: target?.id, customName: 'x', amount: 1 } });
+    const opList = await req('/api/penalties', { cookie: op8.cookie });
+    check('оператор торгууль тавих / бусдынхыг харахгүй (403)', opTry.status === 403 && opList.status === 403, `${opTry.status} ${opList.status}`);
+    const mine = await req('/api/my-penalties', { cookie: op8.cookie });
+    check('миний торгууль 200 (зөвхөн өөрийнх)', mine.status === 200 && Array.isArray(JSON.parse(mine.text).items), String(mine.status));
+    const pid = JSON.parse(cr.text).id;
+    const ded = await req(`/api/penalties/${pid}/deduct`, { cookie: pen.cookie, method: 'POST', body: {} });
+    check('ахлах оператор цалингаас хасахгүй (нягтлан, админ) → 403', ded.status === 403, String(ded.status));
+    const cn = await req(`/api/penalties/${pid}/cancel`, { cookie: pen.cookie, method: 'POST', body: { note: 'E2E цуцлалт' } });
+    check('шалтгаантай цуцлав', cn.status === 200 && JSON.parse(cn.text).penalty?.status === 'CANCELLED', cn.text.slice(0, 100));
+  }
+
   // ───── «Зөвхөн ажлын байрнаас» (#86) ─────
   {
     const sa7 = await loginAs('80000001');
