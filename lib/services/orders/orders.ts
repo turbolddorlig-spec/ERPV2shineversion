@@ -212,6 +212,8 @@ export async function createOrder(actor: UserActor, input: CreateInput) {
       } as Prisma.InputJsonValue, tx, auditTags(lines, t.deliveryFeeEdited));
       return o;
     });
+    // Модуль 6: тухайн утасны таараагүй банкны гүйлгээ байвал «Мөнгө орсон» (хуучин шиг)
+    if (!replay && order.status === 'PENDING_PAYMENT') await bankRematch(order.id);
     return { order, duplicate: replay !== null };
   } catch (e) {
     if (uniqueViolation(e)) { const r = await db.order.findUnique({ where: { idemKey } }); if (r) return { order: r, duplicate: true }; }
@@ -230,7 +232,7 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
   if (!Number.isInteger(version)) throw badRequest('Хувилбарын дугаар алга', 'version_required');
   const settings = await orderSettings();
 
-  return inTx(async (tx) => {
+  const res = await inTx(async (tx) => {
     // Жолоочид оноосон захиалгын огноо өөрчлөгдвөл падаантай уялдана — хүргэлтийн түгжээг эхэлж авна
     const pre = await tx.order.findUnique({ where: { id }, select: { status: true } });
     if (pre?.status === 'ASSIGNED') await lockDelivery(tx);
@@ -328,6 +330,8 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
       discountNow ? ['order', 'discount'] : ['order']);
     return { order: u, changed: true };
   });
+  if (res.changed && res.order.status === 'PENDING_PAYMENT') await bankRematch(res.order.id);
+  return res;
 }
 
 const CANCEL_REASONS: CancelReason[] = ['CUSTOMER_CANCELLED', 'DUPLICATE', 'OUT_OF_STOCK', 'NO_ANSWER', 'OTHER'];
@@ -422,3 +426,11 @@ export async function autoCancelExpired(limit = 200): Promise<number> {
 }
 
 export type { Order };
+
+/** Банкны гүйлгээгээр дахин тааруулах — алдаа гарсан ч захиалгын үйлдлийг унагахгүй */
+async function bankRematch(orderId: number) {
+  try {
+    const { matchOrderWithTransactions } = await import('../accounting/bank');
+    await matchOrderWithTransactions(orderId);
+  } catch (e) { console.error('[bank] rematch', (e as Error).message); }
+}

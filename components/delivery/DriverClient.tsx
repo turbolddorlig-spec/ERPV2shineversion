@@ -9,6 +9,7 @@ import { api, ApiError } from '@/components/ui/api';
 import { Thumb } from '@/components/products/ProductsClient';
 import { OperatorNote } from '@/components/orders/OrdersClient';
 import { money, ubDateTime } from '@/lib/format';
+import { CompanyDebtTab, IncomeTab } from '@/components/accounting/DriverIncome';
 
 /**
  * Жолоочийн апп (Модуль 5, хуучин ERP-ийн урсгал): табууд Бүгд · Хүргэлт · Хүргэсэн · Цуцласан · Маргааш · Өчигдөр,
@@ -42,7 +43,7 @@ const ST: Record<string, { l: string; c: string }> = {
 };
 
 export function DriverClient() {
-  const [main, setMain] = useState<'orders' | 'handover' | 'pickup' | 'goods'>('orders');
+  const [main, setMain] = useState<'orders' | 'handover' | 'pickup' | 'goods' | 'income' | 'company'>('orders');
   const [pending, setPending] = useState(0);
   useEffect(() => {
     const f = () => api<{ pending: number }>('/api/driver/handover').then((r) => setPending(r.pending)).catch(() => undefined);
@@ -53,8 +54,8 @@ export function DriverClient() {
       <div className="flex items-center justify-between gap-2">
         <h1 className="text-[22px] font-extrabold tracking-tight">Миний хүргэлт</h1>
       </div>
-      <div className="grid grid-cols-4 gap-1 rounded-[14px] bg-surface2 p-1" role="tablist">
-        {([['orders', 'Захиалга'], ['handover', 'Падаан'], ['pickup', 'Авах'], ['goods', 'Миний бараа']] as const).map(([k, l]) => (
+      <div className="grid grid-cols-3 gap-1 rounded-[14px] bg-surface2 p-1 sm:grid-cols-6" role="tablist">
+        {([['orders', 'Захиалга'], ['handover', 'Падаан'], ['pickup', 'Авах'], ['goods', 'Миний бараа'], ['income', 'Орлого'], ['company', 'Төлбөр тооцоо']] as const).map(([k, l]) => (
           <button key={k} role="tab" aria-selected={main === k} onClick={() => setMain(k)}
             className={clsx('relative h-11 rounded-[11px] text-[13.5px] font-bold', main === k ? 'bg-surface text-ink shadow-card' : 'text-muted')}>
             {l}{k === 'handover' && pending ? <span className="absolute -right-0.5 -top-1 min-w-[18px] rounded-full bg-accent px-1 text-[11px] leading-[18px] text-on-accent">{pending}</span> : null}
@@ -66,7 +67,7 @@ export function DriverClient() {
           📦 Агуулах бараа өгсөн — «Падаан» табаас барааг чагтлаад «Барааг бүрэн хүлээн авсан» дарна уу →
         </button>
       ) : null}
-      {main === 'orders' ? <OrdersTab /> : main === 'handover' ? <HandoverTab onReceived={() => { setPending(0); setMain('orders'); }} /> : main === 'pickup' ? <PickupTab onTaken={() => setMain('orders')} /> : <GoodsTab />}
+      {main === 'orders' ? <OrdersTab /> : main === 'handover' ? <HandoverTab onReceived={() => { setPending(0); setMain('orders'); }} /> : main === 'pickup' ? <PickupTab onTaken={() => setMain('orders')} /> : main === 'income' ? <IncomeTab /> : main === 'company' ? <CompanyDebtTab /> : <GoodsTab />}
     </div>
   );
 }

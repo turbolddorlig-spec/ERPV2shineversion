@@ -8,7 +8,7 @@ import { ALL_ROLES, manageableRoles } from '@/lib/roles';
 const MATRIX: Record<PageKey, string> = {
   dashboard:      'E E - - - - - - - - - -',
   orders:         'E E E E - - - - - - V -',
-  'bank-import':  'E E E E - - - - - - - -',
+  'bank-import':  'E E E V - - E - - - - -', // #82 5: хуучин шиг + нягтлан; оператор харна
   products:       'E E - - - - - E E E V -',
   'goods-outflow':'E E - - - - - - E E - -',
   warehouse:      'E E - - - - V E - - - -',

@@ -10,6 +10,7 @@ import { dateOnly, ubDay, ymdOf, isYmd } from '../../ubdate';
 import { applyMoves, stockCache, type MoveSpec } from '../stock/core';
 import { inTx, type UserActor } from '../orders/core';
 import { bustCounts } from '../orders/queries';
+import { assertDayOpen } from '../accounting/lock';
 import { HANDOVER_STATUS_LABEL, isGiven, approvalFor, cleanYmd, driverLocationId, lockDelivery, lockHandover, lockOrders, nextHandoverNumber, primaryWarehouse } from './core';
 
 /**
@@ -370,6 +371,7 @@ export async function revertHandover(actor: UserActor, idInput: unknown) {
     const h = await loadForChange(tx, id);
     if (h.status === 'DRAFT') return;
     if (h.status === 'RECEIVED') {
+      await assertDayOpen(tx, id);
       const hos = await tx.handoverOrder.findMany({ where: { handoverId: id, removedAt: null }, select: { orderId: true } });
       const orderIds = hos.map((x) => x.orderId);
       await lockOrders(tx, orderIds);

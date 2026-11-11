@@ -34,7 +34,7 @@ export const PAGES: PageDef[] = [
   { key: 'dashboard', label: 'Хянах самбар', short: 'Хянах', href: '/dashboard', group: 'Үндсэн', icon: 'chart', module: 7, edit: SA_A },
   { key: 'orders', label: 'Захиалга', short: 'Захиалга', href: '/orders', group: 'Үндсэн', icon: 'flow', module: 3, edit: [...SA_A, 'OPERATOR_LEAD', 'OPERATOR'], view: ['PENALTY_OFFICER'] },
   { key: 'reports', label: 'Тайлан', short: 'Тайлан', href: '/reports', group: 'Үндсэн', icon: 'chart', module: 3, edit: ['SUPER_ADMIN', 'MARKETING_LEAD', 'MARKETING'] },
-  { key: 'bank-import', label: 'Банкны импорт', short: 'Банк', href: '/bank-import', group: 'Үндсэн', icon: 'bank', module: 6, edit: [...SA_A, 'OPERATOR_LEAD', 'OPERATOR'] },
+  { key: 'bank-import', label: 'Банкны импорт', short: 'Банк', href: '/bank-import', group: 'Үндсэн', icon: 'bank', module: 6, edit: [...SA_A, 'OPERATOR_LEAD', 'ACCOUNTING'], view: ['OPERATOR'] },
   { key: 'products', label: 'Бараа', short: 'Бараа', href: '/products', group: 'Үндсэн', icon: 'box', module: 1, edit: [...SA_A, 'WAREHOUSE', 'MARKETING_LEAD', 'MARKETING'], view: ['PENALTY_OFFICER'] },
   { key: 'product-history', label: 'Барааны засвар', short: 'Засвар', href: '/products/history', group: 'Үндсэн', icon: 'history', module: 1,
     edit: [...SA_A, 'MARKETING_LEAD'], view: ['MARKETING', 'WAREHOUSE', 'PENALTY_OFFICER'] },
@@ -143,3 +143,10 @@ export const canDrive = (roles: Role[]) => canEdit(roles, 'driver');
 export const canResolveIssues = (roles: Role[]) => has(roles, [...SA_A, 'OPERATOR_LEAD']);
 /** Жолоочоос буцаалт хүлээн авах — агуулах, админ */
 export const canReceiveReturns = (roles: Role[]) => canOperateStock(roles);
+// ───── Модуль 6: нягтлан (#82, #83) ─────
+/** Тооцоо баталгаажуулах, гүйцэтгэл гараар засах, төлөв солих, өр нэмэх/хасах, урьдчилгаа зөвшөөрөх */
+export const canAccount = (roles: Role[]) => canEdit(roles, 'accounting');
+/** «Гүйцэтгэл солих» (тусгай / орон нутаг) ба цалингийн дүрэм (хөлс, босго) — зөвхөн Супер админ (хуучин шиг) */
+export const canManagePay = (roles: Role[]) => has(roles, ['SUPER_ADMIN']);
+/** Банкны хуулга импортлох, тааруулах, «Буцаасан» тэмдэглэх */
+export const canBankImport = (roles: Role[]) => canEdit(roles, 'bank-import');

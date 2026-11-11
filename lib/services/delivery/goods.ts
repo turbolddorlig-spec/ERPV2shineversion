@@ -1,4 +1,5 @@
 import type { DeliveryPayment, DriverDocKind, Prisma } from '@prisma/client';
+import { syncShortageDebts } from '../accounting/debts';
 import { db } from '../../db';
 import { badRequest, conflict, forbidden } from '../../errors';
 import { writeAudit } from '../../audit';
@@ -162,6 +163,8 @@ export async function receiveReturn(actor: UserActor, input: { driverId?: unknow
     });
     await applyMoves(tx, actor, { type: 'driver_doc', id: d.id }, lines.map((l) => ({ type: 'DRIVER_RETURN' as const, variantId: l.variantId, qty: l.qty, fromId, toId: whLoc, note: `${u.name}-с буцаалт` })), labels);
     const short = [...g.returnable].map(([v, have]) => ({ variantId: v, name: labels.get(v) ?? null, short: have - (lines.find((l) => l.variantId === v)?.qty ?? 0) })).filter((x) => x.short > 0 && x.name);
+    // Модуль 6 (#82 6): буцаасан барааны автомат өр буурна / хаагдана
+    await syncShortageDebts(tx, driverId);
     await writeAudit(actor, 'driver.return', 'DriverDoc', String(d.id), { driver: u.name, pieces: lines.reduce((n, l) => n + l.qty, 0), ...(note ? { note } : {}), ...(short.length ? { short } : {}) } as Prisma.InputJsonValue, tx, ['stock', 'delivery']);
     return d;
   });
@@ -275,6 +278,7 @@ export async function extraSale(actor: UserActor, input: { lines?: unknown; paym
         lines: { create: lines.map((l) => ({ variantId: l.variantId, qty: l.qty, unitPrice: prices.get(l.variantId) ?? 0 })) } },
     });
     await applyMoves(tx, actor, { type: 'driver_doc', id: d.id }, lines.map((l) => ({ type: 'EXTRA_SALE' as const, variantId: l.variantId, qty: l.qty, fromId, toId: null, note: 'Нэмэлт бараа зарсан' })), labels);
+    await syncShortageDebts(tx, actor.id);
     await writeAudit(actor, 'driver.extra_sale', 'DriverDoc', String(d.id), { total, payment, lines: lines.map((l) => ({ name: labels.get(l.variantId), qty: l.qty, price: prices.get(l.variantId) })) } as Prisma.InputJsonValue, tx, ['stock', 'delivery', 'money']);
     return d;
   });

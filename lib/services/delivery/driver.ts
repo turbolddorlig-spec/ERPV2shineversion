@@ -10,6 +10,8 @@ import { bustCounts, serializeOrder } from '../orders/queries';
 import { skipMeta } from '../orders/meta';
 import { assignCore } from './assign';
 import { addDays, driverLocationId, lockDelivery, removeFromHandover, type Tx } from './core';
+import { assertDayOpen } from '../accounting/lock';
+import { syncShortageDebts } from '../accounting/debts';
 
 /**
  * Модуль 5 — жолоочийн апп (хуучин ERP-ийн урсгал, #73/#74). Бараа бүр нэг журналаар (B2):
@@ -26,6 +28,10 @@ export const FAULT_LABEL: Record<IssueFault, string> = { OPERATOR: 'Опп-н а
 
 const assertDriver = (a: UserActor) => { if (!canDrive(a.roles)) throw forbidden('Энэ үйлдлийг жолооч хийнэ'); };
 type OrderL = Order & { lines: OrderLine[] };
+/** Модуль 6: нягтлангийн «Төлөв солих» — жолоочийн нэрийн өмнөөс (эрхийг дуудагч шалгана) */
+export interface OnBehalf { accountant: true }
+const driverOf = (o: Order, actor: UserActor, ob?: OnBehalf) => (ob ? { id: o.driverId!, name: o.driverName ?? '' } : { id: actor.id, name: actor.name });
+const byName = (actor: UserActor, ob?: OnBehalf) => (ob ? `${actor.name} (нягтлан)` : actor.name);
 
 function cleanId(v: unknown): number {
   const n = Number(v);
@@ -34,12 +40,12 @@ function cleanId(v: unknown): number {
 }
 
 /** Түгжээд, өөрийн захиалгыг уншина (өөр жолоочийнх бол 404 — хэн нэгний захиалгыг харуулахгүй) */
-async function loadOwn(tx: Tx, actor: UserActor, id: number, by: 'driver' | 'postponed' = 'driver'): Promise<OrderL> {
+async function loadOwn(tx: Tx, actor: UserActor, id: number, by: 'driver' | 'postponed' = 'driver', ob?: OnBehalf): Promise<OrderL> {
   await lockDelivery(tx);
   if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
   const o = await tx.order.findUniqueOrThrow({ where: { id }, include: { lines: { orderBy: { id: 'asc' } } } });
   const owner = by === 'driver' ? o.driverId : o.postponedByDriverId;
-  if (owner !== actor.id) throw notFound('Захиалга олдсонгүй');
+  if (ob ? !owner : owner !== actor.id) throw notFound('Захиалга олдсонгүй');
   return o;
 }
 
@@ -112,12 +118,14 @@ function bust() { stockCache.today = null; bustCounts(); }
  * Болиулсан барааг чагтаа авна (#73 3): дүн автоматаар, болиулсан бараа жолоочид үлдэж буцаах жагсаалтад.
  * Мөн цуцалсан захиалгыг «Хүргэсэн болгох» (бараа жолоочид байгаа үед л).
  */
-export async function deliverOrder(actor: UserActor, idIn: unknown, input: { taken?: unknown; payment?: unknown; note?: unknown; version?: unknown }) {
-  assertDriver(actor);
+export async function deliverOrder(actor: UserActor, idIn: unknown, input: { taken?: unknown; payment?: unknown; note?: unknown; version?: unknown }, ob?: OnBehalf) {
+  if (!ob) assertDriver(actor);
   const id = cleanId(idIn);
   const r = await inTx(async (tx) => {
-    const o = await loadOwn(tx, actor, id);
+    const o = await loadOwn(tx, actor, id, 'driver', ob);
     if (o.status === 'DELIVERED') return { order: o, duplicate: true };
+    await assertDayOpen(tx, o.handoverId, { allowPending: !!ob });
+    const drv = driverOf(o, actor, ob);
     const recover = o.status === 'CANCELLED';
     if (recover) {
       if (!o.outForDeliveryAt || !['DRIVER_CANCELLED', 'ISSUE'].includes(o.cancelReason ?? '')) throw conflict('Энэ цуцлалтын бараа жолоочид өгөгдөөгүй — «Хүргэсэн болгох» боломжгүй', 'bad_status');
@@ -131,8 +139,8 @@ export async function deliverOrder(actor: UserActor, idIn: unknown, input: { tak
     const need = new Map<number, number>();
     for (const l of o.lines) { const q = taken.get(l.id) ?? 0; if (q) need.set(l.variantId, (need.get(l.variantId) ?? 0) + q); }
     // «Хүргэсэн болгох»: бараа нь буцаах жагсаалтад (агуулахад буцаагаагүй) байх ёстой
-    if (recover) await assertReturnable(tx, actor.id, need, labels);
-    const fromId = await driverLocationId(tx, { id: actor.id, name: actor.name });
+    if (recover) await assertReturnable(tx, drv.id, need, labels);
+    const fromId = await driverLocationId(tx, drv);
     await applyMoves(tx, actor, { type: 'order', id }, [...need].map(([variantId, qty]) => ({ type: 'DELIVERY' as const, variantId, qty, fromId, toId: null, note: `№${o.number} хүргэсэн` })), labels);
     for (const l of o.lines) {
       const refused = l.qty - (taken.get(l.id) ?? 0);
@@ -143,17 +151,18 @@ export async function deliverOrder(actor: UserActor, idIn: unknown, input: { tak
     const u = await tx.order.update({
       where: { id },
       data: {
-        status: 'DELIVERED', deliveredAt: new Date(), deliveredByName: actor.name, deliveryPayment: pay.payment, deliveryNote: pay.note, collectAmount: collect,
+        status: 'DELIVERED', deliveredAt: new Date(), deliveredByName: byName(actor, ob), deliveryPayment: pay.payment, deliveryNote: pay.note, collectAmount: collect,
         originalTotal: o.originalTotal ?? o.total, subtotal: sum.subtotal, discount: sum.discount, total: sum.total,
         ...(recover ? { cancelReason: null, cancelNote: null, cancelledAt: null, cancelledByName: null } : {}),
         version: { increment: 1 },
       },
     });
+    if (recover) await syncShortageDebts(tx, drv.id);
     // «Төлөөгүй» → жолоочийн ХУВИЙН өрийн дэвтэр (хуучин шиг, нягтлантай холбоогүй — #79)
-    if (pay.payment === 'UNPAID') await tx.driverDebt.create({ data: { orderId: id, driverId: actor.id, orderNumber: o.number, phone: o.phone, amount: sum.total } });
+    if (pay.payment === 'UNPAID') await tx.driverDebt.create({ data: { orderId: id, driverId: drv.id, orderNumber: o.number, phone: o.phone, amount: sum.total } });
     const refused = o.lines.filter((l) => (taken.get(l.id) ?? 0) < l.qty).map((l) => ({ name: labels.get(l.variantId), qty: l.qty - (taken.get(l.id) ?? 0) }));
     await writeAudit(actor, recover ? 'order.redelivered' : 'order.delivered', 'Order', String(id), {
-      number: o.number, payment: pay.payment, total: sum.total, collect, ...(refused.length ? { refused, totalBefore: o.originalTotal ?? o.total } : {}), ...(pay.note ? { note: pay.note } : {}),
+      number: o.number, ...(ob ? { byAccountant: true, driver: drv.name } : {}), payment: pay.payment, total: sum.total, collect, ...(refused.length ? { refused, totalBefore: o.originalTotal ?? o.total } : {}), ...(pay.note ? { note: pay.note } : {}),
     } as Prisma.InputJsonValue, tx, ['order', 'delivery', 'money', 'stock']);
     return { order: u, duplicate: false };
   });
@@ -162,19 +171,21 @@ export async function deliverOrder(actor: UserActor, idIn: unknown, input: { tak
 }
 
 /** «Цуцлах (буцаах)» хүргэсэн захиалгыг: бараа үйлчлүүлэгчээс жолоочид буцна (DELIVERY_BACK), дүн анхны хэмжээнд */
-export async function undoDelivery(actor: UserActor, idIn: unknown, input: { note?: unknown; version?: unknown }) {
-  assertDriver(actor);
+export async function undoDelivery(actor: UserActor, idIn: unknown, input: { note?: unknown; version?: unknown }, ob?: OnBehalf) {
+  if (!ob) assertDriver(actor);
   const id = cleanId(idIn);
   const note = requireReason(input.note);
   const r = await inTx(async (tx) => {
-    const o = await loadOwn(tx, actor, id);
+    const o = await loadOwn(tx, actor, id, 'driver', ob);
     if (o.status === 'CANCELLED') return { order: o, duplicate: true };
     if (o.status !== 'DELIVERED') throw conflict('Зөвхөн хүргэсэн захиалгыг буцаана', 'bad_status');
     checkVersion(o, input.version);
-    // Тооцоо (Модуль 6) хаагдахаас өмнө: хүргэсэн өдөр эсвэл маргааш нь л
-    if (o.deliveredAt && ymdOf(new Date(o.deliveredAt.getTime() + 8 * 3600_000)) < ubDay(new Date(), -1)) throw conflict('2 хоногоос өмнө хүргэсэн захиалгыг ахлах жолооч / нягтлан шийднэ', 'too_old');
+    await assertDayOpen(tx, o.handoverId, { allowPending: !!ob });
+    const drv = driverOf(o, actor, ob);
+    // Жолооч: хүргэсэн өдөр эсвэл маргааш нь л (нягтлан аль ч өдөр — тооцоо баталгаажаагүй бол)
+    if (!ob && o.deliveredAt && ymdOf(new Date(o.deliveredAt.getTime() + 8 * 3600_000)) < ubDay(new Date(), -1)) throw conflict('2 хоногоос өмнө хүргэсэн захиалгыг ахлах жолооч / нягтлан шийднэ', 'too_old');
     const labels = new Map(o.lines.map((l) => [l.variantId, l.name]));
-    const toId = await driverLocationId(tx, { id: actor.id, name: actor.name });
+    const toId = await driverLocationId(tx, drv);
     const back = o.lines.map((l) => ({ type: 'DELIVERY_BACK' as const, variantId: l.variantId, qty: l.qty - l.refusedQty, fromId: null, toId, note: `№${o.number} хүргэсний дараа буцаасан` }));
     await applyMoves(tx, actor, { type: 'order', id }, back, labels);
     await tx.orderLine.updateMany({ where: { orderId: id }, data: { refusedQty: 0 } });
@@ -184,12 +195,12 @@ export async function undoDelivery(actor: UserActor, idIn: unknown, input: { not
     const u = await tx.order.update({
       where: { id },
       data: {
-        status: 'CANCELLED', cancelReason: 'DRIVER_CANCELLED', cancelNote: note, cancelledAt: new Date(), cancelledByName: actor.name,
+        status: 'CANCELLED', cancelReason: 'DRIVER_CANCELLED', cancelNote: note, cancelledAt: new Date(), cancelledByName: byName(actor, ob),
         deliveredAt: null, deliveryPayment: null, collectAmount: null, deliveryNote: null, subtotal: full.subtotal, discount: full.discount, total: full.total,
         version: { increment: 1 },
       },
     });
-    await writeAudit(actor, 'order.delivery_undone', 'Order', String(id), { number: o.number, note, payment: o.deliveryPayment, total: o.total }, tx, ['order', 'delivery', 'money', 'stock']);
+    await writeAudit(actor, 'order.delivery_undone', 'Order', String(id), { number: o.number, note, ...(ob ? { byAccountant: true, driver: drv.name } : {}), payment: o.deliveryPayment, total: o.total }, tx, ['order', 'delivery', 'money', 'stock']);
     return { order: u, duplicate: false };
   });
   bust();
@@ -199,24 +210,25 @@ export async function undoDelivery(actor: UserActor, idIn: unknown, input: { not
 // ───────────────────────── Цуцлах ─────────────────────────
 
 /** «Цуцлах» (шалтгаан 5+). Бараа жолоочид өгөгдсөн бол түүнд үлдэж буцаах жагсаалтад; өгөөгүй бол нөөц суллагдана */
-export async function driverCancel(actor: UserActor, idIn: unknown, input: { note?: unknown; blacklist?: unknown; version?: unknown }) {
-  assertDriver(actor);
+export async function driverCancel(actor: UserActor, idIn: unknown, input: { note?: unknown; blacklist?: unknown; version?: unknown }, ob?: OnBehalf) {
+  if (!ob) assertDriver(actor);
   const id = cleanId(idIn);
   const note = requireReason(input.note);
   const r = await inTx(async (tx) => {
-    const o = await loadOwn(tx, actor, id);
+    const o = await loadOwn(tx, actor, id, 'driver', ob);
     if (o.status === 'CANCELLED') return { order: o, duplicate: true };
+    await assertDayOpen(tx, o.handoverId, { allowPending: !!ob });
     if (o.status === 'ASSIGNED') throw conflict('Падаанаа хүлээн авсны дараа цуцална (бараа хүлээн аваагүй бол ахлах жолоочид хэлнэ)', 'not_received');
     if (o.status !== 'OUT_FOR_DELIVERY') throw conflict('Энэ захиалгыг цуцлах боломжгүй', 'bad_status');
     checkVersion(o, input.version);
     noPendingIssue(o);
-    await cancelCore(tx, o, actor.name, 'DRIVER_CANCELLED', note);
-    if (input.blacklist === true || input.blacklist === 'true') {
+    await cancelCore(tx, o, byName(actor, ob), 'DRIVER_CANCELLED', note);
+    if (!ob && input.blacklist === true || input.blacklist === 'true') {
       const exists = await tx.blacklistEntry.findFirst({ where: { phone: o.phone, isActive: true } });
       if (!exists) await tx.blacklistEntry.create({ data: { phone: o.phone, reason: `[МӨНГӨ ӨГДӨГГҮЙ ХҮН] ${note}`, orderNumber: o.number, reportedById: actor.id, reportedBy: actor.name } });
       await writeAudit(actor, 'blacklist.added', 'Blacklist', o.phone, { phone: o.phone, reason: note, orderNumber: o.number, by: 'driver' }, tx, ['order']);
     }
-    await writeAudit(actor, 'order.driver_cancelled', 'Order', String(id), { number: o.number, from: o.status, note, goodsWithDriver: o.status === 'OUT_FOR_DELIVERY' }, tx, ['order', 'cancel', 'delivery']);
+    await writeAudit(actor, 'order.driver_cancelled', 'Order', String(id), { number: o.number, from: o.status, note, ...(ob ? { byAccountant: true, driver: o.driverName } : {}), goodsWithDriver: o.status === 'OUT_FOR_DELIVERY' }, tx, ['order', 'cancel', 'delivery']);
     return { order: await tx.order.findUniqueOrThrow({ where: { id } }), duplicate: false };
   });
   bust();
@@ -252,6 +264,7 @@ export async function postponeOrder(actor: UserActor, idIn: unknown, input: { ve
     if (o.status === 'ASSIGNED') throw conflict('Падаанаа хүлээн авсны дараа «Маргааш» дарна (хүлээн аваагүй бол ахлах жолоочид хэлнэ)', 'not_received');
     if (o.status !== 'OUT_FOR_DELIVERY') throw conflict('Энэ захиалгыг хойшлуулах боломжгүй', 'bad_status');
     checkVersion(o, input.version);
+    await assertDayOpen(tx, o.handoverId);
     noPendingIssue(o);
     if (o.postponeCount >= MAX_POSTPONE) throw conflict(`«Маргааш» ${MAX_POSTPONE} удаа дарагдсан тул цоожтой — ахлах жолооч / оператор шийднэ`, 'postpone_locked');
     if (o.status === 'OUT_FOR_DELIVERY') {
@@ -286,6 +299,8 @@ export async function undoPostpone(actor: UserActor, idIn: unknown) {
     if (!o.postponedAt || ymdOf(new Date(o.postponedAt.getTime() + 8 * 3600_000)) !== ubDay()) throw conflict('Зөвхөн өнөөдөр хойшлуулсныг буцаана', 'too_old');
     const today = ubDay();
     const hadGoods = !!o.outForDeliveryAt;
+    const hoP = await tx.handoverOrder.findFirst({ where: { orderId: id, removeReason: 'Маргааш (бараа жолоочид)' }, orderBy: { id: 'desc' }, select: { handoverId: true } });
+    await assertDayOpen(tx, hoP?.handoverId);
     if (hadGoods) {
       const need = new Map<number, number>();
       for (const l of o.lines) need.set(l.variantId, (need.get(l.variantId) ?? 0) + l.qty);
@@ -298,6 +313,7 @@ export async function undoPostpone(actor: UserActor, idIn: unknown) {
         data: { status: 'OUT_FOR_DELIVERY', driverId: actor.id, driverName: actor.name, assignedAt: new Date(), deliveryDate: dateOnly(today), handoverId: ho?.handoverId ?? null,
           postponeCount: { decrement: 1 }, postponedAt: null, postponedByDriverId: null, postponedByName: null, version: { increment: 1 } },
       });
+      await syncShortageDebts(tx, actor.id);
     } else {
       await tx.order.update({ where: { id }, data: { postponeCount: { decrement: 1 }, postponedAt: null, postponedByDriverId: null, postponedByName: null, deliveryDate: dateOnly(today) } });
     }

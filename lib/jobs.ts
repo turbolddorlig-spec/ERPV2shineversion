@@ -2,6 +2,8 @@ import { db } from './db';
 import { autoCancelExpired } from './services/orders/orders';
 import { processMetaQueue } from './services/orders/meta';
 import { autoReconcile } from './services/stock/views';
+import { closeDayShortages } from './services/accounting/debts';
+import { autoGmailSync } from './services/accounting/gmail';
 
 /**
  * Арын ажил (минут тутам): Meta Purchase илгээх / дахин оролдох, хугацаа нь дууссан «Төлбөр хүлээж буй» захиалгыг цуцлах,
@@ -16,6 +18,10 @@ export async function runJobsOnce(): Promise<{ ran: boolean; cancelled?: number;
     const meta = await processMetaQueue();
     const rec = await autoReconcile().catch((e) => { console.error('[jobs] reconcile', (e as Error).message); return null; });
     if (rec && !rec.ok) console.error(`[jobs] ҮЛДЭГДЛИЙН ЗӨРҮҮ: ${rec.count}`);
+    // Модуль 6: өдрийн эцэст жолоочид буцаагаагүй бараа → автомат өр (өдөрт нэг удаа); Gmail автомат sync
+    const shortage = await closeDayShortages().catch((e) => { console.error('[jobs] shortage', (e as Error).message); return null; });
+    if (shortage?.ran) console.log(`[jobs] дутуу барааны өр ${shortage.date}: +${shortage.created} ~${shortage.changed} ✓${shortage.resolved}`);
+    await autoGmailSync().catch((e) => console.error('[jobs] gmail', (e as Error).message));
     return { ran: true, cancelled, meta, reconciled: !!rec };
   } finally {
     await db.$queryRaw`SELECT pg_advisory_unlock(42::int4, 1::int4)`;
