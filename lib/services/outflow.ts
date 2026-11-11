@@ -132,9 +132,14 @@ async function boostSegments(productIds: number[], fromMs: number, toMs: number)
   }
   return out;
 }
-/** Хугацааны бүүстийн зардал (₮) — асаалттай цагаар хувь тэнцүүлэн */
-const boostCost = (segs: Seg[] | undefined, fromMs: number, toMs: number, rate: number) =>
-  Math.round((segs ?? []).reduce((s, g) => { const a = Math.max(g.from, fromMs), b = Math.min(g.to, toMs); return b > a ? s + (g.dollar * g.zones * rate * (b - a)) / (24 * HOUR) : s; }, 0));
+/**
+ * Өдрийн бүүстийн зардал (₮) — эзний шийдвэр (#114): цагаар гүйхгүй; тухайн өдөр бүүст асаалттай байсан бол
+ * өдрийн төсөв бүтнээр = $ × бүүстийн тоо × ханш (өдөрт хамгийн их байсан төлвөөр). Ширхэгт хуваахад: $5 → 18,000₮, 5 ширхэг → 3,600₮/ш.
+ */
+const boostCost = (segs: Seg[] | undefined, fromMs: number, toMs: number, rate: number) => {
+  const pk = peakBoost(segs, fromMs, toMs);
+  return pk ? pk.dollar * pk.zones * rate : 0;
+};
 /** Хугацаанд бүүст хамгийн их байсан төлөв (үнэлгээ: хүлээгдэж буй = бүс × $) */
 const peakBoost = (segs: Seg[] | undefined, fromMs: number, toMs: number) =>
   (segs ?? []).filter((g) => g.to > fromMs && g.from < toMs).reduce<{ dollar: number; zones: number } | null>((m, g) => (!m || g.zones * g.dollar > m.zones * m.dollar ? { dollar: g.dollar, zones: g.zones } : m), null);

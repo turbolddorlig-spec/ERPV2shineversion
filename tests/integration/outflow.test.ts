@@ -167,10 +167,10 @@ describe('бүүстийн ашиг ба анхааруулга (#105–#110)', 
     await OF.saveBoost(mk, { productId: prod, zones: 3 });
     expect((await db.productMarketing.findUniqueOrThrow({ where: { productId: prod } })).boostOnAt?.getTime()).toBe(pm.boostOnAt!.getTime());
     expect(await db.boostEvent.count()).toBe(2);
-    // өчигдөр 18:00-аас 1 бүүст → зардал 1/4
+    // өчигдөр 18:00-аас 1 бүүст → өдрийн төсөв бүтнээр (#114: цагаар гүйхгүй)
     await db.boostEvent.deleteMany();
     await db.boostEvent.create({ data: { productId: prod, at: new Date(U.ubDayStart(yest).getTime() + 18 * H), dollar: 5, zones: 1, byName: 'x' } });
-    expect((await OF.profitDetail(sa, prod)).days.find((x) => x.day === yest)!.boost).toBe(4500);
+    expect((await OF.profitDetail(sa, prod)).days.find((x) => x.day === yest)!.boost).toBe(18000);
     await err(OF.setConfig(lead, { oppCost: 1 }), 403);
     await OF.setConfig(lead, { claimTarget: 3 });
     await OF.setConfig(sa, { lowProfit: 2000, costPct: 35 });
