@@ -358,6 +358,21 @@ describe('дуудлагын бүртгэл (хуучин логик + #54)', ()
   });
 });
 
+describe('дуудлагын бүртгэл — бөөнөөр шилжүүлэх', () => {
+  it('оператор олон бүртгэлээ нэг дор шилжүүлэх хүсэлт; хүлээн авагч бүгдийг нэг товчоор; бусдын бүртгэлийг шилжүүлэхгүй', async () => {
+    await C.createCallNotes(op, { phones: '88000001 88000002 88000003' });
+    await C.createCallNotes(op2, { phones: '88000004' });
+    const mine = await db.callNote.findMany({ where: { ownerId: op.id } });
+    const other = await db.callNote.findFirstOrThrow({ where: { ownerId: op2.id } });
+    const r = await C.requestTransfers(op, { ids: [...mine.map((n) => n.id), other.id], toUserId: op2.id });
+    expect(r).toEqual({ requested: 3, skipped: 1 });
+    expect((await C.requestTransfers(op, { ids: mine.map((n) => n.id), toUserId: op2.id })).requested).toBe(0); // давхар хүсэлт үүсэхгүй
+    await err(C.decideTransfers(op, { ids: 'all', accept: true }).then((x) => { if (x.decided) throw new Error('op-д ирээгүй'); throw new AppError(403, 'ok'); }), 403);
+    expect((await C.decideTransfers(op2, { ids: 'all', accept: true })).decided).toBe(3);
+    expect(await db.callNote.count({ where: { ownerId: op2.id } })).toBe(4);
+  });
+});
+
 describe('Meta CAPI (#43 5)', () => {
   it('амжилттай → SENT (нэг удаа, event_id = дугаар); алдаа → дахин оролдлого; цуцлагдсан → SKIPPED', async () => {
     await M.setMetaSettings(sa, { pixelId: '1234567890', token: 'EAAB' + 'x'.repeat(40) });

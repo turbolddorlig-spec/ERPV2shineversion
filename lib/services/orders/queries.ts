@@ -186,7 +186,7 @@ export async function customerCard(actor: UserActor, phonesInput: string[]) {
   if (!phones.length) return { phones, orders: [], stats: { total: 0, delivered: 0, cancelled: 0 }, active: null, blacklist: [], calls: [], lastAddress: null };
   const byPhone: Prisma.OrderWhereInput = { OR: [{ phone: { in: phones } }, { extraPhone: { in: phones } }] };
   const [orders, stats, blacklist, calls] = await Promise.all([
-    db.order.findMany({ where: byPhone, orderBy: { id: 'desc' }, take: 6, include: { lines: true } }),
+    db.order.findMany({ where: byPhone, orderBy: { id: 'desc' }, take: 20, include: { lines: true } }),
     db.order.groupBy({ by: ['status'], where: byPhone, _count: true }),
     db.blacklistEntry.findMany({ where: { phone: { in: phones }, isActive: true }, orderBy: { id: 'desc' }, take: 5 }),
     db.callNote.findMany({ where: { phone: { in: phones }, status: { in: ['PENDING', 'CONTACTED'] } }, orderBy: { id: 'desc' }, take: 5 }),

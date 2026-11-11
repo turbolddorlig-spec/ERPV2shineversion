@@ -435,6 +435,7 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
 function CustomerCard({ card, dup, onAddress, onAddToExisting, hasLines, onCall }: {
   card: Card; dup: Card['active']; onAddress: () => void; onAddToExisting: () => void; hasLines: boolean; onCall: (c: Card['calls'][number]) => void;
 }) {
+  const [showOrders, setShowOrders] = useState(false);
   const empty = !card.stats.total && !card.blacklist.length && !card.calls.length;
   if (empty) return <p className="-mt-1 text-[12px] text-subtle">Шинэ үйлчлүүлэгч — өмнө захиалга байхгүй</p>;
   return (
@@ -454,15 +455,34 @@ function CustomerCard({ card, dup, onAddress, onAddToExisting, hasLines, onCall 
         </div>
       ))}
       {card.lastAddress ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-muted">📍 Сүүлийн хаяг: {card.lastAddress.fullAddress}</span>
-          <button type="button" onClick={onAddress} className="rounded-md border border-line bg-surface px-2 py-0.5 text-[12px] font-bold">Энэ хаягаар</button>
+        <div className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-muted" title={card.lastAddress.fullAddress}>📍 Сүүлийн хаяг: {card.lastAddress.fullAddress}</span>
+          <button type="button" onClick={onAddress} className="shrink-0 whitespace-nowrap rounded-md border border-line bg-surface px-2 py-0.5 text-[12px] font-bold">Энэ хаягаар</button>
         </div>
       ) : null}
       {card.orders.length ? (
-        <ul className="flex flex-col gap-0.5 text-[12px] text-muted">
-          {card.orders.slice(0, 3).map((o) => <li key={o.id}><Link href={`/orders/${o.id}`} className="font-semibold text-ink">№{o.number}</Link> · {o.statusLabel} · {ubDateTime(o.createdAt).slice(0, 10)} · {money(o.total)} · {o.lines.join(', ')}</li>)}
-        </ul>
+        <div className="flex flex-col">
+          <button type="button" aria-expanded={showOrders} onClick={() => setShowOrders(!showOrders)} className="flex items-center gap-1 self-start text-[12px] font-semibold text-muted hover:text-ink">
+            <Icon name={showOrders ? 'up' : 'down'} size={12} />Өмнөх захиалгууд ({card.stats.total}{card.stats.total > card.orders.length ? `, сүүлийн ${card.orders.length}` : ""})
+          </button>
+          {showOrders ? (
+            <div className="mt-1 max-h-[132px] overflow-y-auto rounded-md border border-line bg-surface">
+              <table className="w-full table-fixed text-[11.5px]">
+                <tbody className="divide-y divide-line">
+                  {card.orders.map((o) => (
+                    <tr key={o.id}>
+                      <td className="w-[72px] px-1.5 py-1"><Link href={`/orders/${o.id}`} className="font-semibold text-ink">№{o.number}</Link></td>
+                      <td className="w-[84px] truncate px-1 py-1 text-muted">{o.statusLabel}</td>
+                      <td className="w-[62px] px-1 py-1 text-subtle">{ubDateTime(o.createdAt).slice(2, 10)}</td>
+                      <td className="w-[68px] px-1 py-1 text-right font-semibold">{money(o.total)}</td>
+                      <td className="truncate px-1.5 py-1 text-muted" title={o.lines.join(', ')}>{o.lines.join(', ')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

@@ -184,3 +184,36 @@ export async function operatorsList(actor: UserActor) {
   if (!canView(actor.roles, 'orders')) throw forbidden();
   return db.user.findMany({ where: { isActive: true, roles: { hasSome: ['OPERATOR', 'OPERATOR_LEAD', 'ADMIN', 'SUPER_ADMIN'] } }, orderBy: { name: 'asc' }, select: { id: true, name: true } });
 }
+
+/** Бөөнөөр шилжүүлэх хүсэлт (оператор өөрийн нээлттэй бүртгэлүүдээ) — нэг гүйлгээнд; тохирохгүйг алгасна */
+export async function requestTransfers(actor: UserActor, input: { ids?: unknown; toUserId?: unknown }) {
+  assertEdit(actor);
+  const ids = Array.isArray(input.ids) ? [...new Set((input.ids as unknown[]).map(Number))].filter((n) => Number.isInteger(n) && n > 0) : [];
+  if (!ids.length || ids.length > 500) throw badRequest('Бүртгэл сонгоно уу');
+  const to = await db.user.findUnique({ where: { id: String(input.toUserId ?? '') } });
+  if (!to || !to.isActive || !canEditOrders(to.roles)) throw badRequest('Оператор олдсонгүй');
+  const sup = canSuperviseOperators(actor.roles);
+  return db.$transaction(async (tx) => {
+    const notes = await tx.callNote.findMany({ where: { id: { in: ids }, status: { in: ['PENDING', 'CONTACTED'] }, ...(sup ? {} : { ownerId: actor.id }), ownerId: { not: to.id } } });
+    const pending = new Set((await tx.callNoteTransfer.findMany({ where: { noteId: { in: notes.map((n) => n.id) }, status: 'PENDING' }, select: { noteId: true } })).map((t) => t.noteId));
+    const ok = notes.filter((n) => !pending.has(n.id));
+    if (ok.length) await tx.callNoteTransfer.createMany({ data: ok.map((n) => ({ noteId: n.id, fromId: actor.id, fromName: actor.name, toId: to.id, toName: to.name })) });
+    return { requested: ok.length, skipped: ids.length - ok.length };
+  });
+}
+
+/** Ирсэн хүсэлтүүдийг бөөнөөр хүлээн авах / татгалзах (ids эсвэл 'all') */
+export async function decideTransfers(actor: UserActor, input: { ids?: unknown; accept?: unknown }) {
+  assertEdit(actor);
+  const accept = input.accept === true;
+  const where = input.ids === 'all'
+    ? { toId: actor.id, status: 'PENDING' as const }
+    : { toId: actor.id, status: 'PENDING' as const, id: { in: (Array.isArray(input.ids) ? (input.ids as unknown[]).map(Number) : []).filter((n) => Number.isInteger(n) && n > 0) } };
+  return db.$transaction(async (tx) => {
+    const ts = await tx.callNoteTransfer.findMany({ where, select: { id: true, noteId: true }, take: 1000 });
+    if (!ts.length) return { decided: 0 };
+    const r = await tx.callNoteTransfer.updateMany({ where: { id: { in: ts.map((t) => t.id) }, status: 'PENDING' }, data: { status: accept ? 'ACCEPTED' : 'REJECTED', decidedAt: new Date() } });
+    if (accept) await tx.callNote.updateMany({ where: { id: { in: ts.map((t) => t.noteId) } }, data: { ownerId: actor.id, ownerName: actor.name } });
+    return { decided: r.count };
+  });
+}

@@ -94,6 +94,7 @@ function CallsBody({ onCreateOrder }: { onCreateOrder: (p: OrderPrefill) => void
   const counts = data?.counts ?? {};
   const list: (Note & { _transferId?: number; _from?: string })[] = tab === 'incoming' ? (data?.incoming ?? []).map((t) => ({ ...t.note, _transferId: t.transferId, _from: t.fromName })) : (data?.items ?? []);
   const selectable = tab === 'PENDING' || tab === 'CONTACTED';
+  const incomingTab = tab === 'incoming';
 
   return (
     <div className="flex flex-col gap-3 px-4 py-3 text-[13px]">
@@ -132,9 +133,23 @@ function CallsBody({ onCreateOrder }: { onCreateOrder: (p: OrderPrefill) => void
       {flash ? <Notice tone="ok">{flash}</Notice> : null}
       {error ? <Notice>{error}</Notice> : null}
 
+      {incomingTab && (data?.incoming.length ?? 0) > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-info/40 bg-info-soft p-2">
+          <span className="font-bold">{sel.size ? `${sel.size} сонгосон` : `${data!.incoming.length} хүсэлт ирсэн`}</span>
+          <Button size="sm" variant="dark" loading={busy === -1} onClick={async () => {
+            const ok = await run(-1, () => api('/api/calls/transfers/bulk', { method: 'POST', json: { ids: sel.size ? [...sel] : 'all', accept: true } }), sel.size ? `${sel.size} бүртгэл хүлээн авлаа` : 'Бүгдийг хүлээн авлаа');
+            if (ok) setSel(new Set());
+          }}>{sel.size ? 'Сонгосныг хүлээн авах' : 'Бүгдийг хүлээн авах'}</Button>
+          <Button size="sm" loading={busy === -2} onClick={async () => {
+            if (!confirm(sel.size ? `${sel.size} хүсэлтийг татгалзах уу?` : 'Бүх хүсэлтийг татгалзах уу?')) return;
+            const ok = await run(-2, () => api('/api/calls/transfers/bulk', { method: 'POST', json: { ids: sel.size ? [...sel] : 'all', accept: false } }), 'Татгалзлаа');
+            if (ok) setSel(new Set());
+          }}>{sel.size ? 'Сонгосныг татгалзах' : 'Бүгдийг татгалзах'}</Button>
+        </div>
+      ) : null}
       {selectable && sel.size ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/40 bg-accent-soft p-2">
-          <span className="font-bold">{sel.size} сонгосон</span>
+        <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-lg border border-accent/40 bg-accent-soft p-2 shadow-card">
+          <span className="font-bold">{sel.size} сонгосон →</span>
           <select aria-label="Шилжүүлэх оператор" value={bulkTo} onChange={(e) => setBulkTo(e.target.value)} className={clsx(inp, 'w-[180px]')}>
             <option value="">— Оператор —</option>
             {ops.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
@@ -143,15 +158,19 @@ function CallsBody({ onCreateOrder }: { onCreateOrder: (p: OrderPrefill) => void
             const ids = [...sel];
             const ok = sup
               ? await run(0, () => api('/api/calls/reassign', { method: 'POST', json: { ids, toUserId: bulkTo } }), `${ids.length} бүртгэл шилжүүллээ`)
-              : await run(0, () => Promise.all(ids.map((id) => api(`/api/calls/${id}/transfer`, { method: 'POST', json: { toUserId: bulkTo } }))), 'Шилжүүлэх хүсэлт илгээлээ');
+              : await run(0, async () => {
+                const r = await api<{ requested: number; skipped: number }>('/api/calls/transfer-bulk', { method: 'POST', json: { ids, toUserId: bulkTo } });
+                if (!r.requested) throw new ApiError('Шилжүүлэх боломжтой бүртгэл алга (аль хэдийн хүсэлт илгээсэн байж магадгүй)', 'none', 400);
+              }, `${ids.length} бүртгэлийн шилжүүлэх хүсэлт илгээлээ — нөгөө оператор «Бүгдийг хүлээн авах» дарна`);
             if (ok) { setSel(new Set()); setBulkTo(''); }
           }}>{sup ? 'Шууд шилжүүлэх' : 'Шилжүүлэх хүсэлт'}</Button>
           <Button size="sm" variant="ghost" onClick={() => setSel(new Set())}>Болих</Button>
         </div>
       ) : null}
-      {selectable && list.length ? (
-        <label className="flex items-center gap-2 text-[12.5px] text-muted">
-          <input type="checkbox" className="h-4 w-4" checked={list.every((n) => sel.has(n.id))} onChange={(e) => setSel(e.target.checked ? new Set(list.filter((n) => !n.pendingTransferTo).map((n) => n.id)) : new Set())} />Бүгдийг сонгох
+      {(selectable || incomingTab) && list.length ? (
+        <label className="flex items-center gap-2 text-[12.5px] font-semibold text-muted">
+          <input type="checkbox" className="h-4 w-4" checked={incomingTab ? list.every((n) => sel.has(n._transferId!)) : list.filter((n) => !n.pendingTransferTo).every((n) => sel.has(n.id))}
+            onChange={(e) => setSel(e.target.checked ? new Set(incomingTab ? list.map((n) => n._transferId!) : list.filter((n) => !n.pendingTransferTo).map((n) => n.id)) : new Set())} />Бүгдийг сонгох ({list.length})
         </label>
       ) : null}
 
@@ -166,6 +185,7 @@ function CallsBody({ onCreateOrder }: { onCreateOrder: (p: OrderPrefill) => void
               <div key={n.id} className={clsx('flex flex-col gap-1.5 rounded-lg border p-2.5', outgoing ? 'border-accent/40 bg-accent-soft/40' : sel.has(n.id) ? 'border-info bg-info-soft/50' : n.status === 'CONTACTED' ? 'border-info/30 bg-info-soft/20' : 'border-line bg-surface')}>
                 <div className="flex flex-wrap items-center gap-2">
                   {selectable && !outgoing ? <input type="checkbox" aria-label="Сонгох" className="h-4 w-4" checked={sel.has(n.id)} onChange={(e) => setSel((s) => { const x = new Set(s); if (e.target.checked) x.add(n.id); else x.delete(n.id); return x; })} /> : null}
+                  {incoming ? <input type="checkbox" aria-label="Сонгох" className="h-4 w-4" checked={sel.has(n._transferId!)} onChange={(e) => setSel((s) => { const x = new Set(s); if (e.target.checked) x.add(n._transferId!); else x.delete(n._transferId!); return x; })} /> : null}
                   {outgoing ? <span className="rounded-md bg-accent px-1.5 py-0.5 text-[11px] font-bold text-on-accent">⇄ {n.pendingTransferTo}-д шилжүүлж байна</span> : null}
                   {n.orderNumber ? <Link href={`/orders/${n.orderId}`} className="rounded-md bg-ok-soft px-1.5 py-0.5 text-[11.5px] font-bold text-ok-ink">#{n.orderNumber}</Link> : null}
                   <a href={`tel:${n.phone}`} className="select-text font-mono text-[13.5px] font-bold">{formatPhone(n.phone)}</a>
