@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
       case 'daily': return json(await S.dailyDetail(ctx.actor, g('date')));
       case 'history': return json(await S.scoreHistory(ctx.actor, g('from'), g('to')));
       case 'profit': return json(await S.profitDetail(ctx.actor, g('id')));
-      case 'config': return json(await S.getConfig());
+      case 'config': return json(await S.configView(ctx.actor));
       default: throw notFound();
     }
   } catch (e) { return errorResponse(e); }

@@ -618,6 +618,12 @@ async function main() {
     check('маркетинг тохиргоо өөрчлөхгүй (403)', cf.status === 403, String(cf.status));
     const sc = await req('/api/goods-outflow', { cookie: mk9.cookie, method: 'POST', body: { action: 'score', userId: 'x', date: '2026-01-01', score: 10, salaryAmount: 999999 } });
     check('маркетинг өөрийгөө үнэлэхгүй (403)', sc.status === 403, String(sc.status));
+    const cv = JSON.parse((await req('/api/goods-outflow?view=config', { cookie: mk9.cookie })).text);
+    check('маркетинг зардал/ханш харахгүй', cv.oppCost === undefined && cv.rate === undefined && cv.claimTarget > 0, JSON.stringify(cv));
+    const adm9 = await loginAs('80000002');
+    const prA = await req(`/api/goods-outflow?view=profit&id=${pid}`, { cookie: adm9.cookie });
+    const tA = JSON.parse((await req('/api/goods-outflow?view=table', { cookie: adm9.cookie })).text);
+    check('Админ ч ашгийн задаргаа, ашиг харахгүй', prA.status === 403 && tA.rows.every((r: { profit?: unknown }) => r.profit === undefined), String(prA.status));
     const al = await req('/api/goods-outflow?view=alerts', { cookie: mk9.cookie });
     check('анхааруулга жагсаалт', al.status === 200 && Array.isArray(JSON.parse(al.text).red), al.text.slice(0, 80));
     const ww = await req('/api/goods-outflow?view=work', { cookie: mk9.cookie });

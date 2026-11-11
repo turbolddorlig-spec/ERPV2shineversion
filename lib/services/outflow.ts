@@ -49,6 +49,13 @@ export async function getConfig(tx: Tx | typeof db = db): Promise<OutflowConfig>
   if (tx === db) cfgCache = { at: Date.now(), v };
   return v;
 }
+/** Тохиргоо харах: мөнгөн утгууд (опп, хүргэлт, ханш, өртгийн %, босго) — зөвхөн Супер админд */
+export async function configView(actor: UserActor) {
+  assertView(actor);
+  const c = await getConfig();
+  if (isSA(actor)) return c;
+  return { claimTarget: c.claimTarget, claimExpireDays: c.claimExpireDays };
+}
 /** Ажлын цонхны тоо, хоног — Ахлах/Админ/СА; мөнгөн зардал, ханш, босго, цаг — зөвхөн Супер админ */
 export async function setConfig(actor: UserActor, b: Record<string, unknown>) {
   assertLead(actor);
