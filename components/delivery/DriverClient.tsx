@@ -24,7 +24,7 @@ interface DOrder {
   lines: Line[];
   can: { deliver: boolean; cancel: boolean; postpone: boolean; postponeLocked: boolean; issue: boolean; undoDelivery: boolean; redeliver: boolean; undoPostpone: boolean };
 }
-interface ListResp { tab: string; today: string; counts: { delivery: number; delivered: number; cancelled: number; postponed: number }; money: { cash: number; bank: number; unpaid: number; prepaid: number }; items: DOrder[] }
+interface ListResp { tab: string; today: string; counts: { delivery: number; delivered: number; cancelled: number; postponed: number; tomorrow: number }; money: { cash: number; bank: number; unpaid: number; prepaid: number }; items: DOrder[] }
 interface GItem { variantId: number; code: string; name: string; label: string; thumb: string | null; balance: number; held: number; returnable: number }
 interface GDoc { id: number; kind: string; kindLabel: string; at: string; byName: string; note: string | null; total: number; paymentLabel: string | null; lines: { variantId: number; name: string; label: string; qty: number; expected: number; unitPrice: number }[] }
 interface GoodsResp { items: GItem[]; totals: { balance: number; returnable: number }; docs: GDoc[] }
@@ -34,7 +34,7 @@ const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа г�
 const newKey = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `k-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 const TABS: { k: string; l: string; c?: keyof ListResp['counts'] }[] = [
   { k: 'all', l: 'Бүгд' }, { k: 'delivery', l: 'Хүргэлт', c: 'delivery' }, { k: 'delivered', l: 'Хүргэсэн', c: 'delivered' },
-  { k: 'cancelled', l: 'Цуцласан', c: 'cancelled' }, { k: 'tomorrow', l: 'Маргааш', c: 'postponed' }, { k: 'yesterday', l: 'Өчигдөр' },
+  { k: 'cancelled', l: 'Цуцласан', c: 'cancelled' }, { k: 'tomorrow', l: 'Маргааш', c: 'tomorrow' }, { k: 'yesterday', l: 'Өчигдөр' },
 ];
 const ST: Record<string, { l: string; c: string }> = {
   ASSIGNED: { l: 'БЭЛТГЭЖ БАЙНА', c: 'bg-surface2 text-muted' }, OUT_FOR_DELIVERY: { l: 'ХҮРГЭЛТЭНД', c: 'bg-info-soft text-info' },

@@ -404,7 +404,8 @@ export async function driverOrders(actor: UserActor, tabIn?: string) {
     SELECT 'delivery' AS k, count(*)::int AS n FROM "Order" WHERE "driverId" = ${me}::uuid AND (status = 'OUT_FOR_DELIVERY' OR (status = 'ASSIGNED' AND "deliveryDate" <= ${dateOnly(today)}::date))
     UNION ALL SELECT 'delivered', count(*)::int FROM "Order" WHERE "driverId" = ${me}::uuid AND status = 'DELIVERED' AND "deliveredAt" >= ${t0} AND "deliveredAt" < ${t1}
     UNION ALL SELECT 'cancelled', count(*)::int FROM "Order" WHERE "driverId" = ${me}::uuid AND status = 'CANCELLED' AND "cancelledAt" >= ${t0} AND "cancelledAt" < ${t1}
-    UNION ALL SELECT 'postponed', count(*)::int FROM "Order" WHERE "postponedByDriverId" = ${me}::uuid AND "postponedAt" >= ${t0} AND "postponedAt" < ${t1}`;
+    UNION ALL SELECT 'postponed', count(*)::int FROM "Order" WHERE "postponedByDriverId" = ${me}::uuid AND "postponedAt" >= ${t0} AND "postponedAt" < ${t1}
+    UNION ALL SELECT 'tomorrow', count(*)::int FROM "Order" WHERE "driverId" = ${me}::uuid AND status = 'ASSIGNED' AND "deliveryDate" = ${dateOnly(addDays(today, 1))}::date`;
   const c = Object.fromEntries(counts.map((x) => [x.k, x.n])) as Record<string, number>;
   const sums = await db.$queryRaw<{ cash: number; bank: number; unpaid: number; prepaid: number }[]>`
     SELECT COALESCE(sum("collectAmount") FILTER (WHERE "deliveryPayment" = 'CASH'), 0)::int AS cash,
@@ -414,7 +415,7 @@ export async function driverOrders(actor: UserActor, tabIn?: string) {
     FROM "Order" WHERE "driverId" = ${me}::uuid AND status = 'DELIVERED' AND "deliveredAt" >= ${t0} AND "deliveredAt" < ${t1}`;
   return {
     tab, today,
-    counts: { delivery: c.delivery ?? 0, delivered: c.delivered ?? 0, cancelled: c.cancelled ?? 0, postponed: c.postponed ?? 0 },
+    counts: { delivery: c.delivery ?? 0, delivered: c.delivered ?? 0, cancelled: c.cancelled ?? 0, postponed: c.postponed ?? 0, tomorrow: (c.postponed ?? 0) + (c.tomorrow ?? 0) },
     money: sums[0] ?? { cash: 0, bank: 0, unpaid: 0, prepaid: 0 },
     items: rows.map((o) => {
       const s = serializeOrder(o);
