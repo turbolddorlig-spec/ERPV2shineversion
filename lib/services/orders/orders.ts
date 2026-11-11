@@ -1,4 +1,4 @@
-import type { CancelReason, Order, OrderLine, Prisma } from '@prisma/client';
+import type { CancelReason, Order, OrderLine, OrderStatus, Prisma } from '@prisma/client';
 import { db } from '../../db';
 import { badRequest, conflict, forbidden, notFound } from '../../errors';
 import { writeAudit, SYSTEM_ACTOR } from '../../audit';
@@ -13,6 +13,7 @@ import {
 } from './core';
 import { enqueueMeta, skipMeta } from './meta';
 import { addToHandover, isGiven, lockDelivery, removeFromHandover } from '../delivery/core';
+import { assertDayOpen } from '../accounting/lock';
 
 /**
  * Захиалга (Модуль 3, шийдвэр #43–#54).
@@ -368,10 +369,24 @@ export async function cancelOrder(actor: UserActor | typeof SYSTEM_ACTOR & { rol
   return inTx(async (tx) => {
     // Модуль 4: хуваарилсан/падаанд орсон захиалгыг цуцлахад падааны түгжээг эхэлж авна (deadlock-гүй дараалал)
     const pre = await tx.order.findUnique({ where: { id }, select: { status: true } });
-    if (pre && (pre.status === 'NEW' || pre.status === 'ASSIGNED')) await lockDelivery(tx);
+    const DELIV: OrderStatus[] = ['NEW', 'ASSIGNED', 'OUT_FOR_DELIVERY'];
+    const locked = !!pre && DELIV.includes(pre.status);
+    if (locked) await lockDelivery(tx);
     if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
     const o = await tx.order.findUniqueOrThrow({ where: { id } });
     if (o.status === 'CANCELLED') return { order: o, duplicate: true };
+    // Түгжээ авах хооронд хуваарилагдсан / хүргэлтэд гарсан бол (#124-В) — дахин оролдуулна
+    if (!locked && DELIV.includes(o.status) && !opts.system) throw staleError();
+    // Хүргэлтэд гарсныг оператор цуцалж болно (#124 ялгаа 1, хуучин шиг): бараа жолоочид үлдэж агуулахад буцна, жолоочийн гүйцэтгэлд тоологдохгүй
+    if (o.status === 'OUT_FOR_DELIVERY' && !opts.system) {
+      if (input.version !== undefined && Number(input.version) !== o.version) throw staleError();
+      if (o.issueStatus === 'PENDING') throw conflict('Асуудалтай захиалга — «Асуудал» хуудаснаас шийднэ үү', 'issue_pending');
+      await assertDayOpen(tx, o.handoverId);
+      const u = await tx.order.update({ where: { id }, data: { status: 'CANCELLED', cancelReason: reason, cancelNote: `Оператор цуцалсан (хүргэлтэд гарсан): ${note}`, cancelledAt: new Date(), cancelledByName: actor.name, issueFault: 'OPERATOR', version: { increment: 1 } } });
+      await skipMeta(tx, id);
+      await writeAudit(actor, 'order.cancelled', 'Order', String(id), { number: o.number, from: o.status, reason, note, driver: o.driverName, goodsWithDriver: true }, tx, ['order', 'cancel', 'delivery']);
+      return { order: u, duplicate: false };
+    }
     // Автомат цуцлалт: түгжсэний дараа дахин шалгана (энэ хооронд «Мөнгө орсон» болсон байж болно)
     if (opts.system && !(o.status === 'PENDING_PAYMENT' && o.paymentDeadline && o.paymentDeadline < new Date())) return { order: o, duplicate: true };
     if (!ACTIVE.includes(o.status)) throw conflict('Хүргэлтэд гарсан захиалгыг жолооч цуцална (бараа нь жолоочид байгаа)', 'order_locked');
@@ -413,6 +428,9 @@ export async function undoPaid(actor: UserActor, idInput: unknown, input: { note
     if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
     const o = await tx.order.findUniqueOrThrow({ where: { id } });
     if (!(o.status === 'NEW' && o.prepaid)) throw conflict('Зөвхөн «Мөнгө орсон» гэж тэмдэглэсэн, оноогоогүй захиалгыг буцаана', 'bad_status');
+    // Банкны гүйлгээгээр таарсан бол энд буцаахгүй (#124-И) — «Банкны импорт» хуудсанд гүйлгээг зөв захиалгад нь гараар тааруулна
+    const linked = await tx.bankTransaction.count({ where: { orderId: id, status: { in: ['MATCHED', 'EXCESS_AMOUNT', 'PARTIAL_PAYMENT'] }, isDuplicate: false, refunded: false } });
+    if (linked) throw conflict('Банкны гүйлгээгээр таарсан төлбөр — «Банкны импорт» хуудаснаас гүйлгээг зөв захиалгад нь тааруулна уу (энэ захиалга автоматаар буцна)', 'bank_linked');
     const u = await tx.order.update({ where: { id }, data: { status: 'PENDING_PAYMENT', prepaid: false, paidAmount: 0, confirmedAt: null, paymentDeadline: new Date(Date.now() + waitDays * 86_400_000), version: { increment: 1 } } });
     await skipMeta(tx, id);
     await writeAudit(actor, 'order.paid_undone', 'Order', String(id), { number: o.number, note }, tx, ['order', 'money']);

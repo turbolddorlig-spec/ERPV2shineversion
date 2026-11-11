@@ -4,8 +4,8 @@ import { badRequest, conflict, forbidden, notFound } from '../../errors';
 import { writeAudit, SYSTEM_ACTOR, type Actor } from '../../audit';
 import { canBankImport, canView } from '../../permissions';
 import { ubDay, ubDayStart, isYmd } from '../../ubdate';
-import { inTx, lockOrder, paidOrderData, type UserActor } from '../orders/core';
-import { enqueueMeta } from '../orders/meta';
+import { inTx, lockOrder, orderSettings, paidOrderData, type UserActor } from '../orders/core';
+import { enqueueMeta, skipMeta } from '../orders/meta';
 import { bustCounts } from '../orders/queries';
 import { addDays } from '../delivery/core';
 
@@ -260,7 +260,19 @@ export async function manualMatch(actor: UserActor, idIn: unknown, input: { orde
     await lockOrder(tx, o.id);
     const prev = t.orderId;
     await tx.bankTransaction.update({ where: { id }, data: { orderId: o.id, isDuplicate: false, status: 'MATCHED', matchedAt: new Date(), matchedByName: actor.name } });
-    if (prev && prev !== o.id) await restatus(tx, prev);
+    if (prev && prev !== o.id) {
+      await restatus(tx, prev);
+      // Гүйлгээ өөр захиалгад шилжвэл (#124-И): хуучин захиалга оноогдоогүй, төлбөр нь дутуу болсон бол «Төлбөр хүлээж буй» руу буцна
+      await lockOrder(tx, prev);
+      const po = await tx.order.findUnique({ where: { id: prev } });
+      const left = await paidFor(tx, prev);
+      if (po && po.status === 'NEW' && po.prepaid && !po.driverId && !po.handoverId && left < po.total) {
+        const { waitDays } = await orderSettings();
+        await tx.order.update({ where: { id: prev }, data: { status: 'PENDING_PAYMENT', prepaid: false, paidAmount: left, confirmedAt: null, paymentDeadline: new Date(Date.now() + waitDays * 86_400_000), version: { increment: 1 } } });
+        await skipMeta(tx, prev);
+        await writeAudit(actor, 'order.paid_undone', 'Order', String(prev), { number: po.number, note: `Банкны гүйлгээ №${o.number} руу шилжсэн`, paid: left, total: po.total }, tx, ['order', 'money', 'bank']);
+      }
+    }
     await restatus(tx, o.id);
     const paid = await paidFor(tx, o.id);
     let paidMarked = false;

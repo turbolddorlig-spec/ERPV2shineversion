@@ -238,6 +238,12 @@ describe('нийлүүлэгчийн мини гарц (#122)', () => {
     expect((await SO.supplierReorderDetail(sup, null, prod)).info?.level).toBe('ORDERED');
     const mine = await OF.markReordered(sa, { productId: other.id, qty: 1 }).catch(() => null);
     if (mine) await err(SO.supplierReorderCancel(sup, null, mine.id), 403);
+    // #124-Ж: таны тэмдэг тусдаа — нийлүүлэгчид харагдахгүй, цуцалж чадахгүй; таных ч нийлүүлэгчийнхийг хөндөхгүй
+    const own = await OF.markReordered(sa, { productId: prod, qty: 999, note: 'Нууц тэмдэглэл' });
+    expect((await SO.supplierReorderDetail(sup, null, prod)).history.some((h) => h.note === 'Нууц тэмдэглэл')).toBe(false);
+    await err(SO.supplierReorderCancel(sup, null, own.id), 403);
+    expect((await OF.computeReorder()).get(prod)!.order?.qty).toBe(999);
+    await OF.cancelReorder(sa, own.id);
     await SO.supplierReorderCancel(sup, null, o.id);
     // 340-ийг нөөцөлбөл 130 ÷ 10 = 13 хоног → нийлүүлэгчид 🚚 сануулга; СА-д нуугдсан (#120)
     const { order: big } = await O.createOrder(op, { phone: '99488888', province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 13, addressDetail: 'Тест', pageId: page1, lines: [{ variantId: v, qty: 340 }], idemKey: randomUUID(), deliveryDate: U.ubDay(new Date(), 1) });

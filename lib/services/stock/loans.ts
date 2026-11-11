@@ -123,6 +123,8 @@ export async function returnLoan(actor: UserActor, idInput: unknown, input: { wa
   const { lines } = await cleanLines(input.lines);
   return inTx(async (tx) => {
     if (!(await claimIdem(tx, `loan-return:${idemKey}`))) return { loan: await loadLoan(tx, id), duplicate: true };
+    // Нэг зээлийг нэг удаад нэг л хүн буцааж бүртгэнэ (#124-А) — зэрэг буцаахад илүү буцаагдахгүй
+    await tx.$queryRaw`SELECT id FROM "StaffLoan" WHERE id = ${id} FOR UPDATE`;
     const l = await loadLoan(tx, id);
     if (l.status !== 'ISSUED') throw conflict('Энэ зээл нээлттэй биш байна', 'loan_not_issued');
     const { warehouse, locationId } = await warehouseLocation(tx, warehouseId);

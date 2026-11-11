@@ -204,6 +204,23 @@ describe('падааны өдрөөр тооцоо (#83)', () => {
   });
 });
 
+describe('#124 ялгаа 1: хүргэлтэд гарсныг оператор цуцлах (хуучин шиг)', () => {
+  it('цуцлагдана; бараа жолоочид үлдэж агуулахад буцна; жолоочийн гүйцэтгэлд тоологдохгүй; дараа нь жолооч хүргэж чадахгүй', async () => {
+    const [a, b] = await outFor(drv, 2);
+    await O.cancelOrder(op, a!, { reason: 'CUSTOMER_CANCELLED', note: 'Үйлчлүүлэгч утсаар болиулсан' });
+    const o = await db.order.findUniqueOrThrow({ where: { id: a! } });
+    expect([o.status, o.issueFault, o.cancelNote?.startsWith('Оператор цуцалсан')]).toEqual(['CANCELLED', 'OPERATOR', true]);
+    await err(DR.deliverOrder(drv, a!, { payment: 'CASH' }), 409);
+    await DR.deliverOrder(drv, b!, { payment: 'CASH' });
+    const r = await row(drv);
+    expect([r.delivered, r.cancelled, r.excluded, r.perfCalc]).toEqual([1, 0, 1, 100]);
+    // бараа жолоочид — агуулах буцаалтаар авна, журнал зөв
+    const back = await db.orderLine.findMany({ where: { orderId: a! } });
+    await G.receiveReturn(wh, { driverId: drv.id, lines: back.map((l) => ({ variantId: l.variantId, qty: l.qty })), idemKey: key() });
+    await recOk();
+  });
+});
+
 describe('тооцоо нийлэх, түгжээ', () => {
   it('#124-7: баталгаажуулах ба «Төлөв солих» зэрэг ирвэл түгжигдсэн өдөрт буруу дүн үлдэхгүй', async () => {
     const [a, b] = await outFor(drv, 2);

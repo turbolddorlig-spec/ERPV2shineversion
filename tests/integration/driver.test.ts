@@ -360,6 +360,36 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     await recOk();
   });
 
+  it('#124-З: гартаа бараатай жолоочийг идэвхгүй болгох / жолоочийн эрх хасахгүй; бүгдийг буцаасны дараа болно', async () => {
+    const US = await import('@/lib/services/users');
+    const ids = [(await O.createOrder(op, ub({ deliveryDate: today, lines: [{ variantId: v1, qty: 1 }] }))).order.id];
+    await L.assignOrders(lead, { ids, driverId: drv.id });
+    await err(US.deactivateUser(sa, drv.id), 409, 'driver_has_goods');
+    const h = await H.createHandover(wh, { driverId: drv.id, date: today, orderIds: ids });
+    await H.prepareHandover(wh, h.id); await checkAll(h.id); await H.confirmHandover(wh, h.id);
+    await H.setDriverCheck(drv, h.id, { variantId: 'all', checked: true }); await H.receiveHandover(drv, h.id);
+    await err(US.updateUser(sa, drv.id, { roles: ['WAREHOUSE'] }), 409, 'driver_has_goods');
+    await DR.driverCancel(drv, ids[0]!, { note: 'Үйлчлүүлэгч болиулсан' });
+    await err(US.deactivateUser(sa, drv.id), 409, 'driver_has_goods'); // бараа гарт
+    await G.receiveReturn(wh, { driverId: drv.id, lines: [{ variantId: v1, qty: 1 }], idemKey: key() });
+    await US.deactivateUser(sa, drv.id);
+    await recOk();
+  });
+
+  it('#124-Д: падаан буцаагдсан бол «Маргааш»-ыг буцаахгүй — падаан гацахгүй', async () => {
+    const ids = [(await O.createOrder(op, ub({ deliveryDate: today, lines: [{ variantId: v1, qty: 1 }] }))).order.id, (await O.createOrder(op, ub({ phone: '99887766', deliveryDate: today, lines: [{ variantId: v1, qty: 1 }] }))).order.id];
+    await L.assignOrders(lead, { ids, driverId: drv.id });
+    const h = await H.createHandover(wh, { driverId: drv.id, date: today, orderIds: ids });
+    await H.prepareHandover(wh, h.id); await checkAll(h.id); await H.confirmHandover(wh, h.id);
+    await H.setDriverCheck(drv, h.id, { variantId: 'all', checked: true }); await H.receiveHandover(drv, h.id);
+    await DR.postponeOrder(drv, ids[0]!, {});
+    await H.revertHandover(wh, h.id);
+    await err(DR.undoPostpone(drv, ids[0]!), 409, 'handover_reverted');
+    expect((await db.order.findUniqueOrThrow({ where: { id: ids[0]! } })).status).toBe('NEW');
+    expect(await db.auditLog.count({ where: { action: { in: ['handover.check', 'handover.driver_check'] } } })).toBeGreaterThan(0);
+    await recOk();
+  });
+
   it('pickup: жолооч хуваарилаагүй «Шинэ»-г өөрөө авна; өөр жолоочийнхыг авахгүй; хяналт ба жолоочийн табууд', async () => {
     const a = (await O.createOrder(op, ub({ deliveryDate: today }))).order.id;
     const b = (await O.createOrder(op, ub({ deliveryDate: today }))).order.id;

@@ -9,7 +9,7 @@ import { inTx, lockOrder, requireReason, type UserActor } from '../orders/core';
 import { bustCounts, serializeOrder } from '../orders/queries';
 import { skipMeta } from '../orders/meta';
 import { assignCore } from './assign';
-import { addDays, driverLocationId, lockDelivery, removeFromHandover, type Tx } from './core';
+import { addDays, driverLocationId, isGiven, lockDelivery, removeFromHandover, type Tx } from './core';
 import { assertDayOpen } from '../accounting/lock';
 import { syncShortageDebts } from '../accounting/debts';
 import { autoPenaltyForIssue } from '../penalties';
@@ -224,7 +224,7 @@ export async function driverCancel(actor: UserActor, idIn: unknown, input: { not
     checkVersion(o, input.version);
     noPendingIssue(o);
     await cancelCore(tx, o, byName(actor, ob), 'DRIVER_CANCELLED', note);
-    if (!ob && input.blacklist === true || input.blacklist === 'true') {
+    if (!ob && (input.blacklist === true || input.blacklist === 'true')) {
       const exists = await tx.blacklistEntry.findFirst({ where: { phone: o.phone, isActive: true } });
       if (!exists) await tx.blacklistEntry.create({ data: { phone: o.phone, reason: `[МӨНГӨ ӨГДӨГГҮЙ ХҮН] ${note}`, orderNumber: o.number, reportedById: actor.id, reportedBy: actor.name } });
       await writeAudit(actor, 'blacklist.added', 'Blacklist', o.phone, { phone: o.phone, reason: note, orderNumber: o.number, by: 'driver' }, tx, ['order']);
@@ -302,6 +302,11 @@ export async function undoPostpone(actor: UserActor, idIn: unknown) {
     const hadGoods = !!o.outForDeliveryAt;
     const hoP = await tx.handoverOrder.findFirst({ where: { orderId: id, removeReason: 'Маргааш (бараа жолоочид)' }, orderBy: { id: 'desc' }, select: { handoverId: true } });
     await assertDayOpen(tx, hoP?.handoverId);
+    // Падаан буцаагдсан бол (бараа агуулахад буцсан) «Маргааш»-ыг буцаахгүй (#124-Д) — захиалга «Шинэ» хэвээр, ахлах дахин хуваарилна
+    if (hadGoods && hoP) {
+      const h = await tx.handover.findUnique({ where: { id: hoP.handoverId }, select: { status: true } });
+      if (!h || !isGiven(h.status)) throw conflict('Падаан буцаагдсан тул «Маргааш»-ыг буцаах боломжгүй — ахлах жолоочид хандана уу', 'handover_reverted');
+    }
     if (hadGoods) {
       const need = new Map<number, number>();
       for (const l of o.lines) need.set(l.variantId, (need.get(l.variantId) ?? 0) + l.qty);

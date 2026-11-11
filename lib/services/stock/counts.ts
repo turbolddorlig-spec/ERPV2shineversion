@@ -38,34 +38,50 @@ export async function setCountLine(actor: UserActor, countIdInput: unknown, inpu
   const countId = cleanId(countIdInput, 'Тооллого');
   const variantId = cleanId(input.variantId, 'Бараа');
   if (input.countedQty === null || input.countedQty === '') {
-    const c = await loadCount(countId);
-    if (c.status !== 'OPEN') throw conflict('Тооллого илгээгдсэн байна', 'count_locked');
-    await db.stockCountLine.deleteMany({ where: { countId, variantId, status: 'PENDING' } });
+    await inTx(async (tx) => {
+      const c = await lockCount(tx, countId);
+      if (c.status !== 'OPEN') throw conflict('Тооллого илгээгдсэн байна', 'count_locked');
+      await tx.stockCountLine.deleteMany({ where: { countId, variantId, status: 'PENDING' } });
+    });
     return null;
   }
   const countedQty = Number(input.countedQty);
   if (!Number.isInteger(countedQty) || countedQty < 0 || countedQty > MAX_QTY) throw badRequest('Тоолсон тоо 0 эсвэл түүнээс их бүхэл тоо', 'bad_qty');
-  const c = await loadCount(countId);
-  if (c.status !== 'OPEN') throw conflict('Тооллого илгээгдсэн байна. Шинэ тооллого эхлүүлнэ үү.', 'count_locked');
-  const v = await db.productVariant.findUnique({ where: { id: variantId }, select: { id: true } });
-  if (!v) throw badRequest('Бараа олдсонгүй', 'variant_not_found');
-  const { locationId } = await warehouseLocation(db, c.warehouseId, { allowInactive: true });
-  const systemQty = (await db.stockBalance.findUnique({ where: { locationId_variantId: { locationId, variantId } } }))?.qty ?? 0;
-  const data = { systemQty, countedQty, countedAt: new Date(), countedById: actor.id, countedByName: actor.name };
-  return db.stockCountLine.upsert({ where: { countId_variantId: { countId, variantId } }, create: { countId, variantId, ...data }, update: data });
+  // Илгээх / цуцлахтай зэрэг явахгүй (#124-Б): тооллогын мөрийг түгжээд л бичнэ
+  return inTx(async (tx) => {
+    const c = await lockCount(tx, countId);
+    if (c.status !== 'OPEN') throw conflict('Тооллого илгээгдсэн байна. Шинэ тооллого эхлүүлнэ үү.', 'count_locked');
+    const v = await tx.productVariant.findUnique({ where: { id: variantId }, select: { id: true } });
+    if (!v) throw badRequest('Бараа олдсонгүй', 'variant_not_found');
+    const { locationId } = await warehouseLocation(tx, c.warehouseId, { allowInactive: true });
+    const systemQty = (await tx.stockBalance.findUnique({ where: { locationId_variantId: { locationId, variantId } } }))?.qty ?? 0;
+    const data = { systemQty, countedQty, countedAt: new Date(), countedById: actor.id, countedByName: actor.name };
+    return tx.stockCountLine.upsert({ where: { countId_variantId: { countId, variantId } }, create: { countId, variantId, ...data }, update: data });
+  });
+}
+
+/** Тооллогын мөрийг түгжинэ (#124-Б) — тоолох, илгээх, батлах, цуцлах нэг зэрэг явахгүй */
+async function lockCount(tx: Prisma.TransactionClient, id: number) {
+  await tx.$queryRaw`SELECT id FROM "StockCount" WHERE id = ${id} FOR UPDATE`;
+  const c = await tx.stockCount.findUnique({ where: { id } });
+  if (!c) throw notFound('Тооллого олдсонгүй');
+  return c;
 }
 
 export async function submitCount(actor: UserActor, idInput: unknown) {
   requireRole(canOperateStock(actor.roles));
   const id = cleanId(idInput, 'Тооллого');
-  const c = await loadCount(id);
-  if (c.status === 'SUBMITTED') return c;
-  if (c.status !== 'OPEN') throw conflict('Тооллого дууссан байна');
-  const n = await db.stockCountLine.count({ where: { countId: id } });
-  if (!n) throw badRequest('Дор хаяж нэг бараа тоолно уу', 'no_lines');
-  const ok = await db.stockCount.updateMany({ where: { id, status: 'OPEN' }, data: { status: 'SUBMITTED', submittedAt: new Date() } });
-  bustTodayCache();
-  if (ok.count) await writeAudit(actor, 'stock.count_submitted', 'StockCount', String(id), { lines: n }, db, ['stock']);
+  const done = await inTx(async (tx) => {
+    const c = await lockCount(tx, id);
+    if (c.status === 'SUBMITTED') return false;
+    if (c.status !== 'OPEN') throw conflict('Тооллого дууссан байна');
+    const n = await tx.stockCountLine.count({ where: { countId: id } });
+    if (!n) throw badRequest('Дор хаяж нэг бараа тоолно уу', 'no_lines');
+    await tx.stockCount.update({ where: { id }, data: { status: 'SUBMITTED', submittedAt: new Date() } });
+    await writeAudit(actor, 'stock.count_submitted', 'StockCount', String(id), { lines: n }, tx, ['stock']);
+    return true;
+  });
+  if (done) bustTodayCache();
   return loadCount(id);
 }
 
@@ -79,8 +95,7 @@ export async function decideCount(actor: UserActor, idInput: unknown, input: { l
   const ids = all ? [] : Array.isArray(input.lineIds) ? (input.lineIds as unknown[]).map((x) => cleanId(x, 'Мөр')) : null;
   if (!all && (!ids || !ids.length)) throw badRequest('Мөр сонгоно уу');
   return inTx(async (tx) => {
-    const c = await tx.stockCount.findUnique({ where: { id } });
-    if (!c) throw notFound('Тооллого олдсонгүй');
+    const c = await lockCount(tx, id);
     if (c.status !== 'SUBMITTED') throw conflict(c.status === 'OPEN' ? 'Тооллого хараахан илгээгдээгүй байна' : 'Тооллого дууссан байна', 'count_not_submitted');
     const lines = await tx.stockCountLine.findMany({ where: { countId: id, status: 'PENDING', ...(all ? {} : { id: { in: ids! } }) }, orderBy: { variantId: 'asc' } });
     const { warehouse, locationId } = await warehouseLocation(tx, c.warehouseId, { allowInactive: true });
@@ -105,11 +120,11 @@ export async function decideCount(actor: UserActor, idInput: unknown, input: { l
 export async function cancelCount(actor: UserActor, idInput: unknown) {
   requireRole(canOperateStock(actor.roles));
   const id = cleanId(idInput, 'Тооллого');
-  const c = await loadCount(id);
-  if (c.status === 'CANCELLED') return c;
-  if (c.status === 'CLOSED') throw conflict('Дууссан тооллогыг цуцлахгүй');
-  if (c.status === 'SUBMITTED' && !canApproveStock(actor.roles)) throw conflict('Илгээсэн тооллогыг Админ цуцална');
-  await db.$transaction(async (tx) => {
+  await inTx(async (tx) => {
+    const c = await lockCount(tx, id);
+    if (c.status === 'CANCELLED') return;
+    if (c.status === 'CLOSED') throw conflict('Дууссан тооллогыг цуцлахгүй');
+    if (c.status === 'SUBMITTED' && !canApproveStock(actor.roles)) throw conflict('Илгээсэн тооллогыг Админ цуцална');
     await tx.stockCountLine.updateMany({ where: { countId: id, status: 'PENDING' }, data: { status: 'REJECTED', decidedById: actor.id, decidedByName: actor.name, decidedAt: new Date() } });
     await tx.stockCount.update({ where: { id }, data: { status: 'CANCELLED', closedAt: new Date() } });
     await writeAudit(actor, 'stock.count_cancelled', 'StockCount', String(id), {}, tx, ['stock']);

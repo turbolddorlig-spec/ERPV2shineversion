@@ -190,6 +190,7 @@ export async function updateUser(actor: UserActor, id: string, input: UpdateInpu
       if (changes.roles && target.roles.includes('SUPER_ADMIN') && !(data.roles as { set: Role[] }).set.includes('SUPER_ADMIN')) {
         await assertNotLastSuperAdmin(id, tx);
       }
+      if (changes.roles && target.roles.includes('DRIVER') && !(data.roles as { set: Role[] }).set.includes('DRIVER')) await assertDriverClear(tx, id, target.name);
       const u = await tx.user.update({ where: { id }, data, select: PUBLIC_SELECT });
       await writeAudit(actor, 'user.updated', 'User', id, changes as Prisma.InputJsonValue, tx);
       return u;
@@ -200,12 +201,23 @@ export async function updateUser(actor: UserActor, id: string, input: UpdateInpu
   }
 }
 
+/** Жолоочийн гарт бараа / хүргэлтэд гарсан, хуваарилагдсан захиалга байгаа эсэх (#124-З) — байвал эрхийг хасахгүй */
+async function assertDriverClear(tx: Prisma.TransactionClient | typeof db, id: string, name: string) {
+  const [goods, orders] = await Promise.all([
+    tx.$queryRaw<{ n: number }[]>`SELECT COALESCE(sum(b.qty), 0)::int AS n FROM "StockBalance" b JOIN "StockLocation" l ON l.id = b."locationId" AND l.kind = 'DRIVER' AND l."userId" = ${id}::uuid`,
+    tx.order.count({ where: { driverId: id, status: { in: ['ASSIGNED', 'OUT_FOR_DELIVERY'] } } }),
+  ]);
+  const g = goods[0]?.n ?? 0;
+  if (g > 0 || orders > 0) throw conflict(`${name}-ийн гарт ${g} бараа, ${orders} захиалга байна — эхлээд буцааж авна уу (агуулахын буцаалт / ахлах жолооч)`, 'driver_has_goods');
+}
+
 export async function deactivateUser(actor: UserActor, id: string) {
   if (id === actor.id) throw badRequest('Өөрийн эрхийг өөрөө хааж болохгүй');
   const target = await loadManageable(actor, id);
   if (!target.isActive) return db.user.findUniqueOrThrow({ where: { id }, select: PUBLIC_SELECT });
   return db.$transaction(async (tx) => {
     if (target.roles.includes('SUPER_ADMIN')) await assertNotLastSuperAdmin(id, tx);
+    if (target.roles.includes('DRIVER')) await assertDriverClear(tx, id, target.name);
     const u = await tx.user.update({ where: { id }, data: { isActive: false }, select: PUBLIC_SELECT });
     const n = await revokeAllSessions(id, tx);
     await writeAudit(actor, 'user.deactivated', 'User', id, { sessionsClosed: n }, tx);

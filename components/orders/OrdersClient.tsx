@@ -314,7 +314,7 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
                         ? <IconBtn tone="muted" icon="edit" label="Падаан үүссэн — засах боломжгүй" disabled />
                         : <IconBtn tone="info" icon="edit" label="Засах" onClick={() => openEdit(o.id)} />) : null}
                       <IconBtn tone="muted" icon="history" label="Түүх" onClick={() => setHistoryId(o.id)} />
-                      {active && can?.edit ? <IconBtn tone="warn" icon="xcircle" label="Цуцлах" onClick={() => setCancelling(o)} /> : null}
+                      {(active || o.status === 'OUT_FOR_DELIVERY') && can?.edit ? <IconBtn tone="warn" icon="xcircle" label={o.status === 'OUT_FOR_DELIVERY' ? 'Цуцлах (бараа жолоочид — агуулахад буцна)' : 'Цуцлах'} onClick={() => setCancelling(o)} /> : null}
                     </div>
                   </td>
                 </tr>

@@ -180,8 +180,8 @@ describe('падаан', () => {
     expect(await db.stockMove.count({ where: { type: 'HANDOVER' } })).toBe(2);
     const rec = await V.reconcile(sa, { fresh: true });
     expect(rec.ok).toBe(true);
-    // Хүргэлтэд гарсан захиалгыг оператор цуцлахгүй (Модуль 5)
-    await err(O.cancelOrder(op, ids[0], { reason: 'CUSTOMER_CANCELLED', note: 'Тест цуцлалт', version: 99 }), 409, 'order_locked');
+    // #124 ялгаа 1: хүргэлтэд гарсныг оператор цуцалж болно (хуучин шиг) — гэхдээ хувилбар зөрвөл хүлээн авахгүй
+    await err(O.cancelOrder(op, ids[0], { reason: 'CUSTOMER_CANCELLED', note: 'Тест цуцлалт', version: 99 }), 409, 'stale');
   });
 
   it('үндсэн агуулахад хүрэлцэхгүй бол юу ч өөрчлөгдөхгүй (сөрөг үлдэгдэлгүй)', async () => {

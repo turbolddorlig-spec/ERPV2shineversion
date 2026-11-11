@@ -956,7 +956,10 @@ export interface ReorderInfo {
   shopId: number | null;
   basis: { avg7: number; avg3: number; today: number; fullDays: number };
   order: { id: number; qty: number; expectedDay: string; orderedAt: Date; byName: string; note: string } | null;
+  /** Нийлүүлэгчийн өөрийн «Захиалсан» тэмдэг ба төлөв (#124-Ж — таных тусдаа) */
+  sup: { level: ReorderLevel; order: ReorderInfo['order'] };
 }
+export type ReorderScope = 'OWNER' | 'SUPPLIER';
 let reorderCache: { at: number; map: Map<number, ReorderInfo> } | null = null;
 /** Супер админы «Бараа татах»: тохиргоогоор нийлүүлэгчийн барааг хасна */
 async function ownerReorder(): Promise<Map<number, ReorderInfo>> {
@@ -988,7 +991,8 @@ export async function computeReorder(fresh = false): Promise<Map<number, Reorder
   for (const a of aggs) net.set(`${a.productId}|${a.day}`, (net.get(`${a.productId}|${a.day}`) ?? 0) + a.qty - a.bulkQty);
   const ids = [...new Set([...aggs.filter((a) => a.qty - a.bulkQty > 0).map((a) => a.productId), ...orders.map((o) => o.productId)])];
   const stock = await productStockTotals(ids);
-  const om = new Map(orders.map((o) => [o.productId, o]));
+  const om = new Map(orders.filter((o) => o.scope !== 'SUPPLIER').map((o) => [o.productId, o]));
+  const smap = new Map(orders.filter((o) => o.scope === 'SUPPLIER').map((o) => [o.productId, o]));
   const sp = ids.length ? await db.supplierProduct.findMany({ where: { productId: { in: ids }, OR: [{ toDate: null }, { toDate: { gt: dateOnly(today) } }] }, select: { productId: true, shopId: true } }) : [];
   const shopOf = new Map(sp.map((x) => [x.productId, x.shopId]));
   const map = new Map<number, ReorderInfo>();
@@ -1003,15 +1007,14 @@ export async function computeReorder(fresh = false): Promise<Map<number, Reorder
     const pace = Math.max(avg7, avg3, td);
     const available = stock.get(id)?.available ?? 0;
     const days = pace > 0 ? Math.max(0, Math.floor(available / pace)) : null;
-    const o = om.get(id);
-    let level: ReorderLevel = 'OK';
-    if (o) level = o.expectedDay < today ? 'LATE' : 'ORDERED';
-    else if (days !== null && days <= cfg.urgentDays) level = 'URGENT';
-    else if (days !== null && days <= cfg.leadDays) level = 'ORDER';
+    const levelOf = (o: (typeof orders)[number] | undefined): ReorderLevel => o ? (o.expectedDay < today ? 'LATE' : 'ORDERED')
+      : days !== null && days <= cfg.urgentDays ? 'URGENT' : days !== null && days <= cfg.leadDays ? 'ORDER' : 'OK';
+    const view = (o: (typeof orders)[number] | undefined) => o ? { id: o.id, qty: o.qty, expectedDay: o.expectedDay, orderedAt: o.orderedAt, byName: o.byName, note: o.note } : null;
+    const o = om.get(id); const so = smap.get(id);
     map.set(id, {
-      productId: id, shopId: shopOf.get(id) ?? null, available, pace: r1(pace), days, runOutDay: days === null ? null : addDays(today, days), level,
+      productId: id, shopId: shopOf.get(id) ?? null, available, pace: r1(pace), days, runOutDay: days === null ? null : addDays(today, days), level: levelOf(o),
       basis: { avg7: r1(avg7), avg3: r1(avg3), today: td, fullDays },
-      order: o ? { id: o.id, qty: o.qty, expectedDay: o.expectedDay, orderedAt: o.orderedAt, byName: o.byName, note: o.note } : null,
+      order: view(o), sup: { level: levelOf(so), order: view(so) },
     });
   }
   reorderCache = { at: Date.now(), map };
@@ -1033,7 +1036,7 @@ export async function markReordered(actor: UserActor, b: { productId?: unknown; 
   return createReorder(actor, b);
 }
 /** Эрх шалгасны дараа (СА эсвэл тухайн барааны нийлүүлэгч) */
-export async function createReorder(actor: UserActor, b: { productId?: unknown; qty?: unknown; expectedDay?: unknown; note?: unknown }) {
+export async function createReorder(actor: UserActor, b: { productId?: unknown; qty?: unknown; expectedDay?: unknown; note?: unknown }, scope: ReorderScope = 'OWNER') {
   const productId = Number(b.productId);
   const product = Number.isInteger(productId) ? await db.product.findUnique({ where: { id: productId }, select: { id: true, name: true } }) : null;
   if (!product) throw notFound('Бараа олдсонгүй');
@@ -1043,10 +1046,10 @@ export async function createReorder(actor: UserActor, b: { productId?: unknown; 
   if (!isYmd(expectedDay)) throw badRequest('Ирэх өдөр буруу');
   const note = cleanText(b.note, 300);
   const row = await db.$transaction(async (tx) => {
-    const cur = await tx.reorderOrder.findFirst({ where: { productId, receivedAt: null, cancelledAt: null } });
+    const cur = await tx.reorderOrder.findFirst({ where: { productId, scope, receivedAt: null, cancelledAt: null } });
     if (cur) throw conflict('Энэ бараа аль хэдийн «Захиалсан» байна — эхлээд цуцална уу');
-    const r = await tx.reorderOrder.create({ data: { productId, qty, expectedDay, note, byName: actor.name } });
-    await writeAudit(actor, 'outflow.reorder', 'ReorderOrder', String(r.id), { productId, name: product.name, qty, expectedDay, note }, tx);
+    const r = await tx.reorderOrder.create({ data: { productId, qty, expectedDay, note, byName: actor.name, scope } });
+    await writeAudit(actor, 'outflow.reorder', 'ReorderOrder', String(r.id), { productId, name: product.name, qty, expectedDay, note, scope }, tx);
     return r;
   });
   reorderCache = null;
@@ -1058,10 +1061,11 @@ export async function cancelReorder(actor: UserActor, idIn: unknown) {
   assertSA(actor);
   return cancelReorderOf(actor, idIn);
 }
-export async function cancelReorderOf(actor: UserActor, idIn: unknown, productIds?: Set<number>) {
+export async function cancelReorderOf(actor: UserActor, idIn: unknown, productIds?: Set<number>, scope: ReorderScope = 'OWNER') {
   const id = Number(idIn);
   const cur = Number.isInteger(id) ? await db.reorderOrder.findUnique({ where: { id } }) : null;
   if (cur && productIds && !productIds.has(cur.productId)) throw forbidden('Таны бараа биш');
+  if (cur && cur.scope !== scope) throw forbidden('Энэ тэмдгийг цуцлах эрхгүй');
   if (!cur || cur.receivedAt || cur.cancelledAt) throw notFound('Идэвхтэй захиалга олдсонгүй');
   await db.$transaction(async (tx) => {
     await tx.reorderOrder.update({ where: { id }, data: { cancelledAt: new Date() } });
@@ -1076,12 +1080,14 @@ export async function reorderDetail(actor: UserActor, productIdIn: unknown) {
   assertSA(actor);
   return reorderDetailOf(productIdIn);
 }
-export async function reorderDetailOf(productIdIn: unknown) {
+export async function reorderDetailOf(productIdIn: unknown, scope: ReorderScope = 'OWNER') {
   const id = Number(productIdIn);
   const m = await computeReorder();
   const cfg = await getConfig();
-  const history = await db.reorderOrder.findMany({ where: { productId: id }, orderBy: { orderedAt: 'desc' }, take: 10 });
-  return { info: m.get(id) ?? null, leadDays: cfg.leadDays, urgentDays: cfg.urgentDays, defaultExpected: addDays(ubDay(), cfg.leadDays), history };
+  const history = await db.reorderOrder.findMany({ where: { productId: id, scope }, orderBy: { orderedAt: 'desc' }, take: 10 });
+  const x = m.get(id);
+  const info = x && scope === 'SUPPLIER' ? { ...x, level: x.sup.level, order: x.sup.order } : x;
+  return { info: info ?? null, leadDays: cfg.leadDays, urgentDays: cfg.urgentDays, defaultExpected: addDays(ubDay(), cfg.leadDays), history };
 }
 
 // ───────────── Гаралтаа хангаагүй пэйж (#121) ─────────────

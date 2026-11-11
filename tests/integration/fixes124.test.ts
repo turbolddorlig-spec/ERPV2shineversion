@@ -146,3 +146,17 @@ describe('#124-4 хуваарилагдаагүй «Шинэ» захиалгы�
     await err(A.setOrderSettings(sa, { assignHour: 5 }), 400);
   });
 });
+
+describe('#124-И банкаар таарсан төлбөрийн «Буцаах»', () => {
+  it('«Мөнгө орсон»-ыг буцаахгүй — банкны хуудсанд зөв захиалгад тааруулахад хуучин нь «Төлбөр хүлээж буй»', async () => {
+    const { order: a } = await O.createOrder(op, ub({ prepaidWait: true }));
+    const { order: b } = await O.createOrder(op, ub({ phone: '99445566', prepaidWait: true }));
+    await B.importTransactions(acc, [{ date: new Date(), description: '99112233 гутал', amount: a.total }], 'CSV');
+    expect((await db.order.findUniqueOrThrow({ where: { id: a.id } })).status).toBe('NEW');
+    await err(O.undoPaid(lead, a.id, { note: 'Андуурч таарсан' }), 409, 'bank_linked');
+    const t = await db.bankTransaction.findFirstOrThrow({ where: { orderId: a.id } });
+    await B.manualMatch(acc, t.id, { orderNumber: b.number });
+    const [oa, ob] = await Promise.all([db.order.findUniqueOrThrow({ where: { id: a.id } }), db.order.findUniqueOrThrow({ where: { id: b.id } })]);
+    expect([oa.status, oa.prepaid, ob.status, ob.prepaid]).toEqual(['PENDING_PAYMENT', false, 'NEW', true]);
+  });
+});

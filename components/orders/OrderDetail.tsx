@@ -127,7 +127,7 @@ export function OrderDetail({ id }: { id: number }) {
           {o.can.markPaid && o.status === 'PENDING_PAYMENT' ? <Button variant="dark" loading={busy} onClick={() => act('paid', {}, 'Мөнгө орсон — захиалга «Шинэ» боллоо')}>Мөнгө орсон</Button> : null}
           {o.can.markPaid && o.status === 'PENDING_PAYMENT' ? <Button loading={busy} onClick={() => act('extend', { days: 3 }, 'Хугацааг 3 хоногоор сунгалаа')}>+3 хоног</Button> : null}
           {o.can.markPaid && o.status === 'NEW' && o.prepaid ? <Button onClick={() => setUndo(true)}>«Мөнгө орсон» буцаах</Button> : null}
-          {o.can.edit && active ? <Button variant="danger" onClick={() => { setReason(''); setCnote(''); setCancelOpen(true); }}>Цуцлах</Button> : null}
+          {o.can.edit && (active || o.status === 'OUT_FOR_DELIVERY') ? <Button variant="danger" onClick={() => { setReason(''); setCnote(''); setCancelOpen(true); }}>Цуцлах</Button> : null}
           {o.can.edit && active ? <Button variant="primary" onClick={() => api<{ order: EditOrder }>(`/api/orders/${o.id}`).then((r) => setEditing(r.order)).catch((e) => setError(e instanceof ApiError ? e.message : 'Алдаа'))}><Icon name="edit" size={16} />Засах</Button> : null}
         </div>
       </div>

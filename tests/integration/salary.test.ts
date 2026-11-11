@@ -93,6 +93,17 @@ describe('хагас сар, тогтмол цалин', () => {
     expect([prep.auto.orderCount, prep.auto.orderSalary]).toEqual([2, 3000]);
     const r = await S.saveSalary(acc, { staffKey: key, ym, half, baseSalary: 999_999 });
     expect([r.salaryType, r.orderSalary, r.baseSalary, r.transferSalary]).toEqual(['ORDER_BASED', 3000, 0, 3000]);
+    // #124 ялгаа 3: 40 хоногийн дараа хүргэх товлосон захиалга — «Шинэ» болсон өдрөөр (хүргэхийн өмнөх өдөр), энэ хугацаанд биш
+    const far = U.ubDay(new Date(), 40);
+    const a4 = await mk({ deliveryDate: far });
+    await db.order.update({ where: { id: a4 }, data: { status: 'DELIVERED' } });
+    // жолооч «Маргааш» дарснаар хүргэх өдөр нь шилжсэн энгийн захиалга — авсан өдрөөрөө
+    const a5 = await mk();
+    await db.order.update({ where: { id: a5 }, data: { status: 'DELIVERED', postponeCount: 1, deliveryDate: U.dateOnly(far) } });
+    expect((await S.prepareSalary(acc, key, ym, half)).auto.orderCount).toBe(3);
+    const fy = U.ubDay(new Date(Date.parse(`${far}T00:00:00Z`) - 86_400_000));
+    const fhalf = Number(fy.slice(8)) <= 15 ? 1 : 2;
+    expect((await S.prepareSalary(acc, key, fy.slice(0, 7), fhalf)).auto.orderCount).toBe(1);
   });
 });
 

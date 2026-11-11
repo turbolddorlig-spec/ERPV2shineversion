@@ -1528,6 +1528,8 @@ model ReorderOrder {
   byName      String
   receivedAt  DateTime?
   cancelledAt DateTime?
+  /// OWNER = Супер админы «Бараа татах», SUPPLIER = нийлүүлэгчийн өөрийнх (#124-Ж — тусдаа тэмдэг)
+  scope       String    @default("OWNER")
 
   @@index([productId, orderedAt])
 }

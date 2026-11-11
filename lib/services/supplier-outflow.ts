@@ -50,7 +50,7 @@ export async function supplierOutflow(actor: UserActor, shopIdIn: unknown) {
     return {
       id: p.id, code: p.code, name: p.name, price: p.price, daily, week, avg: Math.round((week / 7) * 10) / 10,
       available: stock.get(p.id)?.available ?? 0,
-      reorder: r ? { level: r.level, days: r.days, pace: r.pace, runOutDay: r.runOutDay, order: r.order ? { expectedDay: r.order.expectedDay, qty: r.order.qty } : null } as Pick<ReorderInfo, 'level' | 'days' | 'pace' | 'runOutDay'> & { order: { expectedDay: string; qty: number } | null } : null,
+      reorder: r ? { level: r.sup.level, days: r.days, pace: r.pace, runOutDay: r.runOutDay, order: r.sup.order ? { expectedDay: r.sup.order.expectedDay, qty: r.sup.order.qty } : null } as Pick<ReorderInfo, 'level' | 'days' | 'pace' | 'runOutDay'> & { order: { expectedDay: string; qty: number } | null } : null,
       money: { perUnitDed, perUnitEarn: p.price - perUnitDed, revenue, earn, cost, profit: cost === null ? null : earn - week * cost, perUnitProfit: cost === null ? null : p.price - perUnitDed - cost },
     };
   }).sort((a, b) => b.week - a.week || a.name.localeCompare(b.name));
@@ -62,15 +62,15 @@ const own = (ids: number[], productId: unknown) => { if (!ids.includes(Number(pr
 
 export async function supplierReorderDetail(actor: UserActor, shopIdIn: unknown, productIdIn: unknown) {
   const { ids } = await ctx(actor, shopIdIn); own(ids, productIdIn);
-  return reorderDetailOf(productIdIn);
+  return reorderDetailOf(productIdIn, 'SUPPLIER');
 }
 export async function supplierReorder(actor: UserActor, shopIdIn: unknown, b: { productId?: unknown; qty?: unknown; expectedDay?: unknown; note?: unknown }) {
   const { ids } = await ctx(actor, shopIdIn); own(ids, b.productId);
-  return createReorder(actor, b);
+  return createReorder(actor, b, 'SUPPLIER');
 }
 export async function supplierReorderCancel(actor: UserActor, shopIdIn: unknown, idIn: unknown) {
   const { ids } = await ctx(actor, shopIdIn);
-  return cancelReorderOf(actor, idIn, new Set(ids));
+  return cancelReorderOf(actor, idIn, new Set(ids), 'SUPPLIER');
 }
 /** Өөрийн өртөг — зөвхөн тэр нийлүүлэгч (Админ, Супер админ ч бичихгүй, харахгүй) */
 export async function saveOwnCost(actor: UserActor, b: { productId?: unknown; cost?: unknown }) {
@@ -98,6 +98,6 @@ export async function supplierReorderBanner(actor: UserActor): Promise<{ urgent:
   const asg = await db.supplierProduct.findMany({ where: { shopId: shop.id, OR: [{ toDate: null }, { toDate: { gt: dateOnly(today) } }] }, select: { productId: true } });
   const m = await computeReorder();
   let urgent = 0, order = 0, late = 0;
-  for (const a of asg) { const x = m.get(a.productId); if (x?.level === 'URGENT') urgent++; else if (x?.level === 'ORDER') order++; else if (x?.level === 'LATE') late++; }
+  for (const a of asg) { const l = m.get(a.productId)?.sup.level; if (l === 'URGENT') urgent++; else if (l === 'ORDER') order++; else if (l === 'LATE') late++; }
   return urgent || order || late ? { urgent, order, late } : null;
 }

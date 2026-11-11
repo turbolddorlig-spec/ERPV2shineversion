@@ -190,7 +190,16 @@ async function computeInputs(tx: Tx | typeof db, st: Staff, p: Period) {
   if (!st.external && cfg.salaryType === 'ORDER_BASED' && isOpp) {
     // Хуучин шиг: тухайн хугацаанд АВСАН (үүссэн), хүргэгдсэн эсвэл мөнгө орсон захиалга — ажилтны дугаараар
     // Хуучин шиг (#102): захиалгын «өдөр» = баталгаажсан мөч (энгийн — үүссэн; урьдчилж төлсөн — мөнгө орсон)
-    orderCount = await tx.order.count({ where: { operatorId: st.userId!, confirmedAt: { gte: ubDayStart(p.start), lt: ubDayStart(addDays(p.end, 1)) }, OR: [{ status: 'DELIVERED' }, { prepaid: true, status: { in: ['NEW', 'ASSIGNED', 'OUT_FOR_DELIVERY'] } }] } });
+    // Товлосон захиалга (#124 ялгаа 3): «Шинэ» болсон өдрөөр (хүргэхийн өмнөх өдөр) — тоолох өдөр = max(авсан өдөр, хүргэх өдөр − 1)
+    const r = await tx.$queryRaw<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM "Order" o
+      WHERE o."operatorId" = ${st.userId!}::uuid
+        AND o."confirmedAt" >= ${ubDayStart(addDays(p.start, -130))} AND o."confirmedAt" < ${ubDayStart(addDays(p.end, 1))}
+        AND (o.status = 'DELIVERED' OR (o.prepaid AND o.status IN ('NEW', 'ASSIGNED', 'OUT_FOR_DELIVERY')))
+        -- жолооч «Маргааш» дарсан бол хүргэх өдөр нь шилжсэн тул авсан өдрөөр
+        AND (CASE WHEN o."postponeCount" > 0 THEN (o."confirmedAt" + interval '8 hours')::date
+                  ELSE GREATEST((o."confirmedAt" + interval '8 hours')::date, o."deliveryDate" - 1) END) BETWEEN ${dateOnly(p.start)}::date AND ${dateOnly(p.end)}::date`;
+    orderCount = r[0]?.n ?? 0;
   }
   // Торгууль: хасагдаагүй үлдэгдэл (энэ хугацаа + өмнөхөөс үлдсэн), ролын төрлөөр; «Хаяг тодорхойгүй» хасна (хуучин шиг)
   const ptype = st.external ? null : st.roles.map((r) => ROLE_PENALTY[r]).find(Boolean) ?? null;

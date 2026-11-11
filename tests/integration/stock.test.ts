@@ -192,6 +192,18 @@ describe('тооллого (#38)', () => {
     const moves = await db.stockMove.findMany({ where: { docType: 'count', docId: c.id }, orderBy: { id: 'asc' } });
     expect(moves.map((m) => [m.type, m.qty])).toEqual([['COUNT_PLUS', 3], ['COUNT_MINUS', 3]]);
   });
+  it('#124-Б: цуцлах ба батлах зэрэг — цуцлагдсан тооллого батлагдахгүй, үлдэгдэл хөдлөхгүй; илгээх үед мөр нэмэгдэхгүй', async () => {
+    await D.createReceipt(wh, { warehouseId: main.id, lines: [{ variantId: v1, qty: 10 }], idemKey: key() });
+    const c = await K.startCount(wh, { warehouseId: main.id, note: 'Шалгах тооллого' });
+    await K.setCountLine(wh, c.id, { variantId: v1, countedQty: 4 });
+    const [, late] = await Promise.allSettled([K.submitCount(wh, c.id), K.setCountLine(wh, c.id, { variantId: v2, countedQty: 1 })]);
+    const lines = await db.stockCountLine.count({ where: { countId: c.id } });
+    expect(late.status === 'fulfilled' ? lines === 2 : lines === 1).toBe(true); // илгээхээс өмнө орсон бол л
+    await Promise.allSettled([K.cancelCount(adm, c.id), K.decideCount(adm, c.id, { lineIds: 'all', action: 'approve' })]);
+    const st = (await db.stockCount.findUniqueOrThrow({ where: { id: c.id } })).status;
+    const moved = await db.stockMove.count({ where: { docType: 'count', docId: c.id } });
+    expect(st === 'CANCELLED' ? moved === 0 && (await qty(main.id, v1)) === 10 : st === 'CLOSED' && moved > 0).toBe(true);
+  });
 });
 
 describe('бараа зээл (#38)', () => {
@@ -214,6 +226,13 @@ describe('бараа зээл (#38)', () => {
     await Promise.all([1, 2].map(() => L.returnLoan(wh, loan.id, { warehouseId: main.id, lines: [{ variantId: v1, qty: 1 }], idemKey: rk })));
     expect(await qty(main.id, v1)).toBe(8);
     await err(L.returnLoan(wh, loan.id, { warehouseId: main.id, lines: [{ variantId: v1, qty: 3 }], idemKey: key() }), 400, 'bad_qty');
+    // #124-А: өөр түлхүүртэй 2 буцаалт зэрэг (тусдаа зээл, 2 ширхэг) → нэг нь л амжина, илүү буцаагдахгүй
+    const { loan: lx } = await L.requestLoan(mk, { lines: [{ variantId: v1, qty: 2 }], idemKey: key() });
+    await L.issueLoan(wh, lx.id, { warehouseId: main.id });
+    const rr = await Promise.allSettled([1, 2].map(() => L.returnLoan(wh, lx.id, { warehouseId: main.id, lines: [{ variantId: v1, qty: 2 }], idemKey: key() })));
+    expect(rr.filter((x) => x.status === 'fulfilled')).toHaveLength(1);
+    expect((await L.getLoan(mk, lx.id)).status).toBe('CLOSED');
+    expect(await qty(main.id, v1)).toBe(8);
     // хямдрал / суутгал засах — СА, нягтлан
     await err(L.setLoanDeduction(wh, loan.id, { variantId: v1, deduction: 4000 }), 403);
     await L.setLoanDeduction(acc, loan.id, { variantId: v1, deduction: 4000 });

@@ -77,7 +77,9 @@ export const OUTCOME_LABEL: Record<Outcome, string> = {
   DELIVERED: 'Хүргэсэн', CANCELLED: 'Цуцласан', EXCLUDED: 'Цуцласан (гүйцэтгэлд тооцохгүй)', POSTPONED: 'Маргааш', OUT: 'Хүргэлтэд', NOT_RECEIVED: 'Падаан хүлээн аваагүй',
 };
 /** Асуудлаар цуцлагдсан, жолоочийн алдаа биш → гүйцэтгэлээс хасна (хуучин excludedFromPerformance) */
-export const isExcluded = (cancelReason: string | null, fault: IssueFault | null) => cancelReason === 'ISSUE' && fault !== 'DRIVER';
+export const isExcluded = (cancelReason: string | null, fault: IssueFault | null) => (cancelReason === 'ISSUE' && fault !== 'DRIVER')
+  // Хүргэлтэд гарсныг оператор цуцалсан (#124 ялгаа 1) — жолоочийн гүйцэтгэлд тоологдохгүй
+  || (fault === 'OPERATOR' && cancelReason !== 'DRIVER_CANCELLED');
 
 export interface DayRow {
   handoverId: number; orderId: number; number: string; status: string; total: number; originalTotal: number | null; prepaid: boolean;

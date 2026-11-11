@@ -201,6 +201,8 @@ export async function setCheck(actor: UserActor, idInput: unknown, input: { vari
     if (!inSheet[0]?.n) throw badRequest('Энэ бараа падаанд алга');
     if (input.checked === false) await tx.handoverCheck.deleteMany({ where: { handoverId: id, variantId, kind } });
     else await tx.handoverCheck.upsert({ where: { handoverId_variantId_kind: { handoverId: id, variantId, kind } }, create: { handoverId: id, variantId, kind, checkedBy: actor.name }, update: {} });
+    // Агуулахын шалгалт түүхэнд (#124-Г)
+    await writeAudit(actor, input.checked === false ? 'handover.uncheck' : 'handover.check', 'Handover', String(id), { number: h.number, variantId, kind }, tx, ['delivery']);
   });
   return { ok: true };
 }
@@ -310,6 +312,8 @@ export async function setDriverCheck(actor: UserActor, idInput: unknown, input: 
       const n = await tx.handoverCheck.updateMany({ where: { handoverId: id, variantId, kind }, data: { driverCheckedAt: value } });
       if (!n.count) throw badRequest('Энэ бараа падаанд алга');
     }
+    // Жолоочийн шалгалт түүхэнд (#124-Г)
+    await writeAudit(actor, value ? 'handover.driver_check' : 'handover.driver_uncheck', 'Handover', String(id), { number: h.number, variantId: input.variantId === 'all' ? 'all' : Number(input.variantId) }, tx, ['delivery']);
   });
   return buildDetail(id, false);
 }
