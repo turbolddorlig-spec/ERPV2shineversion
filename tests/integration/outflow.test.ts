@@ -92,6 +92,23 @@ describe('7 хоногийн гарц — тоолох дүрэм (#104)', () =>
   });
 });
 
+describe('бараа дуусах анхааруулга (#118)', () => {
+  it('боломжтой ≤ өдрийн хурд → 🟠 «дуусах дөхсөн»; 0 → 🔴 «дууссан»; бүүст унтраахад арилна', async () => {
+    await boostAt(1, U.ubDayStart(U.ubDay(new Date(), -5)));
+    for (let d = 1; d <= 3; d++) for (let i = 0; i < 10; i++) await order({ daysAgo: d }); // өдөрт 10
+    // үлдэгдэл: 500 − 30 захиалгад = 470 боломжтой → анхааруулгагүй
+    let al = await OF.computeAlerts(true);
+    expect(al.find((a) => a.productId === prod)?.reasons.some((r) => r.includes('Бараа дуус'))).toBeFalsy();
+    // 462-ыг нөөцөлж 8 үлдээнэ (өдөрт 10 > 8)
+    await O.createOrder(op, { phone: '99377777', province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 13, addressDetail: 'Тест 5-р байр', pageId: page1, lines: [{ variantId: v, qty: 462 }], idemKey: randomUUID(), deliveryDate: U.ubDay(new Date(), 1) });
+    await db.order.updateMany({ where: { lines: { some: { qty: 462 } } }, data: { confirmedAt: new Date(Date.now() - 400 * 86_400_000) } }); // гарцад тооцохгүй
+    al = await OF.computeAlerts(true);
+    expect(al.find((a) => a.productId === prod)?.reasons.join(' ')).toContain('Бараа дуусах дөхсөн: боломжтой 8, өдөрт ~10');
+    await OF.saveBoost(mk, { productId: prod, zones: 0 });
+    expect((await OF.computeAlerts(true)).find((a) => a.productId === prod)).toBeUndefined();
+  });
+});
+
 describe('бөөний захиалга (#117)', () => {
   it('1 хүн 50 ширхэг: гарцад 50 + 📦, дундаж/өнгөнд орохгүй; опп+хүргэлт нэг л удаа; үр дүн 1 захиалга (💎 биш)', async () => {
     await boostAt(1, U.ubDayStart(yest));

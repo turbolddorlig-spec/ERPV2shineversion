@@ -626,7 +626,7 @@ function ConfigDialog({ sa, onClose, onDone }: { sa: boolean; onClose: () => voi
   const f = (k: string, l: string) => <label key={k} className="flex flex-col gap-1 text-[12.5px] font-semibold text-muted">{l}<input value={v?.[k] ?? ''} inputMode="numeric" onChange={(e) => setV({ ...v!, [k]: digits(e.target.value) })} className={clsx(inputCls, 'text-right')} /></label>;
   const save = async () => {
     try {
-      const keys = ['claimTarget', 'claimExpireDays', ...(sa ? ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar', 'bulkMin'] : [])];
+      const keys = ['claimTarget', 'claimExpireDays', 'stockDays', ...(sa ? ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar', 'bulkMin'] : [])];
       await api('/api/goods-outflow', { method: 'POST', json: { action: 'config', ...Object.fromEntries(keys.map((k) => [k, Number(v?.[k])])) } }); onDone();
     } catch (e) { setErr(msg(e)); }
   };
@@ -636,7 +636,7 @@ function ConfigDialog({ sa, onClose, onDone }: { sa: boolean; onClose: () => voi
       {v ? (
         <div className="flex flex-col gap-3">
           <b className="text-[14px]">Ажлын цонх</b>
-          <div className="grid grid-cols-2 gap-3">{f('claimTarget', '«Хийсэн» болох захиалга')}{f('claimExpireDays', 'Чөлөөлөх хоног')}</div>
+          <div className="grid grid-cols-2 gap-3">{f('claimTarget', '«Хийсэн» болох захиалга')}{f('claimExpireDays', 'Чөлөөлөх хоног')}{f('stockDays', '🟠 Бараа дуусах анхааруулга (өдрийн гарц үлдэхэд)')}</div>
           {sa ? (<>
             <b className="text-[14px]">Бүүстийн ашиг (зөвхөн Супер админ)</b>
             <div className="grid grid-cols-2 gap-3">{f('oppCost', 'Опп цалин (₮/захиалга)')}{f('deliveryCost', 'Хүргэлтийн цалин (₮/захиалга)')}{f('rate', 'Долларын ханш (₮)')}{f('defaultDollar', 'Анхдагч $ (бүүст)')}{f('costPct', 'Өртөг оруулаагүй бол үнийн %')}{f('lowProfit', '🟠 Ашгийн босго (₮/захиалга)')}{f('bulkMin', '📦 Бөөний захиалга (ширхэгээс)')}{f('watchHours', 'Ажиглах цаг (асаасан цагаас)')}</div>

@@ -41,8 +41,10 @@ export interface OutflowConfig {
   oppCost: number; deliveryCost: number; rate: number; costPct: number; lowProfit: number;
   /** Нэг захиалгад энэ тооноос дээш ширхэг бол «бөөний» (#117) */
   bulkMin: number;
+  /** Бараа дуусах анхааруулга: боломжтой ≤ (өдрийн хурд × энэ тоо) (#118) */
+  stockDays: number;
 }
-export const DEFAULT_CFG: OutflowConfig = { claimTarget: 5, claimExpireDays: 7, watchHours: 8, defaultDollar: 5, oppCost: 1200, deliveryCost: 5000, rate: 3600, costPct: 35, lowProfit: 1500, bulkMin: 5 };
+export const DEFAULT_CFG: OutflowConfig = { claimTarget: 5, claimExpireDays: 7, watchHours: 8, defaultDollar: 5, oppCost: 1200, deliveryCost: 5000, rate: 3600, costPct: 35, lowProfit: 1500, bulkMin: 5, stockDays: 1 };
 let cfgCache: { at: number; v: OutflowConfig } | null = null;
 export async function getConfig(tx: Tx | typeof db = db): Promise<OutflowConfig> {
   if (tx === db && cfgCache && Date.now() - cfgCache.at < 30_000) return cfgCache.v;
@@ -56,7 +58,7 @@ export async function configView(actor: UserActor) {
   assertView(actor);
   const c = await getConfig();
   if (isSA(actor)) return c;
-  return { claimTarget: c.claimTarget, claimExpireDays: c.claimExpireDays };
+  return { claimTarget: c.claimTarget, claimExpireDays: c.claimExpireDays, stockDays: c.stockDays };
 }
 /** Ажлын цонхны тоо, хоног — Ахлах/Админ/СА; мөнгөн зардал, ханш, босго, цаг — зөвхөн Супер админ */
 export async function setConfig(actor: UserActor, b: Record<string, unknown>) {
@@ -65,6 +67,7 @@ export async function setConfig(actor: UserActor, b: Record<string, unknown>) {
   const next: OutflowConfig = { ...cur };
   if (b.claimTarget !== undefined) next.claimTarget = cleanInt(b.claimTarget, '«Хийсэн» захиалгын тоо', 1, 1000);
   if (b.claimExpireDays !== undefined) next.claimExpireDays = cleanInt(b.claimExpireDays, 'Чөлөөлөх хоног', 1, 365);
+  if (b.stockDays !== undefined) next.stockDays = cleanInt(b.stockDays, 'Дуусах анхааруулга (өдөр)', 1, 30);
   const money = ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar', 'bulkMin'] as const;
   if (money.some((k) => b[k] !== undefined)) {
     assertSA(actor);
@@ -197,11 +200,12 @@ export async function computeAlerts(fresh = false): Promise<BoostAlert[]> {
   const pms = await db.productMarketing.findMany({ where: { zones: { gt: 0 } } });
   if (!pms.length) { alertCache = { at: now, list: [] }; return []; }
   const ids = pms.map((x) => x.productId);
-  const [products, segs, aggs, watches] = await Promise.all([
+  const [products, segs, aggs, watches, stock] = await Promise.all([
     db.product.findMany({ where: { id: { in: ids } }, select: { id: true, code: true, name: true, price: true, costPrice: true } }),
     boostSegments(ids, d2Start, now),
-    unitsByDay(d2, yest, ids),
+    unitsByDay(addDays(today, -3), today, ids),
     db.boostWatch.findMany({ where: { productId: { in: ids }, until: { gt: new Date(now) } }, orderBy: { until: 'desc' } }),
+    productStockTotals(ids),
   ]);
   const pmap = new Map(products.map((p) => [p.id, p]));
   const aggMap = new Map(aggs.map((a) => [`${a.productId}|${a.day}`, a]));
@@ -242,6 +246,14 @@ export async function computeAlerts(fresh = false): Promise<BoostAlert[]> {
         else up('ORANGE', 'Өчигдөр алдагдалтай — ажиглаж байна (маргааш давтагдвал яаралтай)');
       } else if (y.status === 'LOW') up('ORANGE', 'Ашиг багассан — алдагдал руу дөхөж байна, бүүстээ шалгана уу');
       if (!pageDays.has(pm.productId) && level) pageDays.set(pm.productId, yest);
+    }
+    // 3) Бараа дуусах (#118): хурд = сүүлийн 3 бүтэн өдрийн дундаж (бөөнгүй), өнөөдөр түүнээс хурдан бол өнөөдрийнх
+    {
+      const avail = stock.get(pm.productId)?.available ?? 0;
+      const net = (d: string) => { const a = aggMap.get(`${pm.productId}|${d}`); return a ? a.qty - a.bulkQty : 0; };
+      const pace = Math.max((net(yest) + net(d2) + net(addDays(today, -3))) / 3, net(today));
+      if (avail <= 0) up('RED', `Бараа дууссан (боломжтой ${avail}) — бүүстээ шууд унтраа`);
+      else if (pace > 0 && avail <= pace * cfg.stockDays) up('ORANGE', `Бараа дуусах дөхсөн: боломжтой ${avail}, өдөрт ~${Math.round(pace)} гардаг — бүүстээ унтрааж хэмнэ`);
     }
     if (!level) continue;
     const w = watchMap.get(pm.productId);
