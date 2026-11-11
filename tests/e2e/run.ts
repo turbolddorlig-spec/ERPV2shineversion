@@ -541,6 +541,29 @@ async function main() {
     check('шалтгаантай цуцлав', cn.status === 200 && JSON.parse(cn.text).penalty?.status === 'CANCELLED', cn.text.slice(0, 100));
   }
 
+  // ───── Модуль 7б: Ажилтны цалин ─────
+  {
+    const acc9 = await loginAs('80000129');
+    const op9 = await loginAs('80000006');
+    const b9 = JSON.parse((await req('/api/salary', { cookie: acc9.cookie })).text);
+    const w9 = b9.rows?.find((r: { role: string }) => r.role === 'WAREHOUSE');
+    const ym9 = b9.ym;
+    const cf = await req('/api/salary', { cookie: acc9.cookie, method: 'POST', body: { action: 'config', staffKey: w9?.key, salaryType: 'FIXED', baseSalary: 1500000 } });
+    const sv = await req('/api/salary', { cookie: acc9.cookie, method: 'POST', body: { action: 'save', staffKey: w9?.key, ym: ym9, half: 2, baseSalary: 600000, bonusSalary: 0, additions: [{ label: 'E2E', amount: 1000 }] } });
+    const rec9 = JSON.parse(sv.text);
+    check('цалин хадгалав (сервер тооцно)', cf.status === 200 && sv.status === 200 && rec9.transferSalary === 601000, sv.text.slice(0, 120));
+    const opB = await req('/api/salary', { cookie: op9.cookie });
+    check('оператор цалингийн хуудас харахгүй (403)', opB.status === 403, String(opB.status));
+    const lk = await req('/api/salary', { cookie: acc9.cookie, method: 'POST', body: { action: 'lock', id: rec9.id } });
+    const sv2 = await req('/api/salary', { cookie: acc9.cookie, method: 'POST', body: { action: 'save', staffKey: w9?.key, ym: ym9, half: 2 } });
+    check('цоожтой цалинг засахгүй (423)', lk.status === 200 && sv2.status === 423, `${lk.status} ${sv2.status}`);
+    const ul = await req('/api/salary', { cookie: acc9.cookie, method: 'POST', body: { action: 'unlock', id: rec9.id, code: 'buruu-kod' } });
+    check('буруу кодоор / кодгүй нягтлан тайлахгүй (403)', ul.status === 403, String(ul.status));
+    const sa9 = await loginAs('80000001');
+    const ul2 = await req('/api/salary', { cookie: sa9.cookie, method: 'POST', body: { action: 'unlock', id: rec9.id, code: 'buruu-kod' } });
+    check('Супер админ тайлав (код тохируулаагүй үед) эсвэл код шаардав', ul2.status === 200 || ul2.status === 403, String(ul2.status));
+  }
+
   // ───── «Зөвхөн ажлын байрнаас» (#86) ─────
   {
     const sa7 = await loginAs('80000001');

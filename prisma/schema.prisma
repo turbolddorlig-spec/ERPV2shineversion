@@ -1151,6 +1151,8 @@ model Penalty {
   cancelledByName String?
   cancelNote      String?
   deducted        Boolean     @default(false)
+  /// Модуль 7б: цалингаас хассан дүн (хэсэгчилсэн бол < amount)
+  deductedAmount  Int         @default(0)
   deductedAt      DateTime?
   deductedByName  String?
   version         Int         @default(1)
@@ -1159,4 +1161,129 @@ model Penalty {
   @@index([createdAt])
   @@index([type, createdAt])
   @@index([orderId])
+}
+
+// ───────────────────────── Модуль 7б: Ажилтны цалин (#93) ─────────────────────────
+
+/// Ажилтны цалингийн тохиргоо (хуучин шиг): FIXED | ORDER_BASED
+model StaffSalaryConfig {
+  userId          String   @id @db.Uuid
+  salaryType      String   @default("FIXED")
+  baseSalary      Int      @default(0)
+  bonusSalary     Int      @default(0)
+  oppRatePerOrder Int      @default(0)
+  dailyRate       Int      @default(0)
+  bankName        String   @default("")
+  bankAccount     String   @default("")
+  updatedAt       DateTime @updatedAt
+  updatedByName   String?
+}
+
+/// Гадны ажилтан (системд нэвтэрдэггүй)
+model ExternalStaff {
+  id          Int      @id @default(autoincrement())
+  name        String
+  jobTitle    String
+  baseSalary  Int      @default(0)
+  bankName    String   @default("")
+  bankAccount String   @default("")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+/// Ажлын хуваарь: staffKey = u:<userId> | x:<externalId>; dayType: LEAVE | SICK | ABSENT | DAY_OFF (тэмдэглээгүй = ажилласан)
+model StaffWorkDay {
+  staffKey  String
+  date      DateTime @db.Date
+  dayType   String
+  note      String?
+  byName    String
+  updatedAt DateTime @updatedAt
+
+  @@id([staffKey, date])
+  @@index([date])
+}
+
+/// Хагас сарын цалин (1–15, 16–сүүл)
+model StaffSalaryRecord {
+  id                Int       @id @default(autoincrement())
+  staffKey          String
+  userId            String?   @db.Uuid
+  externalId        Int?
+  staffName         String
+  staffRole         String    @default("")
+  periodStart       DateTime  @db.Date
+  periodEnd         DateTime  @db.Date
+  periodLabel       String
+  salaryType        String    @default("FIXED")
+  workingDays       Int       @default(0)
+  totalDays         Int       @default(0)
+  dailyRate         Int       @default(0)
+  baseSalary        Int       @default(0)
+  bonusSalary       Int       @default(0)
+  orderCount        Int       @default(0)
+  orderRate         Int       @default(0)
+  orderSalary       Int       @default(0)
+  additions         Json      @default("[]")
+  totalAdditions    Int       @default(0)
+  deductions        Json      @default("[]")
+  totalDeductions   Int       @default(0)
+  penaltyTotal      Int       @default(0)
+  penaltyDeducted   Int       @default(0)
+  loans             Json      @default("[]")
+  loanTotal         Int       @default(0)
+  debtPayments      Json      @default("[]")
+  debtTotal         Int       @default(0)
+  grossSalary       Int       @default(0)
+  transferSalary    Int       @default(0)
+  notes             String?
+  bankName          String    @default("")
+  bankAccount       String    @default("")
+  transferred       Boolean   @default(false)
+  transferredAt     DateTime?
+  transferredByName String?
+  isLocked          Boolean   @default(false)
+  lockedAt          DateTime?
+  lockedByName      String?
+  /// Цоожлоход хэрэгжүүлсэн: торгууль [{id, amount}], зээл [loanId], өрийн төлөлт [paymentId]
+  applied           Json?
+  createdByName     String
+  updatedByName     String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  version           Int       @default(1)
+
+  @@unique([staffKey, periodStart])
+  @@index([periodStart])
+}
+
+/// Ажилтны өр (урт хугацааны, цалингаас хэсэгчлэн төлнө)
+model StaffDebt {
+  id              Int                @id @default(autoincrement())
+  staffKey        String
+  staffName       String
+  description     String
+  totalAmount     Int
+  remainingAmount Int
+  isActive        Boolean            @default(true)
+  createdAt       DateTime           @default(now())
+  createdByName   String
+  payments        StaffDebtPayment[]
+
+  @@index([staffKey, isActive])
+}
+
+model StaffDebtPayment {
+  id            Int       @id @default(autoincrement())
+  debtId        Int
+  debt          StaffDebt @relation(fields: [debtId], references: [id])
+  recordId      Int?
+  periodLabel   String
+  amount        Int
+  note          String?
+  createdAt     DateTime  @default(now())
+  createdByName String
+
+  @@index([debtId])
+  @@index([recordId])
 }

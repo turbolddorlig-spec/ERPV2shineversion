@@ -185,14 +185,16 @@ function where(f: PenaltyFilter, userId?: string): Prisma.PenaltyWhereInput {
 }
 
 async function summarize(w: Prisma.PenaltyWhereInput) {
-  const rows = await db.penalty.groupBy({ by: ['type', 'status', 'deducted'], where: w, _sum: { amount: true }, _count: true });
+  const rows = await db.penalty.groupBy({ by: ['type', 'status', 'deducted'], where: w, _sum: { amount: true, deductedAmount: true }, _count: true });
   const byType = Object.fromEntries(TYPES.map((t) => [t, { count: 0, amount: 0 }])) as Record<PenaltyType, { count: number; amount: number }>;
   let total = 0, count = 0, pending = 0, deducted = 0, cancelled = 0;
   for (const r of rows) {
     const a = r._sum.amount ?? 0;
     if (r.status === 'CANCELLED') { cancelled += r._count; continue; }
     byType[r.type].count += r._count; byType[r.type].amount += a; total += a; count += r._count;
-    if (r.deducted) deducted += a; else pending += a;
+    // Цалингаас хассан (хэсэгчилсэн ч) — Модуль 7б
+    const d = r.deducted ? a : Math.min(a, r._sum.deductedAmount ?? 0);
+    deducted += d; pending += a - d;
   }
   return { total, count, pending, deducted, cancelled, byType };
 }

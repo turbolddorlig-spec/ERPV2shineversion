@@ -167,7 +167,12 @@ export async function chargeLoan(actor: UserActor, idInput: unknown, input: { no
   requireRole(canLoanFinance(actor.roles), 'Цалингийн суутгалыг Супер админ, Нягтлан тэмдэглэнэ');
   const id = cleanId(idInput, 'Зээл');
   const note = cleanNote(input.note);
-  return inTx(async (tx) => {
+  return inTx((tx) => chargeLoanTx(tx, actor, id, note));
+}
+
+/** Модуль 7б: цалин цоожлоход ч ашиглана (эрхийг дуудагч шалгана) */
+export async function chargeLoanTx(tx: Prisma.TransactionClient, actor: UserActor, id: number, note: string | null) {
+  {
     const l = await loadLoan(tx, id);
     if (l.status === 'CLOSED') return { loan: l, duplicate: true, amount: 0 };
     if (l.status !== 'ISSUED') throw conflict('Энэ зээл нээлттэй биш байна');
@@ -186,7 +191,7 @@ export async function chargeLoan(actor: UserActor, idInput: unknown, input: { no
     await applyMoves(tx, actor, { type: 'loan', id }, moves);
     await writeAudit(actor, 'loan.charged', 'StaffLoan', String(id), { staff: l.staffName, amount, items: moves.reduce((s, m) => s + m.qty, 0), note }, tx, ['loan', 'money']);
     return { loan: await loadLoan(tx, id), duplicate: false, amount };
-  });
+  }
 }
 
 export async function setLoanDiscount(actor: UserActor, value: unknown) {

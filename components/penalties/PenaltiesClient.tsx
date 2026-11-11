@@ -15,7 +15,7 @@ import { money, ubDateTime } from '@/lib/format';
 export interface PenaltyRow {
   id: number; type: string; typeLabel: string; category: string; amount: number; description: string | null; userId: string; userName: string;
   orderNumber: string | null; pageName: string | null; customerPhone: string | null; customerName: string | null; auto: boolean;
-  createdByName: string; createdAt: string; status: string; cancelledByName: string | null; cancelNote: string | null; deducted: boolean; deductedAt: string | null; deductedByName: string | null;
+  createdByName: string; createdAt: string; status: string; deductedAmount: number; cancelledByName: string | null; cancelNote: string | null; deducted: boolean; deductedAt: string | null; deductedByName: string | null;
 }
 export type Summary = { total: number; count: number; pending: number; deducted: number; cancelled: number; byType: Record<string, { count: number; amount: number }> };
 interface Staff { id: string; name: string; phone: string; roles: string[]; defaultType: string | null }
@@ -32,6 +32,7 @@ const ubToday = () => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0,
 export function StatusBadge({ p }: { p: PenaltyRow }) {
   if (p.status === 'CANCELLED') return <Badge>Цуцлагдсан</Badge>;
   if (p.deducted) return <Badge tone="ok">Цалингаас хассан</Badge>;
+  if (p.deductedAmount > 0) return <Badge tone="warn">Хэсэгчлэн хассан · үлд. {money(p.amount - p.deductedAmount)}</Badge>;
   return <Badge tone="bad">Хасагдаагүй</Badge>;
 }
 
