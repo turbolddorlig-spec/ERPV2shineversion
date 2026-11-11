@@ -304,6 +304,13 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     const rq2 = await G.extraTake(drv, { lines: [{ variantId: v2, qty: 1 }], idemKey: key() });
     await G.extraCancel(drv, rq2.doc.id);
     expect((await db.driverDoc.findUniqueOrThrow({ where: { id: rq2.doc.id } })).status).toBe('CANCELLED');
+    // #124-9: өчигдрийн падаанд ороогүй хүсэлт 00:00-д автоматаар цуцлагдана, нөөц суллагдана
+    const rqx = await G.extraTake(drv, { lines: [{ variantId: v2, qty: 1 }], idemKey: key() });
+    await db.driverDoc.update({ where: { id: rqx.doc.id }, data: { date: new Date(`${U.ubDay(new Date(), -1)}T00:00:00Z`), handoverId: null } });
+    expect(await G.expireExtraRequests()).toBe(1);
+    const d3 = await db.driverDoc.findUniqueOrThrow({ where: { id: rqx.doc.id } });
+    expect([d3.status, d3.note?.includes('автоматаар цуцлагдсан'), await db.stockReservation.count({ where: { ref: `extra:${rqx.doc.id}` } })]).toEqual(['CANCELLED', true, 0]);
+    expect(await G.expireExtraRequests()).toBe(0);
     // Падаан → нэмэлт бараа тусдаа
     const h = await H.createHandover(wh, { driverId: drv.id, date: today, orderIds: ids });
     const d0 = await H.handoverDetail(wh, h.id);

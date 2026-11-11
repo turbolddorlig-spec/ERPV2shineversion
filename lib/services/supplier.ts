@@ -220,9 +220,18 @@ export async function syncAdjustments(shopId: number) {
         const perUnitDed = item && item.qty > 0 ? item.deduction / item.qty : (per ? per.operatorCost + per.deliveryCost + per.marketingCost + per.otherCost : 0);
         const x = Math.abs(diff);
         let sales: number;
+        let deduction = Math.round(perUnitDed * x);
         if (diff < 0) sales = item && item.qty > 0 ? Math.round((item.sales * x) / item.qty) : 0;
         else sales = l && l.qty > 0 ? Math.round((l.sales * x) / l.qty) : 0;
-        const deduction = Math.round(perUnitDed * x);
+        // Шилжүүлсний дараа НЭМЖ олгосон мөр буцвал (#124-2): тэр нэмэгдлийн яг дүнгээр буцааж хасна (−(борлуулалт − суутгал))
+        if (diff < 0 && item && item.qty === 0) {
+          const adds = await tx.supplierAdjustment.findMany({ where: { shopId, sourceDayId: day.id, orderNumber, productId: pid, kind: 'ADDITION' }, orderBy: { id: 'desc' } });
+          const aq = adds.reduce((n, a) => n + a.qty, 0);
+          if (aq > 0) {
+            sales = Math.round((adds.reduce((n, a) => n + a.sales, 0) * x) / aq);
+            deduction = Math.round((adds.reduce((n, a) => n + a.deduction, 0) * x) / aq);
+          }
+        }
         const amount = diff < 0 ? -(sales - deduction) : sales - deduction;
         const reason = diff < 0
           ? `${orderNumber} — «${name}» ${x} ширхэгийг ${date}-ны тооцоог шилжүүлсний дараа буцаасан (цуцалсан эсвэл үйлчлүүлэгч аваагүй). Тэр үед олгосон ${money(sales)} борлуулалтаас суутгал ${money(deduction)}-ийг хасаад ${money(sales - deduction)} буцааж тооцно.`

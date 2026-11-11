@@ -152,6 +152,12 @@ describe('цоож: торгууль, зээл, өр — давхардахгү�
     await S.unlockSalary(sa, r.id, {});
     expect((await db.staffDebt.findUniqueOrThrow({ where: { id: debt.id } })).remainingAmount).toBe(100_000);
     expect((await db.staffLoan.findUniqueOrThrow({ where: { id: loan.loan.id } })).status).toBe('CLOSED'); // бараа хөдөлсөн — хэвээр
+    // #124-6: цоож тайлсны дараа урамшуулал нэмж хадгална — суутгасан зээл (30,000₮) хэвээр, 409 гарахгүй
+    const r2 = await S.saveSalary(acc, { staffKey: key, ym, half, baseSalary: 500_000, bonusSalary: 10_000, loanIds: [loan.loan.id], debtPayments: [{ debtId: debt.id, amount: 40_000 }] });
+    expect([r2.loanTotal, r2.transferSalary]).toEqual([30_000, 440_000]);
+    // зээлийн мөрийг хасах гэж оролдсон ч хэвээр
+    const r3 = await S.saveSalary(acc, { staffKey: key, ym, half, baseSalary: 500_000, bonusSalary: 10_000, loanIds: [], debtPayments: [{ debtId: debt.id, amount: 40_000 }] });
+    expect(r3.loanTotal).toBe(30_000);
     await S.lockSalary(adm, r.id); // зээлийг дахин суутгахгүй
     expect(await db.stockMove.count({ where: { type: 'LOAN_CHARGE' } })).toBe(1);
     expect((await db.staffDebt.findUniqueOrThrow({ where: { id: debt.id } })).remainingAmount).toBe(60_000);

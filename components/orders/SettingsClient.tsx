@@ -9,7 +9,7 @@ import { api, ApiError } from '@/components/ui/api';
 import { money, ubDateTime } from '@/lib/format';
 
 interface Resp {
-  settings: { feeUB: number; feeRural: number; waitDays: number };
+  settings: { feeUB: number; feeRural: number; waitDays: number; assignHour: number };
   pages: { id: number; name: string; isActive: boolean; sortOrder: number }[];
   meta: { pixelId: string; tokenSet: boolean; tokenHint: string | null; testCode: string; counts: Record<string, number>; recent: { id: number; orderNumber?: string; total?: number; status: string; attempts: number; lastError: string | null; sentAt: string | null; createdAt: string }[] };
 }
@@ -22,12 +22,12 @@ export function SettingsClient() {
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [fees, setFees] = useState({ feeUB: '', feeRural: '', waitDays: '' });
+  const [fees, setFees] = useState({ feeUB: '', feeRural: '', waitDays: '', assignHour: '' });
   const [newPage, setNewPage] = useState('');
   const [meta, setMeta] = useState({ pixelId: '', token: '', testCode: '' });
   const load = useCallback(() => api<Resp>('/api/settings/orders').then((r) => {
     setD(r);
-    setFees({ feeUB: String(r.settings.feeUB), feeRural: String(r.settings.feeRural), waitDays: String(r.settings.waitDays) });
+    setFees({ feeUB: String(r.settings.feeUB), feeRural: String(r.settings.feeRural), waitDays: String(r.settings.waitDays), assignHour: String(r.settings.assignHour) });
     setMeta({ pixelId: r.meta.pixelId ?? '', token: '', testCode: r.meta.testCode ?? '' });
   }).catch((e) => setError(msg(e))), []);
   useEffect(() => { load(); }, [load]);
@@ -47,8 +47,9 @@ export function SettingsClient() {
           <Field id="feeUB" label="Улаанбаатар (₮)" inputMode="numeric" value={fees.feeUB} onChange={(e) => setFees({ ...fees, feeUB: e.target.value.replace(/\D/g, '') })} />
           <Field id="feeRural" label="Орон нутаг (₮)" inputMode="numeric" value={fees.feeRural} onChange={(e) => setFees({ ...fees, feeRural: e.target.value.replace(/\D/g, '') })} />
           <Field id="waitDays" label="Төлбөр хүлээх хоног" inputMode="numeric" value={fees.waitDays} onChange={(e) => setFees({ ...fees, waitDays: e.target.value.replace(/\D/g, '') })} hint="Орон нутаг: хугацаандаа мөнгө орохгүй бол автоматаар цуцлагдана" />
+          <Field id="assignHour" label="Хуваарилалт дуусах цаг (12–23)" inputMode="numeric" value={fees.assignHour} onChange={(e) => setFees({ ...fees, assignHour: e.target.value.replace(/\D/g, '').slice(0, 2) })} hint="Энэ цагаас хойш өнөөдрийн «Шинэ» захиалга хуваарилагдаагүй бол ахлах, админд улаан сануулга" />
         </div>
-        <Button variant="primary" className="self-start" loading={busy === 'fees'} onClick={() => post('fees', { kind: 'fees', feeUB: Number(fees.feeUB), feeRural: Number(fees.feeRural), waitDays: Number(fees.waitDays) }, 'Хадгаллаа')}>Хадгалах</Button>
+        <Button variant="primary" className="self-start" loading={busy === 'fees'} onClick={() => post('fees', { kind: 'fees', feeUB: Number(fees.feeUB), feeRural: Number(fees.feeRural), waitDays: Number(fees.waitDays), assignHour: Number(fees.assignHour) }, 'Хадгаллаа')}>Хадгалах</Button>
       </section>
 
       <section className={sec}>

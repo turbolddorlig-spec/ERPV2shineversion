@@ -5,7 +5,7 @@ import { writeAudit } from '../../audit';
 import { canAssignDrivers, canView } from '../../permissions';
 import { RURAL, UB_DISTRICTS } from '../../geo';
 import { dateOnly, ubDay, ubDayStart, ymdOf, isYmd } from '../../ubdate';
-import { inTx, type UserActor } from '../orders/core';
+import { inTx, orderSettings, type UserActor } from '../orders/core';
 import { bustCounts, searchIds, serializeOrder } from '../orders/queries';
 import { addDays, addToHandover, cleanYmd, isGiven, lockDelivery, lockOrders, removeFromHandover, type Tx } from './core';
 
@@ -88,6 +88,7 @@ async function leadKpi() {
   const today = dateOnly(ubDay()); const tomorrow = dateOnly(ubDay(new Date(), 1));
   const r = await db.$queryRaw<{ k: string; n: number }[]>`
     SELECT 'unassigned' AS k, count(*)::int AS n FROM "Order" WHERE status = 'NEW' AND "deliveryDate" <= ${tomorrow}::date AND "driverId" IS NULL
+    UNION ALL SELECT 'leftover', count(*)::int FROM "Order" WHERE status = 'NEW' AND "deliveryDate" <= ${today}::date AND "driverId" IS NULL
     UNION ALL SELECT 'assignedToday', count(*)::int FROM "Order" WHERE status = 'ASSIGNED' AND "deliveryDate" = ${today}::date
     UNION ALL SELECT 'assignedTomorrow', count(*)::int FROM "Order" WHERE status = 'ASSIGNED' AND "deliveryDate" = ${tomorrow}::date
     UNION ALL SELECT 'outForDelivery', count(*)::int FROM "Order" WHERE status = 'OUT_FOR_DELIVERY'
@@ -268,3 +269,26 @@ export async function leadChart(actor: UserActor, p: { days?: number; driverId?:
   });
   return { days, from, to: today, daily: out };
 }
+
+/**
+ * Хуваарилагдаагүй «Шинэ» захиалгын сануулга (#124-4, эзний дүрэм: өнөөдөр үүссэн захиалга өнөөдөртөө заавал хуваарилагдана).
+ *  • today = маргааш хүргэх, хуваарилагдаагүй (өнөөдрийн ажил); leftover = хүргэх өдөр нь өнөөдөр/өнгөрсөн, хуваарилагдаагүй (хоносон).
+ *  • 🔴 бүх хуудсанд (ахлах жолооч, Админ, Супер админ): хоносон байвал үргэлж; тохиргооны цагаас (анх 21:00) хойш өнөөдрийнх үлдсэн бол.
+ */
+let alertCache: { at: number; v: { today: number; leftover: number } } | null = null;
+export async function unassignedAlert(roles: string[]): Promise<{ today: number; leftover: number; late: boolean; hour: number } | null> {
+  if (!roles.some((r) => ['SUPER_ADMIN', 'ADMIN', 'DRIVER_LEAD'].includes(r))) return null;
+  if (!alertCache || Date.now() - alertCache.at > 30_000) {
+    const today = dateOnly(ubDay()); const tomorrow = dateOnly(ubDay(new Date(), 1));
+    const r = await db.$queryRaw<{ today: number; leftover: number }[]>`
+      SELECT count(*) FILTER (WHERE "deliveryDate" = ${tomorrow}::date)::int AS today, count(*) FILTER (WHERE "deliveryDate" <= ${today}::date)::int AS leftover
+      FROM "Order" WHERE status = 'NEW' AND "driverId" IS NULL AND "deliveryDate" <= ${tomorrow}::date`;
+    alertCache = { at: Date.now(), v: { today: r[0]?.today ?? 0, leftover: r[0]?.leftover ?? 0 } };
+  }
+  const { assignHour } = await orderSettings();
+  const hourNow = new Date(Date.now() + 8 * 3_600_000).getUTCHours();
+  const late = hourNow >= assignHour;
+  const v = alertCache.v;
+  return v.leftover || (late && v.today) ? { ...v, late, hour: assignHour } : null;
+}
+export function bustUnassignedAlert() { alertCache = null; }

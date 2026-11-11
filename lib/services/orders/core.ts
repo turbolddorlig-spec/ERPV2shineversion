@@ -43,12 +43,14 @@ export function displayStatus(o: { status: OrderStatus; deliveryDate: Date }, to
 
 // ───────────────────────── тохиргоо ─────────────────────────
 
-export const SETTINGS = { feeUB: 'deliveryFeeUB', feeRural: 'deliveryFeeRural', waitDays: 'paymentWaitDays' } as const;
+export const SETTINGS = { feeUB: 'deliveryFeeUB', feeRural: 'deliveryFeeRural', waitDays: 'paymentWaitDays', assignHour: 'assignDeadlineHour' } as const;
 export async function orderSettings() {
-  const [feeUB, feeRural, waitDays] = await Promise.all([
+  const [feeUB, feeRural, waitDays, assignHour] = await Promise.all([
     getSettingNumber(SETTINGS.feeUB, 5000), getSettingNumber(SETTINGS.feeRural, 10000), getSettingNumber(SETTINGS.waitDays, 7),
+    // Өнөөдрийн «Шинэ» захиалгыг хуваарилж дуусгах цаг (#124-4): энэ цагаас хойш хуваарилагдаагүй бол 🔴
+    getSettingNumber(SETTINGS.assignHour, 21),
   ]);
-  return { feeUB, feeRural, waitDays };
+  return { feeUB, feeRural, waitDays, assignHour };
 }
 
 // ───────────────────────── оруулга цэвэрлэх ─────────────────────────

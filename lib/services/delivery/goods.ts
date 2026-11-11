@@ -7,7 +7,7 @@ import { canDrive, canReceiveReturns, canView } from '../../permissions';
 import { dateOnly, ubDay, ubDayStart, isYmd } from '../../ubdate';
 import { applyMoves, stockCache } from '../stock/core';
 import { variantInfo } from '../stock/info';
-import { availableFor, inTx, type UserActor } from '../orders/core';
+import { availableFor, inTx, lockVariants, type UserActor } from '../orders/core';
 import { bustCounts } from '../orders/queries';
 import { addDays, driverLocationId, lockDelivery, primaryWarehouse, type Tx } from './core';
 import { driverGoods, PAYMENT_LABEL } from './driver';
@@ -193,6 +193,8 @@ export async function extraTake(actor: UserActor, input: { lines?: unknown; note
     await lockDelivery(tx);
     const again = await tx.driverDoc.findUnique({ where: { idemKey } });
     if (again) return again;
+    // Захиалга үүсгэх / засахтай ижил барааны түгжээ (#124-8) — сүүлийн ширхэгийг давхар амлахгүй
+    await lockVariants(tx, [...new Set(lines.map((l) => l.variantId))]);
     const av = await availableFor(tx, lines.map((l) => l.variantId));
     for (const l of lines) {
       const a = av.get(l.variantId) ?? 0;
@@ -345,3 +347,34 @@ export async function driverControl(actor: UserActor, dateIn?: string) {
 
 export { DOC_LABEL };
 export type GoodsTx = Tx;
+
+/**
+ * Тэр өдрийн падаанд ороогүй нэмэлт барааны хүсэлт 00:00-д автоматаар цуцлагдана (#124-9): нөөц суллагдана,
+ * жолоочид «цуцлагдсан — дахин хүснэ үү» гэж харагдана. Арын ажил минут тутам дуудна (давхар ажиллахгүй).
+ */
+export async function expireExtraRequests(): Promise<number> {
+  const today = ubDay();
+  const docs = await db.driverDoc.findMany({ where: { kind: 'EXTRA_TAKE', status: 'REQUESTED', date: { lt: dateOnly(today) } }, select: { id: true }, take: 200 });
+  let n = 0;
+  for (const { id } of docs) {
+    const done = await inTx(async (tx) => {
+      await lockDelivery(tx);
+      const d = await tx.driverDoc.findUnique({ where: { id }, include: { lines: true } });
+      if (!d || d.status !== 'REQUESTED' || !d.date || ymdOfDate(d.date) >= today) return false;
+      if (d.handoverId) {
+        const h = await tx.handover.findUnique({ where: { id: d.handoverId }, select: { status: true } });
+        if (h && (h.status === 'HANDED_OVER' || h.status === 'RECEIVED')) return false;
+        await tx.handoverCheck.deleteMany({ where: { handoverId: d.handoverId, kind: 'EXTRA', variantId: { in: d.lines.map((l) => l.variantId) } } });
+        await tx.handover.update({ where: { id: d.handoverId }, data: { version: { increment: 1 } } });
+      }
+      await tx.stockReservation.deleteMany({ where: { ref: `extra:${id}` } });
+      await tx.driverDoc.update({ where: { id }, data: { status: 'CANCELLED', handoverId: null, note: [d.note, 'Өдөр дууссан — падаанд ороогүй тул автоматаар цуцлагдсан, дахин хүснэ үү'].filter(Boolean).join(' · ').slice(0, 500) } });
+      await writeAudit({ id: null, name: 'СИСТЕМ' }, 'driver.extra_expired', 'DriverDoc', String(id), { driver: d.driverName, date: ymdOfDate(d.date!), pieces: d.lines.reduce((s, l) => s + l.qty, 0) }, tx, ['delivery']);
+      return true;
+    });
+    if (done) n++;
+  }
+  if (n) { stockCache.today = null; bustCounts(); }
+  return n;
+}
+const ymdOfDate = (d: Date) => d.toISOString().slice(0, 10);

@@ -192,6 +192,26 @@ describe('гараар суутгал (зөвхөн Супер админ), ши
 });
 
 describe('шилжүүлсний дараах буцаалт — автоматаар, зөвхөн нийлүүлэгчийн барааны дүнгээр', () => {
+  it('#124-2: шилжүүлсний дараа нэмж олгосон мөр дахин буцвал яг тэр дүнгээр хасна (+14,000 → −14,000)', async () => {
+    const shop = await shopWith();
+    const [a, b] = await out([[{ variantId: shoe, qty: 1 }], [{ variantId: shoe, qty: 1 }]]);
+    await DR.deliverOrder(drv, a!, { payment: 'CASH' });
+    await DR.driverCancel(drv, b!, { note: 'Утас авахгүй байна' });
+    await SP.transferDay(adm, { shopId: shop, date: today });
+    expect((await SP.dayView(adm, shop, today)).payable).toBe(14000);
+    // б-г нягтлан «Хүргэсэн» болгосон мэт → нэмэгдэл +14,000
+    await db.order.update({ where: { id: b! }, data: { status: 'DELIVERED', deliveredAt: new Date(), cancelReason: null, cancelledAt: null } });
+    await SP.syncAdjustments(shop);
+    const add = await db.supplierAdjustment.findFirstOrThrow({ where: { kind: 'ADDITION' } });
+    expect([add.qty, add.amount]).toEqual([1, 14000]);
+    // дахин цуцлагдав → буцаалт −14,000 (өмнө нь +6,000 гэж буруу гардаг байв)
+    await db.order.update({ where: { id: b! }, data: { status: 'CANCELLED', cancelledAt: new Date() } });
+    await SP.syncAdjustments(shop);
+    const ref = await db.supplierAdjustment.findFirstOrThrow({ where: { kind: 'REFUND' } });
+    expect([ref.qty, ref.sales, ref.deduction, ref.amount]).toEqual([1, 20000, 6000, -14000]);
+    expect((await SP.shopDetail(adm, shop)).balance.pendingAdj).toBe(0);
+  });
+
   it('хүргэсний дараа цуцалсан → буцаалт (борлуулалт − суутгал), шалтгаантай; дараагийн шилжүүлгээс хасагдана; хүрэхгүй бол үлдэгдэл шилжинэ', async () => {
     const shop = await shopWith();
     const [a, b] = await out([

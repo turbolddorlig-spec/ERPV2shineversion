@@ -205,6 +205,31 @@ describe('падааны өдрөөр тооцоо (#83)', () => {
 });
 
 describe('тооцоо нийлэх, түгжээ', () => {
+  it('#124-7: баталгаажуулах ба «Төлөв солих» зэрэг ирвэл түгжигдсэн өдөрт буруу дүн үлдэхгүй', async () => {
+    const [a, b] = await outFor(drv, 2);
+    await DR.deliverOrder(drv, a!, { payment: 'CASH' });
+    await DR.deliverOrder(drv, b!, { payment: 'CASH' });
+    const total = (await row(drv)).toReceive;
+    await S.submitSettlement(drv, { date: today, cash: total });
+    const sid = (await row(drv)).settlement!.id;
+    const [ap, tg] = await Promise.allSettled([
+      S.approveSettlement(acc, sid),
+      S.toggleOrderStatus(acc, b!, { target: 'CANCELLED', note: 'Үйлчлүүлэгч буцаасан' }),
+    ]);
+    const st = await db.driverSettlement.findUniqueOrThrow({ where: { id: sid } });
+    const ob = await db.order.findUniqueOrThrow({ where: { id: b! } });
+    if (st.status === 'COMPLETED') {
+      // баталгаажуулалт түрүүлсэн → төлөв солих түгжээнд саатна, захиалга хүргэсэн хэвээр, snapshot дүн = бодит
+      expect(tg.status).toBe('rejected');
+      expect(ob.status).toBe('DELIVERED');
+    } else {
+      // төлөв солих түрүүлсэн → баталгаажуулалт шинэ дүнгээр зөрүү илрүүлнэ (түгжигдэхгүй)
+      expect(ob.status).toBe('CANCELLED');
+      expect(ap.status === 'rejected' || (ap.status === 'fulfilled' && !ap.value)).toBe(true);
+    }
+    await recOk();
+  });
+
   it('дуусаагүй бол илгээхгүй; Бэлэн+Данс+Өр = Авах дүн; илгээсний дараа жолооч өөрчлөхгүй; буцаах; баталгаажуулах → түгжээ, өр', async () => {
     const [a, b] = await outFor(drv, 2);
     await DR.deliverOrder(drv, a!, { payment: 'CASH' });

@@ -103,6 +103,9 @@ function AssignView() {
         ))}
       </div>
 
+      {kpi.leftover ? <p role="alert" data-lead-leftover className="rounded-xl border border-bad/40 bg-bad-soft px-4 py-2.5 text-[13.5px] font-semibold text-bad-ink">🔴 Хоносон, хуваарилагдаагүй {kpi.leftover} захиалга байна — яаралтай хуваарилна уу (хүргэх өдөр нь өнгөрсөн / өнөөдөр).</p>
+        : kpi.unassigned ? <p data-lead-today className="rounded-xl border border-warn/40 bg-warn-soft px-4 py-2.5 text-[13.5px] font-semibold text-warn">🟠 Хуваарилагдаагүй {kpi.unassigned} «Шинэ» захиалга байна — өнөөдөртөө заавал хуваарилна уу.</p> : null}
+
       <div className="flex gap-1 rounded-lg bg-surface2 p-1 self-start">
         <span className="inline-flex h-8 items-center gap-1.5 rounded-md bg-surface px-3 text-[13px] font-semibold shadow-card"><Icon name="users" size={14} />Бүх захиалга</span>
         <span title="Модуль 5 (Жолооч)-д нэмэгдэнэ" className="inline-flex h-8 cursor-not-allowed items-center gap-1.5 px-3 text-[13px] font-semibold text-subtle"><Icon name="trend" size={14} />Жолоочийн гүйцэтгэл</span>

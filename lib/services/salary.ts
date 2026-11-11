@@ -240,9 +240,13 @@ export async function saveSalary(actor: UserActor, input: SaveInput) {
     const penaltyTotal = inp.penalties.reduce((s, x) => s + x.remaining, 0);
     const penaltyDeducted = input.penaltyDeducted === undefined ? penaltyTotal : cleanInt(input.penaltyDeducted, 'Хасах торгууль');
     if (penaltyDeducted > penaltyTotal) throw badRequest(`Хасах торгууль ${money(penaltyTotal)}-с их байж болохгүй`, 'penalty_over');
-    const loanIds = (Array.isArray(input.loanIds) ? input.loanIds : []).map(Number);
-    const loans = inp.loans.filter((l) => loanIds.includes(l.id)).map((l) => ({ loanId: l.id, label: `Зээлсэн бараа #${l.id} (${l.pieces}ш)`, amount: l.amount }));
-    if (loans.length !== new Set(loanIds).size) throw conflict('Зээлийн мэдээлэл өөрчлөгдсөн — дахин ачаална уу', 'stale');
+    // Цоож тайлсан ч аль хэдийн суутгасан зээл түгжигдсэн хэвээр (#124-6): мөр нь хасагдахгүй, дүн өөрчлөгдөхгүй
+    const charged = new Set(((ex?.applied as Applied | null)?.loansCharged ?? []));
+    const fixedLoans = ((ex?.loans as { loanId: number; label: string; amount: number }[] | null) ?? []).filter((l) => charged.has(l.loanId));
+    const loanIds = (Array.isArray(input.loanIds) ? input.loanIds : []).map(Number).filter((lid) => !charged.has(lid));
+    const newLoans = inp.loans.filter((l) => loanIds.includes(l.id)).map((l) => ({ loanId: l.id, label: `Зээлсэн бараа #${l.id} (${l.pieces}ш)`, amount: l.amount }));
+    if (newLoans.length !== new Set(loanIds).size) throw conflict('Зээлийн мэдээлэл өөрчлөгдсөн — дахин ачаална уу', 'stale');
+    const loans = [...fixedLoans, ...newLoans];
     const debtPayments = (Array.isArray(input.debtPayments) ? input.debtPayments : []).map((x) => {
       const o = (x && typeof x === 'object' ? x : {}) as Record<string, unknown>;
       const d = inp.debts.find((y) => y.id === Number(o.debtId));
@@ -352,7 +356,11 @@ export async function unlockSalary(actor: UserActor, idIn: unknown, input: { cod
     const r = await tx.staffSalaryRecord.findUniqueOrThrow({ where: { id } });
     if (!r.isLocked) return { record: r, duplicate: true };
     const a = (r.applied as Applied | null) ?? { penalties: [], loansCharged: [], debtPaymentIds: [] };
-    for (const x of a.penalties) await tx.penalty.update({ where: { id: x.id }, data: { deductedAmount: { decrement: x.amount }, deducted: false, deductedAt: null, deductedByName: null, version: { increment: 1 } } });
+    // Зөвхөн энэ цалингаар хассан дүн буцна; гараар «Цалингаас хассан» гэсэн тэмдэг хэвээр (#124-Е2)
+    for (const x of a.penalties) {
+      await tx.penalty.update({ where: { id: x.id }, data: { deductedAmount: { decrement: x.amount }, version: { increment: 1 } } });
+      await tx.penalty.updateMany({ where: { id: x.id, deductedByName: { endsWith: `(цалин ${r.periodLabel})` } }, data: { deducted: false, deductedAt: null, deductedByName: null } });
+    }
     for (const pid of a.debtPaymentIds) {
       const pm = await tx.staffDebtPayment.findUnique({ where: { id: pid } });
       if (!pm) continue;

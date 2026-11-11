@@ -28,12 +28,13 @@ export interface OItem {
 interface ListResp { items: OItem[]; hasMore: boolean; matched: number | null; matchedCapped: boolean; counts: Record<string, number>; can: { edit: boolean; markPaid: boolean; supervise: boolean; review: boolean } }
 
 
-export function StatusChip({ o }: { o: Pick<OItem, 'displayStatus' | 'statusLabel' | 'deliveryDate' | 'isToday' | 'prepaid' | 'postponeCount' | 'noKhoroo'> & { issueStatus?: string | null; deliveryPayment?: string | null; originalTotal?: number | null; total?: number } }) {
+export function StatusChip({ o }: { o: Pick<OItem, 'displayStatus' | 'statusLabel' | 'deliveryDate' | 'isToday' | 'prepaid' | 'postponeCount' | 'noKhoroo'> & { overpaid?: number; issueStatus?: string | null; deliveryPayment?: string | null; originalTotal?: number | null; total?: number } }) {
   return (
     <span className="flex flex-wrap items-center gap-1">
       <Badge tone={STATUS_TONE[o.displayStatus]}>{o.statusLabel}{o.displayStatus === 'SCHEDULED' ? ` · ${o.deliveryDate.slice(5).replace('-', '/')}` : ''}</Badge>
       {o.isToday && ['NEW', 'ASSIGNED'].includes(o.displayStatus) ? <Badge tone="bad">🔴 Өнөөдөр</Badge> : null}
       {o.prepaid ? <Badge tone="ok">Мөнгө орсон</Badge> : null}
+      {o.overpaid ? <Badge tone="info">Илүү төлөлт {o.overpaid.toLocaleString('en-US')}₮ — буцаах</Badge> : null}
       {o.postponeCount ? <Badge tone="warn">Хойшилсон{o.postponeCount > 1 ? ` ×${o.postponeCount}` : ''}</Badge> : null}
       {o.issueStatus === 'PENDING' ? <Badge tone="bad">Асуудалтай</Badge> : null}
       {o.displayStatus === 'DELIVERED' && o.deliveryPayment === 'UNPAID' ? <Badge tone="bad">Төлөөгүй</Badge> : null}
@@ -71,10 +72,10 @@ function MoreMenu({ items }: { items: { href?: string; onClick?: () => void; lab
 
 interface Filters {
   statuses: string[]; operatorId: string; pageId: string; driverId: string; date: 'all' | 'today' | 'custom' | 'range'; day: string; from: string; to: string;
-  prepaid: boolean; noKhoroo: boolean; postponed: boolean; todayDelivery: boolean;
+  prepaid: boolean; overpaid: boolean; noKhoroo: boolean; postponed: boolean; todayDelivery: boolean;
 }
-const EMPTY_FILTERS: Filters = { statuses: [], operatorId: '', pageId: '', driverId: '', date: 'all', day: '', from: '', to: '', prepaid: false, noKhoroo: false, postponed: false, todayDelivery: false };
-const activeCount = (f: Filters, advOnly = false) => [!advOnly && f.statuses.length > 0, !!f.operatorId, !!f.pageId, !!f.driverId, f.date !== 'all', f.prepaid, f.noKhoroo, f.postponed, f.todayDelivery].filter(Boolean).length;
+const EMPTY_FILTERS: Filters = { statuses: [], operatorId: '', pageId: '', driverId: '', date: 'all', day: '', from: '', to: '', prepaid: false, overpaid: false, noKhoroo: false, postponed: false, todayDelivery: false };
+const activeCount = (f: Filters, advOnly = false) => [!advOnly && f.statuses.length > 0, !!f.operatorId, !!f.pageId, !!f.driverId, f.date !== 'all', f.prepaid, f.overpaid, f.noKhoroo, f.postponed, f.todayDelivery].filter(Boolean).length;
 const fsel = 'h-9 w-full rounded-lg border border-line bg-surface2/60 px-2.5 text-[13px] text-ink outline-none focus:border-accent disabled:opacity-50';
 /** Хуучин ERP-ийн «Төлөв» товч: олон төлөв чагтлан сонгоно */
 const STATUS_OPTIONS: { v: string; l: string; dot: string }[] = [
@@ -169,6 +170,7 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
     const sp = new URLSearchParams(window.location.search);
     if (sp.get('done')) setFlash(sp.get('done'));
     if (sp.get('tab')) setF((x) => ({ ...x, statuses: [sp.get('tab')!] }));
+    if (sp.get('overpaid')) setF((x) => ({ ...x, overpaid: true }));
     api<{ items: { id: string; name: string }[] }>('/api/calls/operators').then((r) => setOps(r.items)).catch(() => undefined);
     api<{ pages: { id: number; name: string }[] }>('/api/orders/pages').then((r) => setPages(r.pages)).catch(() => undefined);
     api<{ items: { id: string; name: string }[] }>('/api/driver-lead/drivers').then((r) => setDrivers(r.items)).catch(() => undefined);
@@ -186,7 +188,7 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
     if (f.date === 'today') { sp.set('from', today); sp.set('to', today); }
     if (f.date === 'custom' && f.day) { sp.set('from', f.day); sp.set('to', f.day); }
     if (f.date === 'range') { if (f.from) sp.set('from', f.from); if (f.to) sp.set('to', f.to); }
-    for (const k of ['prepaid', 'noKhoroo', 'postponed', 'todayDelivery'] as const) if (f[k]) sp.set(k, '1');
+    for (const k of ['prepaid', 'overpaid', 'noKhoroo', 'postponed', 'todayDelivery'] as const) if (f[k]) sp.set(k, '1');
     try {
       const r = await api<ListResp>(`/api/orders?${sp}`);
       if (id === reqId.current) { setData(r); setError(null); }
@@ -271,7 +273,7 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
               </> : null}
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line pt-3 text-[13px]">
-              {([['postponed', 'Маргааш товчоор үүссэн', 'text-warn'], ['prepaid', 'Мөнгө орсон', 'text-ok-ink'], ['noKhoroo', 'Хороо тодорхойгүй', 'text-muted'], ['todayDelivery', `🔴 Өнөөдөр хүргэх${data?.counts.todayDelivery ? ` (${data.counts.todayDelivery})` : ''}`, 'text-bad-ink']] as const).map(([k, l, c]) => (
+              {([['postponed', 'Маргааш товчоор үүссэн', 'text-warn'], ['prepaid', 'Мөнгө орсон', 'text-ok-ink'], ['overpaid', 'Илүү төлөлт (буцаах)', 'text-info'], ['noKhoroo', 'Хороо тодорхойгүй', 'text-muted'], ['todayDelivery', `🔴 Өнөөдөр хүргэх${data?.counts.todayDelivery ? ` (${data.counts.todayDelivery})` : ''}`, 'text-bad-ink']] as const).map(([k, l, c]) => (
                 <label key={k} className={clsx('flex cursor-pointer items-center gap-2', c)}>
                   <input type="checkbox" className="h-4 w-4" checked={f[k]} onChange={(e) => { setF((x) => ({ ...x, [k]: e.target.checked })); setPage(1); }} />{l}
                 </label>

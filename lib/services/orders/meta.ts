@@ -29,7 +29,10 @@ async function readConfig(tx: Prisma.TransactionClient | typeof db = db) {
 /** Баталгаажсан захиалгыг дараалалд оруулна. Pixel тохируулаагүй бол SKIPPED (дараа нь тохируулахад хуучнууд үерлэхгүй). */
 export async function enqueueMeta(tx: Prisma.TransactionClient, orderId: number) {
   const cfg = await readConfig(tx);
-  await tx.metaEvent.createMany({ data: [{ orderId, status: cfg.pixelId && cfg.token ? 'PENDING' : 'SKIPPED' }], skipDuplicates: true });
+  const on = !!(cfg.pixelId && cfg.token);
+  await tx.metaEvent.createMany({ data: [{ orderId, status: on ? 'PENDING' : 'SKIPPED' }], skipDuplicates: true });
+  // «Мөнгө орсон»-ыг буцаагаад дахин төлөгдсөн (#124-5): алгассан event-ийг сэргээнэ. Илгээгдсэнийг дахин илгээхгүй — нэг л удаа
+  if (on) await tx.metaEvent.updateMany({ where: { orderId, status: 'SKIPPED' }, data: { status: 'PENDING', lastError: null } });
 }
 /** Цуцлах / «Мөнгө орсон» буцаахад: илгээгдээгүй event-ийг алгасна (илгээгдсэнийг Meta буцаах боломжгүй) */
 export async function skipMeta(tx: Prisma.TransactionClient, orderId: number) {

@@ -4,6 +4,7 @@ import { processMetaQueue } from './services/orders/meta';
 import { autoReconcile } from './services/stock/views';
 import { closeDayShortages } from './services/accounting/debts';
 import { autoGmailSync } from './services/accounting/gmail';
+import { expireExtraRequests } from './services/delivery/goods';
 
 /**
  * Арын ажил (минут тутам): Meta Purchase илгээх / дахин оролдох, хугацаа нь дууссан «Төлбөр хүлээж буй» захиалгыг цуцлах,
@@ -22,6 +23,9 @@ export async function runJobsOnce(): Promise<{ ran: boolean; cancelled?: number;
     const shortage = await closeDayShortages().catch((e) => { console.error('[jobs] shortage', (e as Error).message); return null; });
     if (shortage?.ran) console.log(`[jobs] дутуу барааны өр ${shortage.date}: +${shortage.created} ~${shortage.changed} ✓${shortage.resolved}`);
     await autoGmailSync().catch((e) => console.error('[jobs] gmail', (e as Error).message));
+    // #124-9: падаанд ороогүй нэмэлт барааны хүсэлт өдөр дуусахад цуцлагдана
+    const exp = await expireExtraRequests().catch((e) => { console.error('[jobs] extra', (e as Error).message); return 0; });
+    if (exp) console.log(`[jobs] нэмэлт барааны хүсэлт автоматаар цуцлагдсан: ${exp}`);
     return { ran: true, cancelled, meta, reconciled: !!rec };
   } finally {
     await db.$queryRaw`SELECT pg_advisory_unlock(42::int4, 1::int4)`;

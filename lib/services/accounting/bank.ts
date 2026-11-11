@@ -126,7 +126,7 @@ async function markPaidByBank(tx: Tx, actor: Actor, orderId: number, paid: numbe
   const o = await tx.order.findUniqueOrThrow({ where: { id: orderId } });
   if (o.status !== 'PENDING_PAYMENT') return false;
   const pd = paidOrderData(o);
-  await tx.order.update({ where: { id: orderId }, data: pd.data });
+  await tx.order.update({ where: { id: orderId }, data: { ...pd.data, paidAmount: paid } });
   await enqueueMeta(tx, orderId);
   await writeAudit(actor, 'order.paid', 'Order', String(orderId), { number: o.number, total: o.total, paid, by: how, ...(pd.deliveryChange ? { deliveryDate: pd.deliveryChange } : {}) }, tx, ['order', 'money', 'bank']);
   return true;
@@ -139,6 +139,14 @@ async function restatus(tx: Tx, orderId: number) {
   const paid = await paidFor(tx, orderId);
   const st = paid >= o.total ? (paid > o.total ? 'EXCESS_AMOUNT' : 'MATCHED') : 'PARTIAL_PAYMENT';
   await tx.bankTransaction.updateMany({ where: { orderId, status: { in: LINKED }, isDuplicate: false, refunded: false }, data: { status: st } });
+}
+
+/** Захиалгын дүн өөрчлөгдсөний дараа (урьдчилж төлсөн): гүйлгээнүүдийн төлөв Таарсан / Илүү (#124-1) */
+export async function restatusOrder(orderId: number) {
+  return inTx(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(6::int4, 0::int4)`;
+    await restatus(tx, orderId);
+  });
 }
 
 /** Утсаар «Төлбөр хүлээж буй» захиалга хайж тааруулах (хуучин matchTransaction) */

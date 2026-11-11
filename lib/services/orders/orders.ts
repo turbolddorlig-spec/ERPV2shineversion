@@ -4,7 +4,7 @@ import { badRequest, conflict, forbidden, notFound } from '../../errors';
 import { writeAudit, SYSTEM_ACTOR } from '../../audit';
 import { canEditOrders, canMarkPaid, canSuperviseOperators } from '../../permissions';
 import { isUB } from '../../geo';
-import { dateOnly, ymdOf } from '../../ubdate';
+import { dateOnly, ubDay, ymdOf } from '../../ubdate';
 import { variantLabel } from '../../catalog/variants';
 import { cleanIdemKey } from '../stock/core';
 import {
@@ -239,7 +239,11 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
     if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
     const o = await tx.order.findUniqueOrThrow({ where: { id }, include: { lines: true } });
     if (o.version !== version) throw staleError();
+    // Түгжээ авах хооронд жолоочид оноогдсон бол хүргэлтийн түгжээгүй үргэлжлүүлэхгүй (#124 В)
+    if (o.status === 'ASSIGNED' && pre?.status !== 'ASSIGNED') throw staleError();
     if (!ACTIVE.includes(o.status)) throw conflict('Хүргэлтэд гарсан / дууссан / цуцлагдсан захиалгыг засахгүй', 'order_locked');
+    // Хүргэх өдөр өнгөрсөн захиалгыг засахгүй — цуцлаад шинээр үүсгэнэ (#124-4, эзний дүрэм)
+    if (ymdOf(o.deliveryDate) < ubDay()) throw conflict(`Хүргэх өдөр (${ymdOf(o.deliveryDate)}) өнгөрсөн захиалгыг засахгүй — цуцлаад шинээр үүсгэнэ үү`, 'past_delivery');
     const linesChanging = input.lines !== undefined;
     // Хуучин ERP шиг: падаан үүссэн захиалгыг огт засахгүй (#66)
     if (o.handoverId) throw conflict('Падаан үүссэн захиалгыг засах боломжгүй', 'in_handover');
@@ -296,7 +300,11 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
     const lines = priceLines(lineIn, snaps, existing);
     const feeInput = input.deliveryFee !== undefined ? { fee: input.deliveryFee, reason: input.feeReason }
       : o.deliveryFeeEdited ? { fee: o.deliveryFee } : {};
-    const t = totals(lines, province, settings, feeInput, o);
+    // Хүргэлтийн төлбөр захиалга үүссэн үеийнхээрээ (#124-3): бүс (УБ / орон нутаг) ба төлбөр ногдох эсэх өөрчлөгдөөгүй бол хуучин дүн
+    const keepFee = !o.deliveryFeeEdited && isUB(province) === isUB(o.province)
+      && lines.some((l) => !l.deliveryIncluded) === o.lines.some((l) => !l.deliveryIncluded);
+    const feeSettings = keepFee ? { ...settings, feeUB: o.deliveryFee, feeRural: o.deliveryFee } : settings;
+    const t = totals(lines, province, feeSettings, feeInput, o);
     if (linesChanging) {
       await lockVariants(tx, [...new Set([...lines.map((l) => l.variantId), ...o.lines.map((l) => l.variantId)])]);
       await assertStock(tx, lines, id, new Map(o.lines.map((l) => [l.variantId, l.qty])));
@@ -314,23 +322,36 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
         await replaceReservations(tx, id, lines);
       }
     }
+    let unpaid = false;
     if (t.total !== o.total || t.deliveryFee !== o.deliveryFee || t.discount !== o.discount) {
       Object.assign(data, { subtotal: t.subtotal, discount: t.discount, deliveryFee: t.deliveryFee, total: t.total, deliveryFeeEdited: t.deliveryFeeEdited });
       changes.total = { from: o.total, to: t.total };
       if (t.deliveryFee !== o.deliveryFee) changes.deliveryFee = { from: o.deliveryFee, to: t.deliveryFee };
+      // Урьдчилж төлсөн захиалга (#124-1, хуучин шиг): дүн төлсөн мөнгөнөөс давбал «Төлбөр хүлээж буй» (дутуу төлөгдвөл дахин «Шинэ»),
+      // бага болвол илүү төлөлт — нягтлан буцаана. Жолоочид оноосон бол хуваарилалтаас гарна.
+      if (o.prepaid && t.total > o.paidAmount) {
+        unpaid = true;
+        Object.assign(data, { status: 'PENDING_PAYMENT', prepaid: false, confirmedAt: null, paymentDeadline: new Date(Date.now() + settings.waitDays * 86_400_000),
+          ...(o.status === 'ASSIGNED' ? { driverId: null, driverName: null, assignedAt: null } : {}) });
+        changes.payment = { from: 'Мөнгө орсон', to: `Төлбөр хүлээж буй — дутуу ${(t.total - o.paidAmount).toLocaleString('en-US')}₮ (төлсөн ${o.paidAmount.toLocaleString('en-US')}₮)` };
+      } else if (o.prepaid && t.total < o.paidAmount) {
+        changes.payment = { from: null, to: `Илүү төлөлт ${(o.paidAmount - t.total).toLocaleString('en-US')}₮ — буцаах` };
+      }
     }
     if (!Object.keys(changes).length) return { order: o, changed: false };
     const u = await tx.order.update({ where: { id }, data: { ...data, version: { increment: 1 } } });
-    if (changes.deliveryDate && o.status === 'ASSIGNED' && o.driverId) {
+    if (unpaid) await skipMeta(tx, id);
+    if (changes.deliveryDate && o.status === 'ASSIGNED' && o.driverId && !unpaid) {
       const h = await tx.handover.findUnique({ where: { driverId_date: { driverId: o.driverId, date: u.deliveryDate } }, select: { id: true, status: true } });
       if (h && !isGiven(h.status)) await addToHandover(tx, h.id, id);
     }
     const discountNow = lines.some((l) => l.unitPrice < l.listPrice && existing.get(l.variantId)?.unitPrice !== l.unitPrice) || !!t.feeReason;
     await writeAudit(actor, 'order.updated', 'Order', String(id), { number: o.number, changes, ...(t.feeReason ? { feeReason: t.feeReason } : {}) } as unknown as Prisma.InputJsonValue, tx,
-      discountNow ? ['order', 'discount'] : ['order']);
-    return { order: u, changed: true };
+      [...(discountNow ? ['order', 'discount'] : ['order']), ...(changes.payment ? ['money'] : [])]);
+    return { order: u, changed: true, rebank: o.prepaid && t.total !== o.total };
   });
   if (res.changed && res.order.status === 'PENDING_PAYMENT') await bankRematch(res.order.id);
+  else if (res.changed && 'rebank' in res && res.rebank) await bankRestatus(res.order.id);
   return res;
 }
 
@@ -375,7 +396,7 @@ export async function markPaid(actor: UserActor, idInput: unknown) {
     if (o.prepaid && o.status !== 'PENDING_PAYMENT') return { order: o, duplicate: true };
     if (o.status !== 'PENDING_PAYMENT') throw conflict('Зөвхөн «Төлбөр хүлээж буй» захиалгад', 'bad_status');
     const pd = paidOrderData(o);
-    const u = await tx.order.update({ where: { id }, data: pd.data });
+    const u = await tx.order.update({ where: { id }, data: { ...pd.data, paidAmount: o.total } });
     await enqueueMeta(tx, id);
     await writeAudit(actor, 'order.paid', 'Order', String(id), { number: o.number, total: o.total, ...(pd.deliveryChange ? { deliveryDate: pd.deliveryChange } : {}) }, tx, ['order', 'money']);
     return { order: u, duplicate: false };
@@ -392,7 +413,7 @@ export async function undoPaid(actor: UserActor, idInput: unknown, input: { note
     if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
     const o = await tx.order.findUniqueOrThrow({ where: { id } });
     if (!(o.status === 'NEW' && o.prepaid)) throw conflict('Зөвхөн «Мөнгө орсон» гэж тэмдэглэсэн, оноогоогүй захиалгыг буцаана', 'bad_status');
-    const u = await tx.order.update({ where: { id }, data: { status: 'PENDING_PAYMENT', prepaid: false, confirmedAt: null, paymentDeadline: new Date(Date.now() + waitDays * 86_400_000), version: { increment: 1 } } });
+    const u = await tx.order.update({ where: { id }, data: { status: 'PENDING_PAYMENT', prepaid: false, paidAmount: 0, confirmedAt: null, paymentDeadline: new Date(Date.now() + waitDays * 86_400_000), version: { increment: 1 } } });
     await skipMeta(tx, id);
     await writeAudit(actor, 'order.paid_undone', 'Order', String(id), { number: o.number, note }, tx, ['order', 'money']);
     return { order: u };
@@ -429,6 +450,13 @@ export async function autoCancelExpired(limit = 200): Promise<number> {
 export type { Order };
 
 /** Банкны гүйлгээгээр дахин тааруулах — алдаа гарсан ч захиалгын үйлдлийг унагахгүй */
+/** Урьдчилж төлсөн захиалгын дүн өөрчлөгдвөл банкны гүйлгээний төлөв (Таарсан / Илүү) шинэчлэгдэнэ */
+async function bankRestatus(orderId: number) {
+  try {
+    const { restatusOrder } = await import('../accounting/bank');
+    await restatusOrder(orderId);
+  } catch (e) { console.error('[bank] restatus', (e as Error).message); }
+}
 async function bankRematch(orderId: number) {
   try {
     const { matchOrderWithTransactions } = await import('../accounting/bank');

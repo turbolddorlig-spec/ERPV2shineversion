@@ -90,7 +90,7 @@ export async function summary(actor: UserActor, rangeIn: unknown, dateIn: unknow
 export async function attention(actor: UserActor) {
   assertView(actor);
   const sa = actor.roles.includes('SUPER_ADMIN');
-  const [boost, reorder, short, rec, disc, issues, edits] = await Promise.all([
+  const [boost, reorder, short, rec, disc, issues, edits, overpaid] = await Promise.all([
     alertBanner(actor.roles).catch(() => null),
     reorderBanner(actor.roles).catch(() => null),
     canEdit(actor.roles, 'goods-outflow') ? pageShortView(actor).then((x) => x.rows.length).catch(() => 0) : Promise.resolve(0),
@@ -98,6 +98,7 @@ export async function attention(actor: UserActor) {
     canReviewDiscounts(actor.roles) ? unreviewedDiscounts().catch(() => 0) : Promise.resolve(0),
     canView(actor.roles, 'issues') ? pendingIssueCount().catch(() => 0) : Promise.resolve(0),
     unreviewedCount(actor).catch(() => 0),
+    cached('overpaid', 60_000, () => db.$queryRaw<{ n: number }[]>`SELECT count(*)::int AS n FROM "Order" WHERE prepaid AND "paidAmount" > total AND status <> 'CANCELLED'`.then((r) => r[0]?.n ?? 0)).catch(() => 0),
   ]);
   const items: { key: string; tone: 'bad' | 'warn' | 'info'; icon: string; label: string; n: number; href: string }[] = [];
   if (rec) items.push({ key: 'reconcile', tone: 'bad', icon: '⚠', label: rec.kind === 'mismatch' ? 'Үлдэгдлийн тулгалтын зөрүү' : 'Автомат тулгалт ажиллаагүй', n: rec.status?.count ?? 1, href: '/warehouse' });
@@ -109,6 +110,7 @@ export async function attention(actor: UserActor) {
     items.push({ key: 'reorder', tone: u ? 'bad' : 'warn', icon: '🚚', label: 'Бараа татах', n: reorder.urgent + reorder.order + reorder.late, href: '/goods-outflow?tab=reorder' });
   }
   if (issues) items.push({ key: 'issues', tone: 'warn', icon: '📞', label: '«Опп-руу явуулах» асуудал', n: issues, href: '/issues' });
+  if (overpaid) items.push({ key: 'overpaid', tone: 'warn', icon: '↩', label: 'Илүү төлөлттэй захиалга — буцаах', n: overpaid, href: '/orders?overpaid=1' });
   if (disc) items.push({ key: 'discounts', tone: 'info', icon: '🏷', label: 'Шалгаагүй хөнгөлөлт / хүргэлтийн өөрчлөлт', n: disc, href: '/orders/review' });
   if (edits) items.push({ key: 'edits', tone: 'info', icon: '✎', label: 'Шалгаагүй барааны засвар', n: edits, href: '/products/history' });
   return { items };

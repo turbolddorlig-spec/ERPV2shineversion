@@ -21,7 +21,8 @@ export function serializeOrder(o: OrderWithLines, pageName?: string | null) {
     phone: o.phone, extraPhone: o.extraPhone, province: o.province, district: o.district, khoroo: o.khoroo, addressDetail: o.addressDetail,
     fullAddress: fullAddress(o), noKhoroo: !!o.district && !o.khoroo,
     note: o.note, pageId: o.pageId, pageName: pageName ?? null, operatorId: o.operatorId, operatorName: o.operatorName,
-    deliveryDate: ymdOf(o.deliveryDate), isToday: ymdOf(o.deliveryDate) === ubDay(), prepaid: o.prepaid,
+    deliveryDate: ymdOf(o.deliveryDate), isToday: ymdOf(o.deliveryDate) === ubDay(), prepaid: o.prepaid, paidAmount: o.paidAmount,
+    overpaid: o.prepaid && o.paidAmount > o.total && !['CANCELLED'].includes(o.status) ? o.paidAmount - o.total : 0,
     confirmedAt: o.confirmedAt, paymentDeadline: o.paymentDeadline, createdAt: o.createdAt,
     subtotal: o.subtotal, discount: o.discount, deliveryFee: o.deliveryFee, total: o.total, deliveryFeeEdited: o.deliveryFeeEdited,
     blacklistNote: o.blacklistNote, postponeCount: o.postponeCount, inHandover: !!o.handoverId,
@@ -50,7 +51,7 @@ async function pageNames(ids: number[]) {
 export type Tab = 'today' | 'PENDING_PAYMENT' | 'SCHEDULED' | 'NEW' | 'ASSIGNED' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELLED' | 'all';
 export interface ListParams {
   tab?: string; q?: string; from?: string; to?: string; operatorId?: string; pageId?: number; province?: string; district?: string;
-  prepaid?: boolean; noKhoroo?: boolean; postponed?: boolean; todayDelivery?: boolean; page?: number; driverId?: string;
+  prepaid?: boolean; overpaid?: boolean; noKhoroo?: boolean; postponed?: boolean; todayDelivery?: boolean; page?: number; driverId?: string;
   /** Хуучин ERP шиг «Төлөв» олон сонголт (таслалаар): PENDING_PAYMENT, NEW, SCHEDULED, ASSIGNED, OUT_FOR_DELIVERY, DELIVERED, CANCELLED */
   statuses?: string;
 }
@@ -120,6 +121,8 @@ export async function listOrders(actor: UserActor, p: ListParams) {
   if (p.province) and.push({ province: p.province });
   if (p.district) and.push({ district: p.district });
   if (p.prepaid) and.push({ prepaid: true });
+  // Илүү төлөлт (#124-1): урьдчилж төлсний дараа дүн буурсан — нягтлан буцаана
+  if (p.overpaid) and.push({ prepaid: true, paidAmount: { gt: db.order.fields.total } });
   if (p.noKhoroo) and.push({ district: { not: null }, khoroo: null });
   if (p.postponed) and.push({ postponeCount: { gt: 0 } });
   if (p.todayDelivery) and.push({ deliveryDate: dateOnly(today), status: { in: ['NEW', 'ASSIGNED'] } });

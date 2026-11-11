@@ -143,6 +143,14 @@ export async function cancelPenalty(actor: UserActor, idIn: unknown, input: { no
     if (!p) throw notFound('Торгууль олдсонгүй');
     if (p.status === 'CANCELLED') return { penalty: serialize(p), duplicate: true };
     if (p.deducted) throw conflict('Цалингаас хасагдсан торгууль — эхлээд цалингийн тооцоонд засна', 'deducted');
+    // Хэсэгчлэн суутгагдсан (#124-Е1): бүхэлд нь цуцлахгүй — зөвхөн суутгаагүй үлдэгдлийг цуцална (суутгасан дүн хэвээр)
+    if (p.deductedAmount > 0) {
+      const n = await tx.penalty.updateMany({ where: { id, status: 'ACTIVE', deducted: false, deductedAmount: p.deductedAmount },
+        data: { amount: p.deductedAmount, deducted: true, deductedAt: new Date(), deductedByName: `${actor.name} (үлдэгдэл цуцалсан)`, cancelNote: note, version: { increment: 1 } } });
+      if (!n.count) throw conflict('Торгууль өөрчлөгдсөн байна — дахин ачаална уу', 'stale');
+      await writeAudit(actor, 'penalty.remaining_cancelled', 'Penalty', String(id), { user: p.userName, category: p.category, amount: p.amount, deducted: p.deductedAmount, cancelled: p.amount - p.deductedAmount, note }, tx, ['penalty', 'money']);
+      return { penalty: serialize(await tx.penalty.findUniqueOrThrow({ where: { id } })), duplicate: false };
+    }
     const n = await tx.penalty.updateMany({ where: { id, status: 'ACTIVE', deducted: false }, data: { status: 'CANCELLED', cancelledAt: new Date(), cancelledByName: actor.name, cancelNote: note, version: { increment: 1 } } });
     if (!n.count) throw conflict('Торгууль өөрчлөгдсөн байна — дахин ачаална уу', 'stale');
     await writeAudit(actor, 'penalty.cancelled', 'Penalty', String(id), { user: p.userName, category: p.category, amount: p.amount, note }, tx, ['penalty', 'money']);

@@ -50,6 +50,16 @@ beforeEach(async () => {
 });
 
 describe('гараар торгууль', () => {
+  it('#124-Е1: хэсэгчлэн суутгасан торгуулийг бүхэлд нь цуцлахгүй — зөвхөн үлдэгдлийг', async () => {
+    const p = await PN.createPenalty(pen, { userId: op.id, customName: 'Хоцролт', amount: 5000 });
+    await db.penalty.update({ where: { id: p.id }, data: { deductedAmount: 2000 } }); // цалингаар 2,000₮ суутгагдсан мэт
+    const r = await PN.cancelPenalty(pen, p.id, { note: 'Үлдэгдлийг уучлав' });
+    const row = await db.penalty.findUniqueOrThrow({ where: { id: p.id } });
+    expect([row.status, row.amount, row.deductedAmount, row.deducted]).toEqual(['ACTIVE', 2000, 2000, true]);
+    expect(r.duplicate).toBe(false);
+    expect(await db.auditLog.count({ where: { action: 'penalty.remaining_cancelled' } })).toBe(1);
+  });
+
   it('алдааны нэрийг шинээр үүсгэнэ; торгууль тавих; эрх; цуцлах (устгахгүй); цалингаас хасах; миний торгууль зөвхөн өөрийнх', async () => {
     const cfg = await PN.penaltyConfig(pen);
     expect(cfg.categories.filter((c) => c.type === 'OPP_ERROR').map((c) => c.name)).toEqual(['Коммент шүүгээгүй', 'Чат шүүгээгүй', 'Дугаар үлдээсэн', 'Шэйр хийгээгүй', '3 удаа залгаагүй']);

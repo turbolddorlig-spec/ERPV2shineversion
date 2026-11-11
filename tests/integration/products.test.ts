@@ -317,6 +317,11 @@ describe('засварын түүх хуудас (#29)', () => {
     expect(await H.unreviewedCount(ml, { fresh: true })).toBe(1);
     const un = await H.listProductHistory(ml, { unreviewed: true });
     expect(un.items.map((i) => i.id)).not.toContain(id);
+    // #124-10: шүүлтүүрийн үр дүн ба тоо = цэсний тоо; шалгасныг түүхэнд бичнэ, «Барааны засвар»-т шинэ мөр нэмэхгүй
+    expect([un.total, un.items.length, un.items.every((i) => i.review === null)]).toEqual([1, 1, true]);
+    expect((await H.listProductHistory(ml, { unreviewed: true, important: true })).total).toBe(0);
+    expect(await db.auditLog.count({ where: { action: 'product.edit_reviewed', entityType: 'AuditReview' } })).toBe(1);
+    expect((await H.listProductHistory(ml, {})).total).toBe(3);
     const own = await P.updateProduct(ml, p.id, { name: 'Ахлагч засав' }, { reason: 'Ахлагчийн засвар', version: (await P.getProduct(ml, p.id)).version });
     expect(own.changed).toBe(true);
     const mine = (await H.listProductHistory(ml, { actorId: ml.id })).items[0]!;

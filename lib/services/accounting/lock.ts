@@ -13,7 +13,9 @@ export async function assertDayOpen(tx: Tx | typeof db, handoverId: number | nul
   if (!handoverId) return;
   const h = await tx.handover.findUnique({ where: { id: handoverId }, select: { driverId: true, date: true } });
   if (!h) return;
-  const s = await tx.driverSettlement.findUnique({ where: { driverId_date: { driverId: h.driverId, date: h.date } }, select: { status: true } });
+  // Тооцооны мөрийг түгжинэ (#124-7): баталгаажуулалт ба төлөв өөрчлөх нэг зэрэг явахгүй — нэг нь нөгөөгөө хүлээгээд шинэ дүнгээр
+  const rows = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "DriverSettlement" WHERE "driverId" = ${h.driverId}::uuid AND date = ${h.date} FOR UPDATE`;
+  const s = rows[0];
   if (!s) return;
   if (s.status === 'COMPLETED') throw conflict('Энэ өдрийн тооцоог нягтлан баталгаажуулсан — өөрчлөх боломжгүй', 'day_locked');
   if (s.status === 'PENDING' && !opts.allowPending) throw conflict('Энэ өдрийн тооцоог илгээсэн байна — эхлээд «Орлого» табаас «Тооцоо буцаах» дарна уу', 'day_submitted');

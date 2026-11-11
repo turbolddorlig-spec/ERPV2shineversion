@@ -65,17 +65,31 @@ export async function listProductHistory(actor: UserActor, params: HistoryParams
   if (params.from) and.push({ at: { gte: ubDayStart(params.from) } });
   if (params.to) and.push({ at: { lt: ubDayStart(params.to, 1) } });
   if (params.important) and.push({ tags: { hasSome: IMPORTANT_TAGS } });
-  if (params.unreviewed) {
-    // Шалгаагүй: AuditReview-д бичлэггүй, бараа үүсгэснээс бусад засвар
-    and.push({ action: { notIn: NOT_REVIEWABLE } });
-    and.push({ id: { notIn: (await db.auditReview.findMany({ select: { auditLogId: true } })).map((r) => r.auditLogId) } });
-  }
-  const where: Prisma.AuditLogWhereInput = { AND: and };
   const page = Math.max(1, Math.min(10000, Math.floor(params.page ?? 1)));
-  const [total, rows] = await Promise.all([
-    db.auditLog.count({ where }),
-    db.auditLog.findMany({ where, orderBy: { id: 'desc' }, skip: (page - 1) * HISTORY_PAGE_SIZE, take: HISTORY_PAGE_SIZE }),
-  ]);
+  let total: number; let rows: Awaited<ReturnType<typeof db.auditLog.findMany>>;
+  if (params.unreviewed) {
+    // Шалгаагүй: AuditReview-д бичлэггүй (NOT EXISTS — шалгасан засвар олширсон ч хурдан, #124-10), бараа үүсгэснээс бусад засвар
+    const conds: Prisma.Sql[] = [Prisma.sql`a."entityType" = 'Product'`, Prisma.sql`a.action NOT LIKE 'outflow.%'`, Prisma.sql`a.action NOT IN (${Prisma.join(NOT_REVIEWABLE)})`,
+      Prisma.sql`NOT EXISTS (SELECT 1 FROM "AuditReview" r WHERE r."auditLogId" = a.id)`];
+    if (params.productId) conds.push(Prisma.sql`a."entityId" = ${String(params.productId)}`);
+    if (params.actorId) conds.push(Prisma.sql`a."actorId" = ${params.actorId}::uuid`);
+    if (params.from) conds.push(Prisma.sql`a.at >= ${ubDayStart(params.from)}`);
+    if (params.to) conds.push(Prisma.sql`a.at < ${ubDayStart(params.to, 1)}`);
+    if (params.important) conds.push(Prisma.sql`a.tags && ${IMPORTANT_TAGS}::text[]`);
+    const w = Prisma.join(conds, ' AND ');
+    const [c, ids] = await Promise.all([
+      db.$queryRaw<{ n: bigint }[]>`SELECT count(*)::bigint AS n FROM "AuditLog" a WHERE ${w}`,
+      db.$queryRaw<{ id: bigint }[]>`SELECT a.id FROM "AuditLog" a WHERE ${w} ORDER BY a.id DESC OFFSET ${(page - 1) * HISTORY_PAGE_SIZE} LIMIT ${HISTORY_PAGE_SIZE}`,
+    ]);
+    total = Number(c[0]?.n ?? 0);
+    rows = ids.length ? await db.auditLog.findMany({ where: { id: { in: ids.map((x) => x.id) } }, orderBy: { id: 'desc' } }) : [];
+  } else {
+    const where: Prisma.AuditLogWhereInput = { AND: and };
+    [total, rows] = await Promise.all([
+      db.auditLog.count({ where }),
+      db.auditLog.findMany({ where, orderBy: { id: 'desc' }, skip: (page - 1) * HISTORY_PAGE_SIZE, take: HISTORY_PAGE_SIZE }),
+    ]);
+  }
   const reviews = await db.auditReview.findMany({ where: { auditLogId: { in: rows.map((r) => r.id) } } });
   const byId = new Map(reviews.map((r) => [r.auditLogId.toString(), r]));
   const showCost = canSeeCost(actor.roles);
@@ -124,10 +138,12 @@ export async function reviewProductEdit(actor: UserActor, auditId: string) {
   if (!row || row.entityType !== 'Product') throw notFound('Засвар олдсонгүй');
   if (NOT_REVIEWABLE.includes(row.action)) throw badRequest('Энэ бичлэгийг шалгах шаардлагагүй');
   if (row.actorId === actor.id && !actor.roles.includes('SUPER_ADMIN')) throw forbidden('Өөрийн засварыг өөрөө шалгаж болохгүй');
-  await db.auditReview.createMany({
+  const made = await db.auditReview.createMany({
     data: [{ auditLogId: row.id, reviewedById: actor.id, reviewedByName: actor.name }],
     skipDuplicates: true,
   });
+  // Нэг засварыг шалгасныг ч түүхэнд (#124-Г) — «Барааны засвар»-т шинэ мөр болохгүйн тулд төрөл нь AuditReview
+  if (made.count) await writeAudit(actor, 'product.edit_reviewed', 'AuditReview', auditId, { productId: row.entityId, action: row.action, by: row.actorName }, db, ['product']);
   badgeCache = null;
   const r = await db.auditReview.findUniqueOrThrow({ where: { auditLogId: row.id } });
   return { by: r.reviewedByName, at: r.reviewedAt };
