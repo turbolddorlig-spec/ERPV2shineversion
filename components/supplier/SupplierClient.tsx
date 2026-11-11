@@ -52,10 +52,12 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'ac
 
 function OrderDays({ days }: { days: OrderDay[] }) {
   return (
+    <div className="flex flex-col gap-2">
+    <p className="text-[12.5px] text-muted"><b className="text-ink">Захиалга — авсан огноогоор</b> (захиалга үүссэн өдөр; жишээ нь өчигдөр орой авч өнөөдөр хүргэх захиалга «Өчигдөр»-т). Тооцоо харин <b className="text-ink">падааны өдрөөр</b>.</p>
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
       {days.map((d) => (
         <div key={d.date} className="flex min-w-0 flex-col gap-2 rounded-2xl border border-line bg-surface p-4">
-          <div className="flex items-baseline justify-between gap-2"><b className="text-[14px]">{d.label}</b><span className="text-[12.5px] text-subtle">{d.date.slice(5).replace('-', '/')}</span></div>
+          <div className="flex items-baseline justify-between gap-2"><b className="text-[14px]">{d.label}</b><span className="text-[12.5px] text-subtle">{d.date.slice(5).replace('-', '/')}-нд авсан</span></div>
           <div className="text-[24px] font-extrabold tracking-tight">{d.total} <span className="text-[13px] font-medium text-muted">захиалга · {money(d.amount)}</span></div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[12.5px] text-muted">
             <span>Хүргэсэн: <b className="text-ok-ink">{d.delivered}</b></span><span>Хүргэлтэд: <b className="text-ink">{d.onRoad}</b></span>
@@ -63,6 +65,7 @@ function OrderDays({ days }: { days: OrderDay[] }) {
           </div>
         </div>
       ))}
+    </div>
     </div>
   );
 }
