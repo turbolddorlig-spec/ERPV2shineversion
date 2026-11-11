@@ -20,7 +20,7 @@ import { addDays, driverLocationId, lockDelivery, removeFromHandover, type Tx } 
  * Бүх үйлдэл хүргэлтийн нийтлэг түгжээ → захиалга → бараа дарааллаар (Модуль 4-тэй ижил, deadlock-гүй), давхар дарахад нэг удаа.
  */
 export const MAX_POSTPONE = 2;
-export const PAYMENT_LABEL: Record<DeliveryPayment, string> = { CASH: 'Бэлэн', BANK: 'Данс', UNPAID: 'Төлөөгүй (өр)', PREPAID: 'Урьдчилж төлсөн' };
+export const PAYMENT_LABEL: Record<DeliveryPayment, string> = { CASH: 'Бэлэн', BANK: 'Данс', UNPAID: 'Төлөөгүй (өрийн дэвтэрт)', PREPAID: 'Урьдчилж төлсөн' };
 export const ISSUE_LABEL: Record<IssueType, string> = { WRONG_PRODUCT: 'Бараа буруу', WRONG_NUMBER: 'Дугаар буруу', UNCLEAR_ADDRESS: 'Хаяг тодорхойгүй' };
 export const FAULT_LABEL: Record<IssueFault, string> = { OPERATOR: 'Опп-н алдаа', DRIVER: 'Жолоочийн алдаа', MARKETING: 'Маркетингийн алдаа', WAREHOUSE: 'Агуулахын алдаа' };
 
@@ -149,6 +149,8 @@ export async function deliverOrder(actor: UserActor, idIn: unknown, input: { tak
         version: { increment: 1 },
       },
     });
+    // «Төлөөгүй» → жолоочийн ХУВИЙН өрийн дэвтэр (хуучин шиг, нягтлантай холбоогүй — #79)
+    if (pay.payment === 'UNPAID') await tx.driverDebt.create({ data: { orderId: id, driverId: actor.id, orderNumber: o.number, phone: o.phone, amount: sum.total } });
     const refused = o.lines.filter((l) => (taken.get(l.id) ?? 0) < l.qty).map((l) => ({ name: labels.get(l.variantId), qty: l.qty - (taken.get(l.id) ?? 0) }));
     await writeAudit(actor, recover ? 'order.redelivered' : 'order.delivered', 'Order', String(id), {
       number: o.number, payment: pay.payment, total: sum.total, collect, ...(refused.length ? { refused, totalBefore: o.originalTotal ?? o.total } : {}), ...(pay.note ? { note: pay.note } : {}),
@@ -176,6 +178,8 @@ export async function undoDelivery(actor: UserActor, idIn: unknown, input: { not
     const back = o.lines.map((l) => ({ type: 'DELIVERY_BACK' as const, variantId: l.variantId, qty: l.qty - l.refusedQty, fromId: null, toId, note: `№${o.number} хүргэсний дараа буцаасан` }));
     await applyMoves(tx, actor, { type: 'order', id }, back, labels);
     await tx.orderLine.updateMany({ where: { orderId: id }, data: { refusedQty: 0 } });
+    // Хүргэлт буцсан тул өрийн дэвтрээс хасна (төлөөгүй мөр)
+    await tx.driverDebt.updateMany({ where: { orderId: id, paidAt: null, cancelledAt: null }, data: { cancelledAt: new Date() } });
     const full = recompute(o, new Map(o.lines.map((l) => [l.id, l.qty])));
     const u = await tx.order.update({
       where: { id },
@@ -482,6 +486,41 @@ export async function pickUp(actor: UserActor, input: { ids?: unknown }) {
   const ids = Array.isArray(input.ids) ? [...new Set((input.ids as unknown[]).map(Number))].filter((n) => Number.isInteger(n) && n > 0).slice(0, 50) : [];
   if (!ids.length) throw badRequest('Захиалга сонгоно уу');
   return assignCore(actor, ids, { id: actor.id, name: actor.name }, { pickup: true });
+}
+
+// ───────────────────────── Өрийн дэвтэр (жолоочийн хувийн, #79) ─────────────────────────
+
+/** Жолоочийн «Өрийн дэвтэр»: «Төлөөгүй» гэж хүргэсэн захиалгууд — нийт өр, мөр бүр (утас, хаяг, бараа, дүн) */
+export async function myDebts(actor: UserActor, p: { paid?: boolean } = {}) {
+  assertDriver(actor);
+  const where: Prisma.DriverDebtWhereInput = { driverId: actor.id, cancelledAt: null, paidAt: p.paid ? { not: null } : null };
+  const [rows, sum] = await Promise.all([
+    db.driverDebt.findMany({ where, orderBy: p.paid ? { paidAt: 'desc' } : { createdAt: 'desc' }, take: 200 }),
+    db.driverDebt.aggregate({ where: { driverId: actor.id, cancelledAt: null, paidAt: null }, _sum: { amount: true }, _count: true }),
+  ]);
+  const orders = await db.order.findMany({ where: { id: { in: rows.map((r) => r.orderId) } }, include: { lines: { orderBy: { id: 'asc' } } } });
+  const om = new Map(orders.map((o) => [o.id, serializeOrder(o)]));
+  return {
+    summary: { amount: sum._sum.amount ?? 0, count: sum._count },
+    items: rows.map((d) => {
+      const o = om.get(d.orderId);
+      return { id: d.id, orderId: d.orderId, number: d.orderNumber, phone: d.phone, amount: d.amount, createdAt: d.createdAt, paidAt: d.paidAt,
+        fullAddress: o?.fullAddress ?? '', extraPhone: o?.extraPhone ?? null, lines: (o?.lines ?? []).filter((l) => l.qty > l.refusedQty).map((l) => ({ id: l.id, name: l.name, label: l.label, code: l.code, thumb: l.thumb, qty: l.qty - l.refusedQty, unitPrice: l.unitPrice })) };
+    }),
+  };
+}
+
+/** «Төлсөн» — үйлчлүүлэгч мөнгөө өгсөн (зөвхөн өөрийн мөр; давхар дарахад нэг удаа) */
+export async function markDebtPaid(actor: UserActor, idIn: unknown) {
+  assertDriver(actor);
+  const id = Number(idIn);
+  if (!Number.isInteger(id) || id <= 0) throw notFound('Өр олдсонгүй');
+  const d = await db.driverDebt.findUnique({ where: { id } });
+  if (!d || d.driverId !== actor.id || d.cancelledAt) throw notFound('Өр олдсонгүй');
+  if (d.paidAt) return { debt: d, duplicate: true };
+  const n = await db.driverDebt.updateMany({ where: { id, paidAt: null }, data: { paidAt: new Date() } });
+  if (n.count) await writeAudit(actor, 'driver.debt_paid', 'Order', String(d.orderId), { number: d.orderNumber, amount: d.amount, phone: d.phone }, db, ['delivery']);
+  return { debt: await db.driverDebt.findUniqueOrThrow({ where: { id } }), duplicate: n.count === 0 };
 }
 
 export { cleanId as cleanOrderId };

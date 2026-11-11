@@ -41,7 +41,7 @@ export function DriverControlClient() {
           <table className="w-full min-w-[1100px] text-[13px]">
             <thead className="bg-surface2 text-[12px] text-muted"><tr>
               <th className="px-3 py-2 text-left font-bold">Жолооч</th><th className={th}>Оноосон</th><th className={th}>Хүргэлтэд</th><th className={th}>Хүргэсэн</th><th className={th}>Цуцалсан</th><th className={th}>Маргааш</th>
-              <th className={th}>Гарт</th><th className={th}>Буцаах</th><th className={th}>Бэлэн</th><th className={th}>Данс</th><th className={th}>Өр</th><th className={th}>Нэмэлт</th><th className="px-3 py-2 text-left font-bold">Сүүлийн буцаалт</th>
+              <th className={th}>Гарт</th><th className={th}>Буцаах</th><th className={th}>Бэлэн</th><th className={th}>Данс</th><th className={th} title="Жолоочийн хувийн өрийн дэвтэрт (нягтлантай холбоогүй)">Төлөөгүй</th><th className={th}>Нэмэлт</th><th className="px-3 py-2 text-left font-bold">Сүүлийн буцаалт</th>
             </tr></thead>
             <tbody className="divide-y divide-line">
               {data?.items.map((r) => (

@@ -467,6 +467,9 @@ async function main() {
     const ex = await req('/api/driver/goods', { cookie: d5.cookie, method: 'POST', body: { kind: 'take', idemKey: `e2e-m5-ex-${Date.now()}`, lines: [{ variantId: vv.variantId, qty: 1 }] } });
     const sl = await req('/api/driver/goods', { cookie: d5.cookie, method: 'POST', body: { kind: 'sale', payment: 'CASH', idemKey: `e2e-m5-sl-${Date.now()}`, lines: [{ variantId: vv.variantId, qty: 1 }] } });
     check('нэмэлт бараа авч, системийн үнээр зарав', ex.status === 200 && sl.status === 200 && JSON.parse(sl.text).doc.total > 0, `${ex.text.slice(0, 60)} ${sl.text.slice(0, 60)}`);
+    const db5 = JSON.parse((await req('/api/driver/debts', { cookie: d5.cookie })).text);
+    const dbOp = await req('/api/driver/debts', { cookie: op4.cookie });
+    check('жолоочийн өрийн дэвтэр өөрт л (оператор 403)', Array.isArray(db5.items) && typeof db5.summary?.amount === 'number' && dbOp.status === 403, `${JSON.stringify(db5.summary)} ${dbOp.status}`);
     const g5 = JSON.parse((await req('/api/driver/goods', { cookie: d5.cookie })).text);
     check('жолоочид бараа үлдээгүй', g5.totals?.balance === 0, JSON.stringify(g5.totals));
     const ctl = await req('/api/driver-control', { cookie: lead4.cookie });

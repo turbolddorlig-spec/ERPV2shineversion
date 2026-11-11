@@ -938,3 +938,21 @@ model DriverSetting {
   updatedAt DateTime @updatedAt
   updatedBy String?
 }
+
+/// Модуль 5 (#79): жолоочийн ХУВИЙН «Өрийн дэвтэр» (хуучин ERP шиг) — «Хүргэсэн» дээр «Төлөөгүй» дарахад үүснэ,
+/// үйлчлүүлэгч мөнгөө өгөхөд жолооч «Төлсөн» дарна. Нягтлангийн тооцоотой холбоогүй.
+model DriverDebt {
+  id          Int       @id @default(autoincrement())
+  orderId     Int
+  driverId    String    @db.Uuid
+  orderNumber String
+  phone       String
+  amount      Int
+  createdAt   DateTime  @default(now())
+  paidAt      DateTime?
+  /// «Цуцлах (буцаах)»-аар хүргэлт буцсан бол дэвтрээс хасагдана
+  cancelledAt DateTime?
+
+  @@index([driverId, paidAt])
+  @@index([orderId])
+}

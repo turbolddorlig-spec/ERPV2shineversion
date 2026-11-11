@@ -123,6 +123,7 @@ async function main() {
     { name: 'Жолооч: падаан', path: '/driver', as: DRIVER, act: async (p) => { await p.getByRole('tab', { name: /Падаан/ }).click(); await p.waitForTimeout(1000); } },
     { name: 'Ахлах жолооч: гүйцэтгэл', path: '/driver-lead', act: async (p) => { await p.getByRole('tab', { name: 'Жолоочийн гүйцэтгэл' }).click(); await p.waitForTimeout(1200); } },
     { name: 'Ахлах жолооч: график', path: '/driver-lead', act: async (p) => { await p.getByRole('tab', { name: 'График' }).click(); await p.waitForTimeout(1200); } },
+    { name: 'Жолооч: өрийн дэвтэр', path: '/driver', as: DRIVER, act: async (p) => { await p.getByRole('tab', { name: 'Өрийн дэвтэр' }).click(); await p.waitForTimeout(1000); } },
     { name: 'Жолооч: авах', path: '/driver', as: DRIVER, act: async (p) => { await p.getByRole('tab', { name: 'Авах' }).click(); await p.waitForTimeout(1000); } },
     { name: 'Жолооч: миний бараа', path: '/driver', as: DRIVER, act: async (p) => { await p.getByRole('tab', { name: 'Миний бараа' }).click(); await p.waitForTimeout(1000); } },
     { name: 'Буцаалт хүлээн авах', path: '/handover/returns', act: async (p) => { await p.locator('section button').first().click().catch(() => {}); await p.waitForTimeout(1000); } },

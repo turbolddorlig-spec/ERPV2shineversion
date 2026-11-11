@@ -34,7 +34,7 @@ const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа г�
 const newKey = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `k-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 const TABS: { k: string; l: string; c?: keyof ListResp['counts'] }[] = [
   { k: 'all', l: 'Бүгд' }, { k: 'delivery', l: 'Хүргэлт', c: 'delivery' }, { k: 'delivered', l: 'Хүргэсэн', c: 'delivered' },
-  { k: 'cancelled', l: 'Цуцласан', c: 'cancelled' }, { k: 'tomorrow', l: 'Маргааш', c: 'tomorrow' }, { k: 'yesterday', l: 'Өчигдөр' },
+  { k: 'cancelled', l: 'Цуцласан', c: 'cancelled' }, { k: 'tomorrow', l: 'Маргааш', c: 'tomorrow' }, { k: 'yesterday', l: 'Өчигдөр' }, { k: 'debts', l: 'Өрийн дэвтэр' },
 ];
 const ST: Record<string, { l: string; c: string }> = {
   ASSIGNED: { l: 'БЭЛТГЭЖ БАЙНА', c: 'bg-surface2 text-muted' }, OUT_FOR_DELIVERY: { l: 'ХҮРГЭЛТЭНД', c: 'bg-info-soft text-info' },
@@ -82,6 +82,7 @@ function OrdersTab() {
   const req = useRef(0);
   const load = useCallback(async () => {
     const id = ++req.current;
+    if (tab === 'debts') return;
     try { const r = await api<ListResp>(`/api/driver/orders?tab=${tab}`); if (id === req.current) { setData(r); setError(null); } }
     catch (e) { if (id === req.current) setError(msg(e)); }
   }, [tab]);
@@ -99,7 +100,7 @@ function OrdersTab() {
       {m ? (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <MoneyTile l="Бэлэн" v={m.cash} tone="ok" /><MoneyTile l="Данс" v={m.bank} tone="info" />
-          <MoneyTile l="Төлөөгүй (өр)" v={m.unpaid} tone="bad" /><MoneyTile l="Урьдчилж төлсөн" v={m.prepaid} tone="muted" />
+          <MoneyTile l="Төлөөгүй (өрийн дэвтэрт)" v={m.unpaid} tone="bad" /><MoneyTile l="Урьдчилж төлсөн" v={m.prepaid} tone="muted" />
         </div>
       ) : null}
       <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1" role="tablist" data-overflow-ok>
@@ -111,11 +112,13 @@ function OrdersTab() {
         ))}
       </div>
       {flash ? <div role="status" className="rounded-[12px] bg-ok-soft px-3 py-2 text-[14px] font-semibold text-ok-ink">{flash}</div> : null}
+      {tab === 'debts' ? <DebtsTab /> : <>
       {error ? <Notice>{error}</Notice> : null}
       {data && !data.items.length ? <p className="rounded-[14px] border border-dashed border-line px-4 py-10 text-center text-muted">Захиалга алга</p> : null}
       <ul className="flex flex-col gap-3">
         {data?.items.map((o) => <OrderCard key={o.id} o={o} onAct={(kind) => setDlg({ kind, o })} onDirect={act} onRoute={load} />)}
       </ul>
+      </>}
       {dlg?.kind === 'deliver' ? <DeliverModal o={dlg.o} onClose={() => setDlg(null)} onDone={(b) => act(dlg.o, 'deliver', b, `№${dlg.o.number} хүргэсэн`)} /> : null}
       {dlg?.kind === 'cancel' ? <CancelModal o={dlg.o} onClose={() => setDlg(null)} onDone={(b) => act(dlg.o, 'cancel', b, `№${dlg.o.number} цуцлагдлаа — бараагаа орой агуулахад буцаана`)} /> : null}
       {dlg?.kind === 'undo' ? <CancelModal o={dlg.o} undo onClose={() => setDlg(null)} onDone={(b) => act(dlg.o, 'undo-delivery', b, `№${dlg.o.number} буцаагдлаа — бараа танд`)} /> : null}
@@ -269,7 +272,7 @@ function DeliverModal({ o, onClose, onDone }: { o: DOrder; onClose: () => void; 
                 <Button size="lg" variant={pay === 'BANK' ? 'primary' : 'secondary'} onClick={() => setPay('BANK')}><Icon name="bank" size={16} />Данс</Button>
               </div>
             ) : null}
-            {paid === false ? <p className="text-[13px] text-bad-ink">Өр болж бүртгэгдэнэ (тооцоо — нягтлан)</p> : null}
+            {paid === false ? <p className="text-[13px] text-bad-ink">Таны «Өрийн дэвтэр»-т бичигдэнэ — үйлчлүүлэгч төлөхөд «Төлсөн» дарна</p> : null}
             <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Тэмдэглэл (заавал биш)" className="h-11 rounded-[10px] border border-line bg-surface px-3 text-[15px]" />
           </div>
         )}
@@ -331,6 +334,71 @@ function IssueModal({ o, onClose, onDone }: { o: DOrder; onClose: () => void; on
         {err ? <Notice>{err}</Notice> : null}
       </div>
     </Modal>
+  );
+}
+
+// ───────────────────────── Өрийн дэвтэр (жолоочийн хувийн, хуучин шиг) ─────────────────────────
+
+interface Debt { id: number; number: string; phone: string; extraPhone: string | null; amount: number; createdAt: string; paidAt: string | null; fullAddress: string; lines: { id: number; name: string; label: string; code: string; thumb: string | null; qty: number; unitPrice: number }[] }
+
+function DebtsTab() {
+  const [paid, setPaid] = useState(false);
+  const [d, setD] = useState<{ summary: { amount: number; count: number }; items: Debt[] } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState<number | null>(null);
+  const load = useCallback(async () => { try { setD(await api(`/api/driver/debts${paid ? '?paid=1' : ''}`)); setErr(null); } catch (e) { setErr(msg(e)); } }, [paid]);
+  useEffect(() => { void load(); }, [load]);
+  async function markPaid(x: Debt) {
+    if (!confirm(`№${x.number} — үйлчлүүлэгч ${money(x.amount)} төлсөн үү?`)) return;
+    setBusy(x.id); setErr(null);
+    try { await api(`/api/driver/debts/${x.id}`, { method: 'POST', json: {} }); await load(); } catch (e) { setErr(msg(e)); } finally { setBusy(null); }
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      {d ? (
+        <div className="rounded-[14px] border border-bad/30 border-l-4 border-l-bad bg-surface px-4 py-3">
+          <div className="flex items-center justify-between"><span className="text-[13px] font-semibold text-muted">Нийт өр:</span><span className="text-[22px] font-extrabold text-bad-ink">{money(d.summary.amount)}</span></div>
+          <div className="text-[12px] text-subtle">{d.summary.count} захиалга · зөвхөн таны хувийн дэвтэр</div>
+        </div>
+      ) : null}
+      <div className="flex gap-1.5">
+        {([[false, 'Төлөөгүй'], [true, 'Төлсөн']] as const).map(([k, l]) => (
+          <button key={l} onClick={() => setPaid(k)} className={clsx('h-9 rounded-full border px-3.5 text-[13px] font-bold', paid === k ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface text-muted')}>{l}</button>
+        ))}
+      </div>
+      {err ? <Notice>{err}</Notice> : null}
+      {d && !d.items.length ? <p className="rounded-[14px] border border-dashed border-line px-4 py-10 text-center font-semibold text-ok-ink">{paid ? 'Төлсөн өр алга' : 'Өр байхгүй байна!'}</p> : null}
+      <ul className="flex flex-col gap-2">
+        {d?.items.map((x) => (
+          <li key={x.id} className="flex flex-col gap-2 rounded-[14px] border border-line border-l-4 border-l-bad/70 bg-surface p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <b className="text-[15px]">№{x.number}</b>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <a href={`tel:${x.phone}`} className="inline-flex h-9 items-center gap-1.5 rounded-[10px] bg-ok-soft px-3 text-[14px] font-bold text-ok-ink"><Icon name="phone" size={14} />{x.phone}</a>
+                  {x.extraPhone ? <a href={`tel:${x.extraPhone}`} className="inline-flex h-9 items-center gap-1.5 rounded-[10px] bg-surface2 px-3 text-[13.5px] font-bold"><Icon name="phone" size={14} />{x.extraPhone}</a> : null}
+                </div>
+                <p className="pt-1 text-[12.5px] text-muted [overflow-wrap:anywhere]">📍 {x.fullAddress}</p>
+              </div>
+              <div className="shrink-0 text-right"><div className="text-[17px] font-extrabold text-bad-ink">{money(x.amount)}</div><div className="text-[11.5px] text-subtle">{ubDateTime(x.createdAt)}</div></div>
+            </div>
+            {x.lines.length ? (
+              <ul className="flex flex-col gap-1 border-t border-line pt-2">
+                {x.lines.map((l) => (
+                  <li key={l.id} className="flex items-center gap-2 rounded-lg bg-surface2/60 p-1.5 text-[12.5px]">
+                    <Thumb src={l.thumb} alt={l.name} size={30} zoom={l.code} />
+                    <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{l.name}{l.label ? ` · ${l.label}` : ''}<span className="block text-subtle">{l.qty} × {money(l.unitPrice)}</span></span>
+                    <b className="whitespace-nowrap">{money(l.qty * l.unitPrice)}</b>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {x.paidAt ? <p className="text-[12.5px] font-semibold text-ok-ink">✓ Төлсөн · {ubDateTime(x.paidAt)}</p>
+              : <Button variant="primary" className="!bg-ok !text-white" loading={busy === x.id} onClick={() => markPaid(x)}><Icon name="check" size={15} />Төлсөн</Button>}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

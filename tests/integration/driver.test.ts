@@ -359,3 +359,33 @@ describe('ахлах жолоочийн «Жолоочийн гүйцэтгэл�
     await err(L.leadChart(op, {}), 403);
   });
 });
+
+describe('жолоочийн хувийн «Өрийн дэвтэр» (#79, хуучин шиг)', () => {
+  it('«Төлөөгүй» → дэвтэрт; «Төлсөн» → хаагдана; урьдчилж төлсөнд үүсэхгүй; буцаахад хасагдана; өөр жолооч хандахгүй', async () => {
+    const [a, b, c] = await outFor(drv, 3);
+    const lb = await lineOf(b, v2);
+    await db.order.update({ where: { id: c }, data: { prepaid: true } });
+    await DR.deliverOrder(drv, a, { payment: 'UNPAID' });
+    await DR.deliverOrder(drv, b, { payment: 'UNPAID', taken: { [lb]: 0 } }); // хэсэгчилсэн: дүн 20000
+    await DR.deliverOrder(drv, c, { note: 'Урьдчилж төлсөн' });
+    let d = await DR.myDebts(drv);
+    expect([d.summary, d.items.map((x) => [x.orderId, x.amount]).sort()]).toEqual([{ amount: 50000, count: 2 }, [[a, 30000], [b, 20000]].sort()]);
+    expect(d.items.find((x) => x.orderId === b)!.lines.map((l) => l.qty)).toEqual([2]); // болиулсан бараа дэвтэрт орохгүй
+    expect((await DR.myDebts(drv2)).items).toEqual([]);
+    const da = d.items.find((x) => x.orderId === a)!;
+    await err(DR.markDebtPaid(drv2, da.id), 404);
+    await err(DR.markDebtPaid(op, da.id), 403);
+    const rs = await Promise.all([DR.markDebtPaid(drv, da.id), DR.markDebtPaid(drv, da.id)]);
+    expect(rs.map((r) => r.duplicate).sort()).toEqual([false, true]);
+    d = await DR.myDebts(drv);
+    expect(d.summary).toEqual({ amount: 20000, count: 1 });
+    expect((await DR.myDebts(drv, { paid: true })).items.map((x) => x.orderId)).toEqual([a]);
+    // Хүргэлтийг буцаавал дэвтрээс хасагдана; дахин «Төлөөгүй» хүргэвэл шинээр
+    await DR.undoDelivery(drv, b, { note: 'Үйлчлүүлэгч буцаасан' });
+    expect((await DR.myDebts(drv)).summary).toEqual({ amount: 0, count: 0 });
+    await DR.deliverOrder(drv, b, { payment: 'UNPAID' });
+    expect((await DR.myDebts(drv)).summary).toEqual({ amount: 30000, count: 1 });
+    // Нягтлангийн хяналтад «өр» үүсэхгүй — зөвхөн жолоочийн дэвтэр (хүргэлтийн мэдээлэл хэвээр)
+    expect(await db.auditLog.count({ where: { action: 'driver.debt_paid' } })).toBe(1);
+  });
+});
