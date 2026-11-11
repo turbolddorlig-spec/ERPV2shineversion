@@ -16,7 +16,7 @@ export default async function HandoverPrintPage({ params }: { params: { id: stri
   if (!h) notFound();
   const orders = h.orders.filter((o) => !o.removedAt);
   return (
-    <main className="mx-auto max-w-[820px] bg-white p-6 text-[13px] text-black print:p-0">
+    <main className="mx-auto max-w-[820px] bg-white p-6 text-[13px] text-black [overflow-wrap:anywhere] print:p-0">
       <div className="mb-4 flex items-start justify-between print:hidden"><a href="/handover" className="text-[13px] underline">← Буцах</a><PrintButton /></div>
       <h1 className="text-[20px] font-extrabold">Падаан {h.number}</h1>
       <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 border-y border-black/20 py-2 sm:grid-cols-4">
@@ -30,7 +30,7 @@ export default async function HandoverPrintPage({ params }: { params: { id: stri
       <h2 className="mt-4 font-bold">Захиалгууд</h2>
       <div className="mt-1 grid gap-2 sm:grid-cols-2 print:grid-cols-2">
         {orders.map((o, i) => (
-          <div key={o.orderId} className="break-inside-avoid rounded border border-black/20 p-2">
+          <div key={o.orderId} className="min-w-0 break-inside-avoid rounded border border-black/20 p-2">
             <p className="flex justify-between"><b>#{i + 1} · №{o.number}</b><span>{mmdd(o.createdAt ? new Date(o.createdAt) : null)}</span></p>
             <p>Дүн: <b>{money(o.total)}</b></p>
             <p className="mt-1 font-semibold">Бараанууд:</p>

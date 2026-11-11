@@ -46,7 +46,7 @@ export function BlacklistClient() {
             <li key={b.id} className={clsx(card, 'flex flex-wrap items-center gap-3')}>
               <span className="flex min-w-[200px] flex-1 flex-col">
                 <span className="select-text text-[16px] font-extrabold">{formatPhone(b.phone)}</span>
-                <span className="text-[14px]">{b.reason}</span>
+                <span className="text-[14px] [overflow-wrap:anywhere]">{b.reason}</span>
                 <span className="text-[12px] text-subtle">{b.reportedBy} · {ubDateTime(b.createdAt)}{b.orderNumber ? ` · №${b.orderNumber}` : ''}</span>
               </span>
               {data.canManage ? <Button size="sm" variant="danger" onClick={() => setRemoving(b)}>Хасах</Button> : null}

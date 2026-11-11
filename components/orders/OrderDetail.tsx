@@ -24,7 +24,7 @@ interface Detail extends OItem {
   can: { edit: boolean; markPaid: boolean };
 }
 const ACTION: Record<string, string> = {
-  'order.created': 'Үүсгэсэн', 'order.updated': 'Засварласан', 'order.cancelled': 'Цуцалсан', 'order.paid': 'Мөнгө орсон', 'order.paid_undone': '«Мөнгө орсон» буцаасан', 'order.deadline_extended': 'Төлбөрийн хугацаа сунгасан',
+  'order.created': 'Үүсгэсэн', 'order.updated': 'Засварласан', 'order.cancelled': 'Цуцалсан', 'order.paid': 'Мөнгө орсон', 'order.paid_undone': '«Мөнгө орсон» буцаасан', 'order.deadline_extended': 'Төлбөрийн хугацаа сунгасан', 'order.assigned': 'Жолоочид оноосон',
 };
 const FIELD: Record<string, string> = { phone: 'Утас', extraPhone: 'Нэмэлт утас', province: 'Аймаг/хот', district: 'Дүүрэг', khoroo: 'Хороо', addressDetail: 'Хаяг', note: 'Тэмдэглэл', pageId: 'Пэйж', deliveryDate: 'Хүргэх өдөр', total: 'Дүн', deliveryFee: 'Хүргэлт', lines: 'Бараа' };
 const CANCEL = [{ v: 'CUSTOMER_CANCELLED', l: 'Үйлчлүүлэгч болисон' }, { v: 'DUPLICATE', l: 'Давхар захиалга' }, { v: 'OUT_OF_STOCK', l: 'Бараа дутуу' }, { v: 'NO_ANSWER', l: 'Утас авахгүй' }, { v: 'OTHER', l: 'Бусад' }];
@@ -66,8 +66,8 @@ export function OrderDetail({ id }: { id: number }) {
           <div className="grid gap-2 text-[14.5px] sm:grid-cols-2">
             <p className="select-text"><span className="text-muted">Утас: </span><a href={`tel:${o.phone}`} className="font-bold">{formatPhone(o.phone)}</a>{o.extraPhone ? <> · <a href={`tel:${o.extraPhone}`} className="font-bold">{formatPhone(o.extraPhone)}</a></> : null}</p>
             <p><span className="text-muted">Хүргэх өдөр: </span><span className="font-bold">{o.deliveryDate}</span></p>
-            <p className="select-text sm:col-span-2"><span className="text-muted">📍 </span>{o.fullAddress}</p>
-            {o.note ? <div className="sm:col-span-2"><OperatorNote text={o.note} className="text-[13px]" /></div> : null}
+            <p className="select-text sm:col-span-2 min-w-0 [overflow-wrap:anywhere]"><span className="text-muted">📍 </span>{o.fullAddress}</p>
+            {o.note ? <div className="sm:col-span-2 min-w-0 [overflow-wrap:anywhere]"><OperatorNote text={o.note} className="text-[13px]" /></div> : null}
             <p><span className="text-muted">Оператор: </span>{o.operatorName}{o.pageName ? ` · ${o.pageName}` : ''}</p>
             <p><span className="text-muted">Үүссэн: </span>{ubDateTime(o.createdAt)}{o.confirmedAt ? ` · баталгаажсан ${ubDateTime(o.confirmedAt)}` : ''}</p>
             {o.paymentDeadline && o.status === 'PENDING_PAYMENT' ? <p className="text-warn sm:col-span-2">Төлбөрийн хугацаа: {ubDateTime(o.paymentDeadline)} хүртэл (дараа нь автоматаар цуцлагдана)</p> : null}

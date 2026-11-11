@@ -112,7 +112,7 @@ function StatusPicker({ value, onChange, counts }: { value: string[]; onChange: 
 
 /** Оператор санамж — хуучин ERP шиг хаягийн доор улаан шошго (бүх хуудсанд ялгарч харагдана) */
 export function OperatorNote({ text, className }: { text: string; className?: string }) {
-  return <div className={clsx('mt-1 inline-flex max-w-full items-start gap-1 rounded-md border border-bad/30 bg-bad-soft px-2 py-0.5 text-[11.5px] font-semibold text-bad-ink [overflow-wrap:anywhere]', className)}>{text}</div>;
+  return <div title={text} className={clsx('mt-1 inline-flex max-w-full items-start gap-1 rounded-md border border-bad/30 bg-bad-soft px-2 py-0.5 text-[11.5px] font-semibold text-bad-ink [overflow-wrap:anywhere]', className)}>{text}</div>;
 }
 
 /** Хуучин ERP шиг мөрийн төгсгөлийн жижиг icon товч (хулгана аваачихад нэр нь гарна) */
@@ -282,7 +282,7 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
       <div className="overflow-x-auto rounded-xl border border-line bg-surface">
         <table className="w-full min-w-[1080px] text-[13px]">
           <thead className="border-b border-line bg-surface2/70">
-            <tr><th className={clsx(th, 'w-[130px]')}>Захиалга</th><th className={clsx(th, 'w-[110px]')}>Утас</th><th className={th}>Бараа</th><th className={th}>Хаяг</th><th className={clsx(th, 'w-[150px]')}>Төлөв</th><th className={clsx(th, 'w-[95px] text-right')}>Дүн</th><th className={clsx(th, 'w-[130px]')}>Оператор</th><th className={clsx(th, 'w-[110px]')}>Жолооч</th><th className={clsx(th, 'w-[124px] text-center')}>Үйлдэл</th></tr>
+            <tr><th className={clsx(th, 'w-[130px]')}>Захиалга</th><th className={clsx(th, 'w-[110px]')}>Утас</th><th className={th}>Бараа</th><th className={clsx(th, 'w-[250px]')}>Хаяг</th><th className={clsx(th, 'w-[150px]')}>Төлөв</th><th className={clsx(th, 'w-[95px] text-right')}>Дүн</th><th className={clsx(th, 'w-[130px]')}>Оператор</th><th className={clsx(th, 'w-[110px]')}>Жолооч</th><th className={clsx(th, 'w-[124px] text-center')}>Үйлдэл</th></tr>
           </thead>
           <tbody className="divide-y divide-line">
             {data?.items.map((o) => {
@@ -291,13 +291,13 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
                 <tr key={o.id} className={clsx('align-top hover:bg-surface2/50', o.isToday && ['NEW', 'ASSIGNED'].includes(o.displayStatus) && 'bg-bad-soft/30')}>
                   <td className="select-text px-2.5 py-2"><div className="font-bold">№{o.number}</div><div className="text-[11.5px] text-subtle">{ubDateTime(o.createdAt)}</div></td>
                   <td className="select-text px-2.5 py-2"><div className="font-semibold">{formatPhone(o.phone)}</div>{o.extraPhone ? <div className="text-[11.5px] text-muted">{formatPhone(o.extraPhone)}</div> : null}</td>
-                  <td className="px-2.5 py-2">
+                  <td className="min-w-[220px] px-2.5 py-2">
                     <div className="flex flex-col gap-1">
                       {o.lines.slice(0, 3).map((l) => <span key={l.id} className="flex items-center gap-1.5"><Thumb src={l.thumb} alt={`${l.name} ${l.label}`} size={26} zoom={l.code} /><span className="line-clamp-1">{l.name}{l.label ? ` · ${l.label}` : ''} <b className="whitespace-nowrap">{l.qty}ш</b></span></span>)}
                       {o.lines.length > 3 ? <span className="text-[11.5px] text-subtle">+{o.lines.length - 3} бараа</span> : null}
                     </div>
                   </td>
-                  <td className="max-w-[280px] select-text px-2.5 py-2"><div className="line-clamp-2 text-[12.5px]">{o.fullAddress}</div>{o.note ? <OperatorNote text={o.note} /> : null}</td>
+                  <td className="w-[250px] min-w-[220px] max-w-[280px] select-text px-2.5 py-2"><div className="line-clamp-2 text-[12.5px]" title={o.fullAddress}>{o.fullAddress}</div>{o.note ? <OperatorNote text={o.note} className="!line-clamp-3" /> : null}</td>
                   <td className="px-2.5 py-2"><StatusChip o={o} /></td>
                   <td className="px-2.5 py-2 text-right font-bold">{money(o.total)}</td>
                   <td className="px-2.5 py-2"><div className="line-clamp-1">{o.operatorName}</div>{o.pageName ? <div className="line-clamp-1 text-[11.5px] text-subtle">{o.pageName}</div> : null}</td>

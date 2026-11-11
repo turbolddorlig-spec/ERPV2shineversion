@@ -308,7 +308,7 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
           <label className="flex flex-col gap-1"><span className={lbl}>Дэлгэрэнгүй хаяг <span className="text-bad-ink">*</span></span>
             <textarea rows={3} value={detail} onChange={(e) => setDetail(e.target.value)} placeholder="Хороолол, байр, тоот..." aria-label="Дэлгэрэнгүй хаяг"
               className="rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[13.5px] text-ink outline-none focus:border-accent" />
-            <span className="text-[12px] text-subtle">📍 {addr}</span>
+            <span className="text-[12px] text-subtle [overflow-wrap:anywhere]">📍 {addr}</span>
           </label>
           {!ub ? <p className="rounded-lg bg-warn-soft px-2.5 py-1.5 text-[12.5px] text-warn">Орон нутаг — урьдчилгаатай: «Төлбөр хүлээж буй» төлөвтэй үүснэ.</p> : null}
           <label className="flex flex-col gap-1"><span className={lbl}>Оператор санамж</span>

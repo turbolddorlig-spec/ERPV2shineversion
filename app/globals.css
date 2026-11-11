@@ -56,6 +56,8 @@ body {
   font-family: Onest, Inter, system-ui, sans-serif;
   font-variant-numeric: tabular-nums;
   -webkit-tap-highlight-color: transparent;
+  /* B3/R3: урт хаяг, тайлбар, тасралтгүй урт үг хэзээ ч хайрцгаасаа хальж гарахгүй */
+  overflow-wrap: break-word;
 }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

@@ -14,7 +14,8 @@
     "create-admin": "tsx scripts/create-super-admin.ts",
     "test": "vitest run",
     "test:e2e": "tsx tests/e2e/run.ts",
-    "test:load": "tsx tests/load/run.ts"
+    "test:load": "tsx tests/load/run.ts",
+    "test:ui": "tsx tests/ui/overflow.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

@@ -10,7 +10,7 @@ import { formatPhone } from '@/lib/phone';
 import { OperatorNote } from './OrdersClient';
 
 export const ACTION_LABEL: Record<string, string> = {
-  'order.created': 'Үүсгэсэн', 'order.updated': 'Засварласан', 'order.cancelled': 'Цуцалсан', 'order.paid': 'Мөнгө орсон', 'order.paid_undone': '«Мөнгө орсон» буцаасан', 'order.deadline_extended': 'Төлбөрийн хугацаа сунгасан',
+  'order.created': 'Үүсгэсэн', 'order.updated': 'Засварласан', 'order.cancelled': 'Цуцалсан', 'order.paid': 'Мөнгө орсон', 'order.paid_undone': '«Мөнгө орсон» буцаасан', 'order.deadline_extended': 'Төлбөрийн хугацаа сунгасан', 'order.assigned': 'Жолоочид оноосон',
 };
 export const FIELD_LABEL: Record<string, string> = { phone: 'Утас', extraPhone: 'Нэмэлт утас', province: 'Аймаг/хот', district: 'Дүүрэг', khoroo: 'Хороо', addressDetail: 'Хаяг', note: 'Тэмдэглэл', pageId: 'Пэйж', deliveryDate: 'Хүргэх өдөр', total: 'Дүн', deliveryFee: 'Хүргэлт', lines: 'Бараа' };
 export const CANCEL_REASONS = [{ v: 'CUSTOMER_CANCELLED', l: 'Үйлчлүүлэгч болисон' }, { v: 'DUPLICATE', l: 'Давхар захиалга' }, { v: 'OUT_OF_STOCK', l: 'Бараа дутуу' }, { v: 'NO_ANSWER', l: 'Утас авахгүй' }, { v: 'OTHER', l: 'Бусад' }];
@@ -60,8 +60,8 @@ export function HistoryDrawer({ orderId, onClose }: { orderId: number | null; on
         <div className="flex flex-col gap-4 text-[13px]">
           <div className="flex flex-col gap-1 rounded-lg bg-surface2/70 p-3">
             <p><span className="text-muted">Утас: </span><b className="select-text">{formatPhone(o.phone)}</b>{o.extraPhone ? <> · <b className="select-text">{formatPhone(o.extraPhone)}</b></> : null}</p>
-            <p className="select-text"><span className="text-muted">📍 </span>{o.fullAddress}</p>
-            {o.note ? <div><OperatorNote text={o.note} className="text-[12.5px]" /></div> : null}
+            <p className="select-text min-w-0 [overflow-wrap:anywhere]"><span className="text-muted">📍 </span>{o.fullAddress}</p>
+            {o.note ? <div className="min-w-0"><OperatorNote text={o.note} className="text-[12.5px]" /></div> : null}
             <p><span className="text-muted">Үүссэн: </span>{ubDateTime(o.createdAt)} · <span className="text-muted">Хүргэх: </span>{o.deliveryDate}</p>
             {o.cancelLabel ? <p className="text-bad-ink">Цуцалсан: {o.cancelLabel}{o.cancelNote ? ` — ${o.cancelNote}` : ''}</p> : null}
           </div>
