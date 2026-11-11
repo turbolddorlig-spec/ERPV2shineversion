@@ -26,7 +26,7 @@ interface DOrder {
 }
 interface ListResp { tab: string; today: string; counts: { delivery: number; delivered: number; cancelled: number; postponed: number; tomorrow: number }; money: { cash: number; bank: number; unpaid: number; prepaid: number }; items: DOrder[] }
 interface GItem { variantId: number; code: string; name: string; label: string; thumb: string | null; balance: number; held: number; returnable: number }
-interface GDoc { id: number; kind: string; kindLabel: string; at: string; byName: string; note: string | null; total: number; paymentLabel: string | null; lines: { variantId: number; name: string; label: string; qty: number; expected: number; unitPrice: number }[] }
+interface GDoc { id: number; kind: string; status: string; date: string | null; kindLabel: string; at: string; byName: string; note: string | null; total: number; paymentLabel: string | null; lines: { variantId: number; name: string; label: string; qty: number; expected: number; unitPrice: number }[] }
 interface GoodsResp { items: GItem[]; totals: { balance: number; returnable: number }; docs: GDoc[] }
 interface PickOrder { id: number; number: string; fullAddress: string; deliveryDate: string; postponeCount: number; note: string | null }
 
@@ -407,7 +407,7 @@ function DebtsTab() {
 interface HItem { variantId: number; code: string; name: string; label: string; qty: number; amount: number; thumb: string | null; shelfCode: string | null; checked: boolean; driverChecked: boolean }
 interface HDetail {
   id: number; number: string; date: string; status: 'DRAFT' | 'PREPARED' | 'HANDED_OVER' | 'RECEIVED'; handedOverAt: string | null; handedOverBy: string | null; receivedAt: string | null;
-  totals: { orders: number; pieces: number; amount: number; kinds: number; driverChecked: number }; items: HItem[];
+  totals: { orders: number; pieces: number; amount: number; kinds: number; driverChecked: number; extraPieces: number; extraAmount: number }; items: HItem[]; extras: HItem[];
 }
 
 /** Хуучин ERP-ийн «Падаан хүлээн авах»: бараа нэгтгэсэн, тавиурын дарааллаар; агуулах Check хийсэн барааг жолооч чагтлаад «Барааг бүрэн хүлээн авсан» */
@@ -420,10 +420,10 @@ function HandoverTab({ onReceived }: { onReceived: () => void }) {
   const load = useCallback(async () => { try { setD(await api('/api/driver/handover')); setErr(null); } catch (e) { setErr(msg(e)); } }, []);
   useEffect(() => { void load(); const t = setInterval(() => void load(), 15_000); return () => clearInterval(t); }, [load]);
   const h = d?.handover ?? null;
-  async function check(variantId: number | 'all', checked: boolean) {
+  async function check(variantId: number | 'all', checked: boolean, kind: 'ORDER' | 'EXTRA' = 'ORDER') {
     if (!h) return;
     setBusy(variantId); setErr(null);
-    try { const r = await api<{ handover: HDetail }>(`/api/driver/handover/${h.id}`, { method: 'POST', json: { action: 'check', variantId, checked } }); setD({ handover: r.handover }); }
+    try { const r = await api<{ handover: HDetail }>(`/api/driver/handover/${h.id}`, { method: 'POST', json: { action: 'check', variantId, checked, kind } }); setD({ handover: r.handover }); }
     catch (e) { setErr(msg(e)); } finally { setBusy(null); }
   }
   async function receive() {
@@ -473,6 +473,21 @@ function HandoverTab({ onReceived }: { onReceived: () => void }) {
         ))}
         {open && !items.length ? <li className="py-6 text-center text-muted">{only ? 'Бүх бараа шалгагдсан' : 'Хайлтад тохирох бараа олдсонгүй'}</li> : null}
       </ul>
+      {h.extras.length ? (
+        <section className="flex flex-col gap-1.5 rounded-[14px] border-2 border-dashed border-info/50 bg-info-soft/40 p-2.5">
+          <h3 className="px-1 text-[14.5px] font-extrabold text-info">Нэмэлт бараа ({h.totals.extraPieces}ш · {money(h.totals.extraAmount)})</h3>
+          <p className="px-1 text-[12px] text-muted">Таны хүсэлт — захиалгаас гадна. Захиалгын бараатай хамт хүлээн авна.</p>
+          {h.extras.map((i) => (
+            <label key={`x${i.variantId}`} className={clsx('flex items-center gap-3 rounded-[12px] border bg-surface p-2.5', i.driverChecked ? 'border-ok/50' : 'border-line', open && 'cursor-pointer')}>
+              <input type="checkbox" className="h-7 w-7 shrink-0 accent-[var(--accent)]" aria-label={`${i.name} нэмэлт хүлээн авсан`} checked={i.driverChecked} disabled={!open || !i.checked || busy !== null}
+                onChange={(e) => check(i.variantId, e.target.checked, 'EXTRA')} />
+              <Thumb src={i.thumb} alt={i.name} size={42} zoom={i.code} />
+              <span className="min-w-0 flex-1 text-[13.5px] leading-tight [overflow-wrap:anywhere]"><b>{i.name}</b>{i.label ? ` · ${i.label}` : ''}<span className="block text-[12px] text-subtle">{i.code}{i.shelfCode ? ` · ${i.shelfCode}` : ''}</span></span>
+              <b className="text-[20px]">{i.qty}</b>
+            </label>
+          ))}
+        </section>
+      ) : null}
       {open ? (
         <div className="sticky bottom-3 z-10 flex flex-col gap-1.5">
           {!all ? <p className="rounded-[10px] bg-surface/90 px-3 py-1.5 text-center text-[12.5px] text-muted">Дутуу бараа байвал агуулахад хэлнэ (тэд «Буцаах» дарж засна)</p> : null}
@@ -553,7 +568,7 @@ function GoodsTab() {
         <div className={clsx('rounded-[14px] border p-3', g?.totals.returnable ? 'border-warn bg-warn-soft' : 'border-line bg-surface')}><div className="text-[12px] font-semibold text-subtle">Агуулахад буцаах</div><div className="text-[24px] font-extrabold">{g?.totals.returnable ?? '…'}<span className="text-[13px] font-semibold text-muted"> ш</span></div></div>
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <Button size="lg" onClick={() => setDlg('take')}><Icon name="plus" size={16} />Нэмэлт бараа авах</Button>
+        <Button size="lg" onClick={() => setDlg('take')}><Icon name="plus" size={16} />Нэмэлт бараа хүсэх</Button>
         <Button size="lg" disabled={!returnable.length} onClick={() => setDlg('sale')}><Icon name="cash" size={16} />Нэмэлт бараа зарсан</Button>
       </div>
       {flash ? <div role="status" className="rounded-[12px] bg-ok-soft px-3 py-2 text-[14px] font-semibold text-ok-ink">{flash}</div> : null}
@@ -571,6 +586,17 @@ function GoodsTab() {
           </li>
         ))}
       </ul>
+      {g?.docs.some((d) => d.kind === 'EXTRA_TAKE' && d.status === 'REQUESTED') ? (
+        <section className="flex flex-col gap-1.5">
+          <h2 className="text-[15px] font-extrabold">Нэмэлт барааны хүсэлт</h2>
+          {g.docs.filter((d) => d.kind === 'EXTRA_TAKE' && d.status === 'REQUESTED').map((d) => (
+            <div key={d.id} className="flex items-center gap-2 rounded-[12px] border border-warn/40 bg-warn-soft px-3 py-2 text-[13px]">
+              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]"><b>{d.date} падаанд</b> · {d.lines.map((l) => `${l.name}${l.label ? ` · ${l.label}` : ''} ${l.qty}ш`).join(', ')}<span className="block text-[12px] text-warn">Агуулах падаанаар өгч, та «Падаан» табаас хүлээн авна</span></span>
+              <Button size="sm" variant="ghost" onClick={async () => { if (!confirm('Хүсэлтээ цуцлах уу?')) return; try { await api('/api/driver/goods', { method: 'POST', json: { kind: 'cancel', docId: d.id } }); setFlash('Хүсэлт цуцлагдлаа'); await load(); } catch (e) { setErr(msg(e)); } }}>Цуцлах</Button>
+            </div>
+          ))}
+        </section>
+      ) : null}
       {g?.docs.length ? (
         <section className="flex flex-col gap-1.5">
           <h2 className="text-[15px] font-extrabold">Сүүлийн баримт</h2>
@@ -605,12 +631,15 @@ function ExtraTakeModal({ onClose, onDone }: { onClose: () => void; onDone: (t: 
   const add = (h: Hit) => { setLines((ls) => (ls.some((l) => l.variantId === h.variantId) ? ls : [...ls, { ...h, qty: 1 }])); setQ(''); setHits([]); };
   async function submit() {
     setBusy(true); setErr(null);
-    try { await api('/api/driver/goods', { method: 'POST', json: { kind: 'take', idemKey: key.current, lines: lines.map((l) => ({ variantId: l.variantId, qty: l.qty })) } }); await onDone(`Нэмэлт бараа авлаа (${lines.reduce((n, l) => n + l.qty, 0)}ш)`); }
+    try {
+      const r = await api<{ doc: { date: string } }>('/api/driver/goods', { method: 'POST', json: { kind: 'take', idemKey: key.current, lines: lines.map((l) => ({ variantId: l.variantId, qty: l.qty })) } });
+      await onDone(`Нэмэлт барааны хүсэлт илгээлээ (${lines.reduce((n, l) => n + l.qty, 0)}ш) — ${String(r.doc.date).slice(0, 10)}-ны падаанаар өгнө`);
+    }
     catch (e) { setErr(msg(e)); setBusy(false); }
   }
   return (
-    <Modal open onClose={onClose} title="Нэмэлт бараа авах" subtitle="Агуулахаас танд шилжинэ; зараагүйг буцаана"
-      footer={<><Button variant="ghost" onClick={onClose}>Болих</Button><Button variant="primary" size="lg" loading={busy} disabled={!lines.length} onClick={submit}>Авах</Button></>}>
+    <Modal open onClose={onClose} title="Нэмэлт бараа хүсэх" subtitle="Падаанд тусдаа орж, агуулах өгөхөд хүлээн авна; зараагүйг буцаана"
+      footer={<><Button variant="ghost" onClick={onClose}>Болих</Button><Button variant="primary" size="lg" loading={busy} disabled={!lines.length} onClick={submit}>Хүсэлт илгээх</Button></>}>
       <div className="flex flex-col gap-2">
         <input value={q} onChange={(e) => setQ(e.target.value)} data-autofocus placeholder="Бараа хайх (код, нэр)" className="h-11 rounded-[10px] border border-line bg-surface px-3 text-[15px]" />
         {hits.length ? (

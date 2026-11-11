@@ -19,6 +19,7 @@ import { driverGoods, PAYMENT_LABEL } from './driver';
  * Бүх үйлдэл хүргэлтийн түгжээ дор (buцаах тоо = үлдэгдэл − хүргэлтэд явж буй, зэрэг үйлдэлд зөрөхгүй), давхар дарахад нэг удаа (idemKey).
  */
 const DOC_LABEL: Record<DriverDocKind, string> = { RETURN: 'Буцаалт хүлээн авсан', EXTRA_TAKE: 'Нэмэлт бараа авсан', EXTRA_SALE: 'Нэмэлт бараа зарсан' };
+const EXTRA_STATUS: Record<string, string> = { REQUESTED: 'Нэмэлт бараа — падаанд хүлээгдэж байна', GIVEN: 'Нэмэлт бараа — падаанаар авсан', CANCELLED: 'Нэмэлт бараа — цуцалсан', DONE: 'Нэмэлт бараа авсан' };
 
 function cleanUuid(v: unknown, label = 'Жолооч'): string {
   const s = String(v ?? '');
@@ -79,7 +80,7 @@ async function recentDocs(driverId: string, take = 20) {
   const docs = await db.driverDoc.findMany({ where: { driverId }, orderBy: { id: 'desc' }, take, include: { lines: true } });
   const info = await variantInfo([...new Set(docs.flatMap((d) => d.lines.map((l) => l.variantId)))]);
   return docs.map((d) => ({
-    id: d.id, kind: d.kind, kindLabel: DOC_LABEL[d.kind], at: d.createdAt, byName: d.byName, note: d.note, total: d.total,
+    id: d.id, kind: d.kind, kindLabel: d.kind === 'EXTRA_TAKE' ? EXTRA_STATUS[d.status] ?? DOC_LABEL[d.kind] : DOC_LABEL[d.kind], status: d.status, date: d.date ? d.date.toISOString().slice(0, 10) : null, at: d.createdAt, byName: d.byName, note: d.note, total: d.total,
     payment: d.payment, paymentLabel: d.payment ? PAYMENT_LABEL[d.payment] : null,
     lines: d.lines.map((l) => ({ variantId: l.variantId, name: info.get(l.variantId)?.name ?? `#${l.variantId}`, label: info.get(l.variantId)?.label ?? '', qty: l.qty, expected: l.expected, unitPrice: l.unitPrice })),
   }));
@@ -170,7 +171,12 @@ export async function receiveReturn(actor: UserActor, input: { driverId?: unknow
 
 // ───────────────────────── Нэмэлт бараа (жолооч, хуучин шиг) ─────────────────────────
 
-/** Нэмэлт бараа авах: үндсэн агуулахаас жолоочид. Захиалгын нөөцөд хүрэхгүй (захиалах боломжтойгоос) */
+/**
+ * Нэмэлт бараа ХҮСЭХ (#80): бараа шууд хөдлөхгүй — хүсэлт үүсэж, захиалах боломжтойгоос нөөцлөгдөнө (давхар амлахгүй).
+ * Тэр өдрийн падаанд «Нэмэлт бараа» хэсэгт тусдаа орно (падаан хараахан үүсээгүй бол үүсэх үед). Агуулах Check хийж
+ * «Барааг бүрэн өгсөн» → жолооч чагтлаад «Барааг бүрэн хүлээн авсан» дармагц л агуулахаас жолоочид шилжинэ (EXTRA_OUT).
+ * Тэр өдрийн падаан өгөгдсөн бол дараагийн өдрийн падаанд.
+ */
 export async function extraTake(actor: UserActor, input: { lines?: unknown; note?: unknown; idemKey?: unknown }) {
   if (!canDrive(actor.roles)) throw forbidden();
   const idemKey = cleanIdem(input.idemKey);
@@ -189,15 +195,54 @@ export async function extraTake(actor: UserActor, input: { lines?: unknown; note
       const a = av.get(l.variantId) ?? 0;
       if (l.qty > a) throw conflict(`«${labels.get(l.variantId)}» захиалах боломжтой ${Math.max(0, a)} (захиалгын нөөцөд хүрэхгүй)`, 'insufficient_stock');
     }
-    const { locationId: whLoc } = await primaryWarehouse(tx);
-    const toId = await driverLocationId(tx, actor);
-    const d = await tx.driverDoc.create({ data: { kind: 'EXTRA_TAKE', driverId: actor.id, driverName: actor.name, byId: actor.id, byName: actor.name, note, idemKey, lines: { create: lines.map((l) => ({ variantId: l.variantId, qty: l.qty })) } } });
-    await applyMoves(tx, actor, { type: 'driver_doc', id: d.id }, lines.map((l) => ({ type: 'EXTRA_OUT' as const, variantId: l.variantId, qty: l.qty, fromId: whLoc, toId, note: 'Нэмэлт бараа' })), labels);
-    await writeAudit(actor, 'driver.extra_take', 'DriverDoc', String(d.id), { pieces: lines.reduce((n, l) => n + l.qty, 0), lines: lines.map((l) => ({ name: labels.get(l.variantId), qty: l.qty })) } as Prisma.InputJsonValue, tx, ['stock', 'delivery']);
+    // Аль өдрийн падаанд орох: өнөөдрийнх өгөгдөөгүй бол өнөөдөр, өгөгдсөн бол дараагийн өдөр
+    let date = ubDay(); let handoverId: number | null = null;
+    for (let i = 0; i < 30; i++) {
+      const h = await tx.handover.findUnique({ where: { driverId_date: { driverId: actor.id, date: dateOnly(date) } }, select: { id: true, status: true } });
+      if (h && (h.status === 'HANDED_OVER' || h.status === 'RECEIVED')) { date = addDays(date, 1); continue; }
+      handoverId = h?.id ?? null;
+      break;
+    }
+    const d = await tx.driverDoc.create({
+      data: { kind: 'EXTRA_TAKE', status: 'REQUESTED', date: dateOnly(date), handoverId, driverId: actor.id, driverName: actor.name, byId: actor.id, byName: actor.name, note, idemKey,
+        lines: { create: lines.map((l) => ({ variantId: l.variantId, qty: l.qty })) } },
+    });
+    await tx.stockReservation.createMany({ data: lines.map((l) => ({ ref: `extra:${d.id}`, variantId: l.variantId, qty: l.qty })) });
+    if (handoverId) {
+      // Бэлдэж буй падаанд нэмэгдлээ — тэр барааны «нэмэлт» Check дахин хийгдэнэ
+      await tx.handoverCheck.deleteMany({ where: { handoverId, kind: 'EXTRA', variantId: { in: lines.map((l) => l.variantId) } } });
+      await tx.handover.update({ where: { id: handoverId }, data: { version: { increment: 1 } } });
+    }
+    await writeAudit(actor, 'driver.extra_request', 'DriverDoc', String(d.id), { date, pieces: lines.reduce((n, l) => n + l.qty, 0), lines: lines.map((l) => ({ name: labels.get(l.variantId), qty: l.qty })) } as Prisma.InputJsonValue, tx, ['delivery']);
     return d;
   });
   stockCache.today = null; bustCounts();
   return { doc, duplicate: false };
+}
+
+/** Нэмэлт барааны хүсэлтээ цуцлах — падаанаар өгөгдөхөөс өмнө л */
+export async function extraCancel(actor: UserActor, docIdIn: unknown) {
+  if (!canDrive(actor.roles)) throw forbidden();
+  const id = Number(docIdIn);
+  if (!Number.isInteger(id) || id <= 0) throw badRequest('Хүсэлт олдсонгүй');
+  await inTx(async (tx) => {
+    await lockDelivery(tx);
+    const d = await tx.driverDoc.findUnique({ where: { id }, include: { lines: true } });
+    if (!d || d.driverId !== actor.id || d.kind !== 'EXTRA_TAKE') throw badRequest('Хүсэлт олдсонгүй');
+    if (d.status === 'CANCELLED') return;
+    if (d.status !== 'REQUESTED') throw conflict('Падаанаар аль хэдийн авсан — үлдсэнийг буцаалтаар өгнө', 'already_given');
+    if (d.handoverId) {
+      const h = await tx.handover.findUnique({ where: { id: d.handoverId }, select: { status: true } });
+      if (h && (h.status === 'HANDED_OVER' || h.status === 'RECEIVED')) throw conflict('Агуулах падаанаар өгсөн — агуулахад хэлнэ үү', 'handed_over');
+      await tx.handoverCheck.deleteMany({ where: { handoverId: d.handoverId, kind: 'EXTRA', variantId: { in: d.lines.map((l) => l.variantId) } } });
+      await tx.handover.update({ where: { id: d.handoverId }, data: { version: { increment: 1 } } });
+    }
+    await tx.stockReservation.deleteMany({ where: { ref: `extra:${id}` } });
+    await tx.driverDoc.update({ where: { id }, data: { status: 'CANCELLED', handoverId: null } });
+    await writeAudit(actor, 'driver.extra_cancelled', 'DriverDoc', String(id), {}, tx, ['delivery']);
+  });
+  stockCache.today = null; bustCounts();
+  return { ok: true };
 }
 
 /** Нэмэлт бараа зарсан: жолоочийн буцаах бараанаас, СИСТЕМИЙН үнээр (жолооч үнэ бичихгүй). Мөнгө — Модуль 6 */

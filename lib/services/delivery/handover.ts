@@ -4,6 +4,8 @@ import { badRequest, conflict, forbidden, notFound } from '../../errors';
 import { writeAudit } from '../../audit';
 import { canApproveDrivers, canDrive, canOperateHandover, canView } from '../../permissions';
 import { mediaUrl } from '../../storage';
+import { variantInfo } from '../stock/info';
+import { driverGoods } from './driver';
 import { dateOnly, ubDay, ymdOf, isYmd } from '../../ubdate';
 import { applyMoves, stockCache, type MoveSpec } from '../stock/core';
 import { inTx, type UserActor } from '../orders/core';
@@ -95,7 +97,19 @@ async function buildDetail(id: number, canOperate: boolean) {
   }
   const products = await db.product.findMany({ where: { id: { in: [...new Set([...agg.values()].map((x) => x.productId))] } }, select: { id: true, shelfCode: true } });
   const shelf = new Map(products.map((p) => [p.id, p.shelfCode]));
-  const checked = new Map(h.checks.map((c) => [c.variantId, c]));
+  const checked = new Map(h.checks.filter((c) => c.kind === 'ORDER').map((c) => [c.variantId, c]));
+  const xChecked = new Map(h.checks.filter((c) => c.kind === 'EXTRA').map((c) => [c.variantId, c]));
+  // Жолоочийн нэмэлт барааны хүсэлт (#80) — падаанд тусдаа
+  const xdocs = await db.driverDoc.findMany({ where: { handoverId: id, kind: 'EXTRA_TAKE', status: { in: ['REQUESTED', 'GIVEN'] } }, include: { lines: true }, orderBy: { id: 'asc' } });
+  const xqty = new Map<number, number>();
+  for (const d of xdocs) for (const l of d.lines) xqty.set(l.variantId, (xqty.get(l.variantId) ?? 0) + l.qty);
+  const xinfo = await variantInfo([...xqty.keys()]);
+  const xprice = new Map((await db.productVariant.findMany({ where: { id: { in: [...xqty.keys()] } }, select: { id: true, priceOverride: true, product: { select: { price: true } } } })).map((v) => [v.id, v.priceOverride ?? v.product.price]));
+  const extras = [...xqty].map(([variantId, qty]) => {
+    const i = xinfo.get(variantId);
+    return { variantId, code: i?.code ?? '', name: i?.name ?? `#${variantId}`, label: i?.label ?? '', qty, amount: qty * (xprice.get(variantId) ?? 0), thumb: i?.thumb ?? null, image: null as string | null, shelfCode: i?.shelfCode ?? null,
+      checked: xChecked.has(variantId), checkedBy: xChecked.get(variantId)?.checkedBy ?? null, driverChecked: !!xChecked.get(variantId)?.driverCheckedAt };
+  }).sort((a, b) => (a.shelfCode ?? '~').localeCompare(b.shelfCode ?? '~', 'mn') || a.code.localeCompare(b.code));
   const items = [...agg.values()].map((x) => ({
     variantId: x.variantId, code: x.code, name: x.name, label: x.label, qty: x.qty, amount: x.amount,
     thumb: x.imageKey ? mediaUrl(x.imageKey, 'sm') : null, image: x.imageKey ? mediaUrl(x.imageKey, 'lg') : null,
@@ -107,8 +121,14 @@ async function buildDetail(id: number, canOperate: boolean) {
     version: h.version, createdAt: h.createdAt, createdByName: h.createdByName, preparedAt: h.preparedAt, preparedBy: h.preparedBy, handedOverAt: h.handedOverAt, handedOverBy: h.handedOverBy,
     receivedAt: h.receivedAt, receivedBy: h.receivedBy,
     canOperate,
-    totals: { orders: active.length, pieces: items.reduce((a, x) => a + x.qty, 0), amount: active.reduce((a, x) => a + x.o.total, 0), checked: items.filter((x) => x.checked).length, driverChecked: items.filter((x) => x.driverChecked).length, kinds: items.length },
-    items,
+    totals: {
+      orders: active.length, pieces: items.reduce((a, x) => a + x.qty, 0), amount: active.reduce((a, x) => a + x.o.total, 0),
+      checked: items.filter((x) => x.checked).length + extras.filter((x) => x.checked).length,
+      driverChecked: items.filter((x) => x.driverChecked).length + extras.filter((x) => x.driverChecked).length,
+      kinds: items.length + extras.length,
+      extraPieces: extras.reduce((a, x) => a + x.qty, 0), extraAmount: extras.reduce((a, x) => a + x.amount, 0), extraRequests: xdocs.length,
+    },
+    items, extras,
     orders: h.orders.map((x) => {
       const o = om.get(x.orderId);
       return {
@@ -146,6 +166,8 @@ export async function createHandover(actor: UserActor, input: { driverId?: unkno
     const h = await tx.handover.create({ data: { number: await nextHandoverNumber(tx), date: dateOnly(date), driverId, driverName: driver.name, warehouseId: warehouse.id, createdById: actor.id, createdByName: actor.name } });
     await tx.handoverOrder.createMany({ data: orderIds.sort((a, b) => a - b).map((orderId, i) => ({ handoverId: h.id, orderId, position: i + 1, addedAt: h.createdAt })) });
     await tx.order.updateMany({ where: { id: { in: orderIds } }, data: { handoverId: h.id } });
+    // Жолоочийн тэр өдрийн нэмэлт барааны хүсэлтүүд падаанд тусдаа орно (#80)
+    await tx.driverDoc.updateMany({ where: { driverId, kind: 'EXTRA_TAKE', status: 'REQUESTED', date: dateOnly(date), handoverId: null }, data: { handoverId: h.id } });
     await writeAudit(actor, 'handover.created', 'Handover', String(h.id), { number: h.number, driver: driver.name, date, orders: orderIds.length }, tx, ['delivery']);
     return h;
   });
@@ -159,20 +181,25 @@ async function loadForChange(tx: Prisma.TransactionClient, id: number) {
 }
 
 /** Бараа бүрийн Check (агуулах) */
-export async function setCheck(actor: UserActor, idInput: unknown, input: { variantId?: unknown; checked?: unknown }) {
+export async function setCheck(actor: UserActor, idInput: unknown, input: { variantId?: unknown; checked?: unknown; kind?: unknown }) {
   assertOperate(actor);
   const id = Number(idInput);
   const variantId = Number(input.variantId);
+  const kind = input.kind === 'EXTRA' ? 'EXTRA' : 'ORDER';
   if (!Number.isInteger(variantId)) throw badRequest('Бараа буруу');
   await inTx(async (tx) => {
     const h = await loadForChange(tx, id);
     if (isGiven(h.status)) throw conflict('Бараа өгөгдсөн падаан', 'handed_over');
-    const inSheet = await tx.$queryRaw<{ n: number }[]>`
-      SELECT count(*)::int AS n FROM "HandoverOrder" ho JOIN "OrderLine" l ON l."orderId" = ho."orderId"
-      WHERE ho."handoverId" = ${id} AND ho."removedAt" IS NULL AND l."variantId" = ${variantId}`;
+    const inSheet = kind === 'ORDER'
+      ? await tx.$queryRaw<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM "HandoverOrder" ho JOIN "OrderLine" l ON l."orderId" = ho."orderId"
+        WHERE ho."handoverId" = ${id} AND ho."removedAt" IS NULL AND l."variantId" = ${variantId}`
+      : await tx.$queryRaw<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM "DriverDoc" d JOIN "DriverDocLine" l ON l."docId" = d.id
+        WHERE d."handoverId" = ${id} AND d.kind = 'EXTRA_TAKE' AND d.status = 'REQUESTED' AND l."variantId" = ${variantId}`;
     if (!inSheet[0]?.n) throw badRequest('Энэ бараа падаанд алга');
-    if (input.checked === false) await tx.handoverCheck.deleteMany({ where: { handoverId: id, variantId } });
-    else await tx.handoverCheck.upsert({ where: { handoverId_variantId: { handoverId: id, variantId } }, create: { handoverId: id, variantId, checkedBy: actor.name }, update: {} });
+    if (input.checked === false) await tx.handoverCheck.deleteMany({ where: { handoverId: id, variantId, kind } });
+    else await tx.handoverCheck.upsert({ where: { handoverId_variantId_kind: { handoverId: id, variantId, kind } }, create: { handoverId: id, variantId, kind, checkedBy: actor.name }, update: {} });
   });
   return { ok: true };
 }
@@ -205,15 +232,20 @@ export async function confirmHandover(actor: UserActor, idInput: unknown) {
     if (isGiven(h.status)) { duplicate = true; return; }
     if (h.status !== 'PREPARED') throw conflict('Эхлээд «Бэлтгэсэн» дарна уу', 'not_prepared');
     const { orders, qty } = await sheetOrders(tx, id, h.driverId);
-    const checks = new Set((await tx.handoverCheck.findMany({ where: { handoverId: id }, select: { variantId: true } })).map((c) => c.variantId));
-    const unchecked = [...qty.keys()].filter((v) => !checks.has(v));
-    if (unchecked.length) throw conflict(`${unchecked.length} бараа Check хийгдээгүй байна — бүх барааг шалгана уу`, 'not_checked');
-    // Үндсэн агуулахад хүрэлцэх эсэхийг одоо шалгана (жолооч хүлээн авах үед бараа эндээс гарна)
+    const { xqty } = await sheetExtras(tx, id);
+    const all = await tx.handoverCheck.findMany({ where: { handoverId: id }, select: { variantId: true, kind: true } });
+    const checks = new Set(all.filter((c) => c.kind === 'ORDER').map((c) => c.variantId));
+    const xchecks = new Set(all.filter((c) => c.kind === 'EXTRA').map((c) => c.variantId));
+    const unchecked = [...qty.keys()].filter((v) => !checks.has(v)).length + [...xqty.keys()].filter((v) => !xchecks.has(v)).length;
+    if (unchecked) throw conflict(`${unchecked} бараа Check хийгдээгүй байна — бүх барааг (нэмэлт барааг ч) шалгана уу`, 'not_checked');
+    // Үндсэн агуулахад хүрэлцэх эсэхийг одоо шалгана (жолооч хүлээн авах үед захиалгын ба нэмэлт бараа эндээс гарна)
+    const need = new Map(qty);
+    for (const [v, q] of xqty) need.set(v, (need.get(v) ?? 0) + q);
     const wh = await tx.warehouse.findUnique({ where: { id: h.warehouseId }, include: { location: true } });
-    const have = new Map((await tx.stockBalance.findMany({ where: { locationId: wh?.location?.id ?? -1, variantId: { in: [...qty.keys()] } } })).map((b) => [b.variantId, b.qty]));
-    const short = [...qty].filter(([v, q]) => (have.get(v) ?? 0) < q);
+    const have = new Map((await tx.stockBalance.findMany({ where: { locationId: wh?.location?.id ?? -1, variantId: { in: [...need.keys()] } } })).map((b) => [b.variantId, b.qty]));
+    const short = [...need].filter(([v, q]) => (have.get(v) ?? 0) < q);
     if (short.length) {
-      const names = new Map(orders.flatMap((o) => o.lines.map((l) => [l.variantId, `${l.name}${l.label ? ` · ${l.label}` : ''}`] as const)));
+      const names = new Map([...orders.flatMap((o) => o.lines.map((l) => [l.variantId, `${l.name}${l.label ? ` · ${l.label}` : ''}`] as const)), ...[...(await variantInfo([...xqty.keys()]))].map(([v, i]) => [v, `${i.name}${i.label ? ` · ${i.label}` : ''}`] as const)]);
       throw conflict(short.map(([v, q]) => `«${names.get(v)}» үндсэн агуулахад хүрэлцэхгүй: байгаа ${have.get(v) ?? 0}, өгөх ${q}`).join('; '), 'insufficient_stock');
     }
     await tx.handover.update({ where: { id }, data: { status: 'HANDED_OVER', handedOverAt: new Date(), handedOverBy: actor.name, version: { increment: 1 } } });
@@ -223,6 +255,14 @@ export async function confirmHandover(actor: UserActor, idInput: unknown) {
   });
   bustCounts();
   return { ...(await handoverDetail(actor, id)), duplicate };
+}
+
+/** Падаанд орсон, хараахан өгөөгүй нэмэлт барааны хүсэлтүүд (#80) */
+async function sheetExtras(tx: Prisma.TransactionClient, id: number) {
+  const docs = await tx.driverDoc.findMany({ where: { handoverId: id, kind: 'EXTRA_TAKE', status: 'REQUESTED' }, include: { lines: true } });
+  const xqty = new Map<number, number>();
+  for (const d of docs) for (const l of d.lines) xqty.set(l.variantId, (xqty.get(l.variantId) ?? 0) + l.qty);
+  return { docs, xqty };
 }
 
 /** Падааны идэвхтэй захиалгууд (бүгд тэр жолоочид оноосон, хүргэлтэд гараагүй) ба нэгтгэсэн бараа */
@@ -254,7 +294,7 @@ export async function myHandover(actor: UserActor) {
 }
 
 /** Жолооч бараа бүрийг чагтална (агуулах Check хийсэн бараа л; «Бүгд» — variantId: 'all') */
-export async function setDriverCheck(actor: UserActor, idInput: unknown, input: { variantId?: unknown; checked?: unknown }) {
+export async function setDriverCheck(actor: UserActor, idInput: unknown, input: { variantId?: unknown; checked?: unknown; kind?: unknown }) {
   assertDriverRole(actor);
   const id = Number(idInput);
   await inTx(async (tx) => {
@@ -265,7 +305,8 @@ export async function setDriverCheck(actor: UserActor, idInput: unknown, input: 
     if (input.variantId === 'all') await tx.handoverCheck.updateMany({ where: { handoverId: id }, data: { driverCheckedAt: value } });
     else {
       const variantId = Number(input.variantId);
-      const n = await tx.handoverCheck.updateMany({ where: { handoverId: id, variantId }, data: { driverCheckedAt: value } });
+      const kind = input.kind === 'EXTRA' ? 'EXTRA' : 'ORDER';
+      const n = await tx.handoverCheck.updateMany({ where: { handoverId: id, variantId, kind }, data: { driverCheckedAt: value } });
       if (!n.count) throw badRequest('Энэ бараа падаанд алга');
     }
   });
@@ -287,21 +328,30 @@ export async function receiveHandover(actor: UserActor, idInput: unknown) {
     if (h.status === 'RECEIVED') { duplicate = true; return; }
     if (h.status !== 'HANDED_OVER') throw conflict('Агуулах «Барааг бүрэн өгсөн» дараагүй байна', 'not_handed_over');
     const { orderIds, qty } = await sheetOrders(tx, id, h.driverId);
+    const { docs: xdocs, xqty } = await sheetExtras(tx, id);
     const checks = await tx.handoverCheck.findMany({ where: { handoverId: id } });
-    const ok = new Set(checks.filter((c) => c.driverCheckedAt).map((c) => c.variantId));
-    const left = [...qty.keys()].filter((v) => !ok.has(v));
-    if (left.length) throw conflict(`${left.length} бараа чагтлагдаагүй — бүх барааг чагтална уу (дутуу бол агуулахад хэлнэ)`, 'not_checked');
+    const ok = new Set(checks.filter((c) => c.driverCheckedAt && c.kind === 'ORDER').map((c) => c.variantId));
+    const xok = new Set(checks.filter((c) => c.driverCheckedAt && c.kind === 'EXTRA').map((c) => c.variantId));
+    const left = [...qty.keys()].filter((v) => !ok.has(v)).length + [...xqty.keys()].filter((v) => !xok.has(v)).length;
+    if (left) throw conflict(`${left} бараа чагтлагдаагүй — бүх барааг (нэмэлт барааг ч) чагтална уу (дутуу бол агуулахад хэлнэ)`, 'not_checked');
     const wh = await tx.warehouse.findUnique({ where: { id: h.warehouseId }, include: { location: true } });
     if (!wh?.location) throw badRequest('Агуулах олдсонгүй');
     const toId = await driverLocationId(tx, { id: h.driverId, name: h.driverName });
     const moves: MoveSpec[] = [...qty.entries()].map(([variantId, q]) => ({ type: 'HANDOVER', variantId, qty: q, fromId: wh.location!.id, toId, note: `${h.number} · ${h.driverName} хүлээн авсан` }));
+    for (const [variantId, q] of xqty) moves.push({ type: 'EXTRA_OUT', variantId, qty: q, fromId: wh.location!.id, toId, note: `${h.number} · нэмэлт бараа` });
     await applyMoves(tx, actor, { type: 'handover', id }, moves);
     await tx.stockReservation.deleteMany({ where: { orderId: { in: orderIds } } });
+    // Нэмэлт бараа: хүсэлтийн нөөц суллагдаж, «падаанаар авсан» болно
+    if (xdocs.length) {
+      await tx.stockReservation.deleteMany({ where: { ref: { in: xdocs.map((d) => `extra:${d.id}`) } } });
+      await tx.driverDoc.updateMany({ where: { id: { in: xdocs.map((d) => d.id) } }, data: { status: 'GIVEN' } });
+    }
     const now = new Date();
     await tx.order.updateMany({ where: { id: { in: orderIds } }, data: { status: 'OUT_FOR_DELIVERY', outForDeliveryAt: now, version: { increment: 1 } } });
     await tx.handover.update({ where: { id }, data: { status: 'RECEIVED', receivedAt: now, receivedBy: actor.name, version: { increment: 1 } } });
     await writeAudit(actor, 'handover.received', 'Handover', String(id), {
       number: h.number, orders: orderIds.length, pieces: [...qty.values()].reduce((a, b) => a + b, 0), from: wh.name,
+      ...(xqty.size ? { extraPieces: [...xqty.values()].reduce((a, b) => a + b, 0), extraRequests: xdocs.length } : {}),
     }, tx, ['delivery', 'stock']);
   });
   stockCache.today = null; bustCounts();
@@ -333,6 +383,18 @@ export async function revertHandover(actor: UserActor, idInput: unknown) {
       await applyMoves(tx, actor, { type: 'handover', id }, [...qty.entries()].map(([variantId, q]) => ({ type: 'HANDOVER_BACK' as const, variantId, qty: q, fromId, toId: wh!.location!.id, note: `${h.number} буцаасан` })));
       for (const o of orders) await tx.stockReservation.createMany({ data: o.lines.map((l) => ({ ref: `order:${o.id}`, orderId: o.id, variantId: l.variantId, qty: l.qty })) });
       await tx.order.updateMany({ where: { id: { in: orderIds } }, data: { status: 'ASSIGNED', outForDeliveryAt: null, version: { increment: 1 } } });
+      // Нэмэлт бараа: жолоочид бүтэн байгаа бол агуулахад буцаж, хүсэлт дахин «хүлээгдэж» болно
+      const xdocs = await tx.driverDoc.findMany({ where: { handoverId: id, kind: 'EXTRA_TAKE', status: 'GIVEN' }, include: { lines: true } });
+      if (xdocs.length) {
+        const xq = new Map<number, number>();
+        for (const d of xdocs) for (const l of d.lines) xq.set(l.variantId, (xq.get(l.variantId) ?? 0) + l.qty);
+        const g = await driverGoods(tx, h.driverId);
+        const sold = [...xq].find(([v, q]) => (g.returnable.get(v) ?? 0) < q);
+        if (sold) throw conflict('Нэмэлт барааг жолооч зарсан/буцаасан тул падааныг буцаах боломжгүй', 'driver_started');
+        await applyMoves(tx, actor, { type: 'handover', id }, [...xq].map(([variantId, q]) => ({ type: 'HANDOVER_BACK' as const, variantId, qty: q, fromId, toId: wh!.location!.id, note: `${h.number} нэмэлт бараа буцаасан` })));
+        for (const d of xdocs) await tx.stockReservation.createMany({ data: d.lines.map((l) => ({ ref: `extra:${d.id}`, variantId: l.variantId, qty: l.qty })) });
+        await tx.driverDoc.updateMany({ where: { id: { in: xdocs.map((d) => d.id) } }, data: { status: 'REQUESTED' } });
+      }
     }
     await tx.handoverCheck.deleteMany({ where: { handoverId: id } });
     await tx.handover.update({ where: { id }, data: { status: 'DRAFT', preparedAt: null, preparedBy: null, handedOverAt: null, handedOverBy: null, receivedAt: null, receivedBy: null, version: { increment: 1 } } });
@@ -351,6 +413,8 @@ export async function deleteHandover(actor: UserActor, idInput: unknown) {
     const h = await loadForChange(tx, id);
     if (h.status !== 'DRAFT') throw conflict('Эхлээд «Буцаах» дарж ноорог болгоно уу', 'not_draft');
     await tx.order.updateMany({ where: { handoverId: id }, data: { handoverId: null } });
+    // Нэмэлт барааны хүсэлт хүлээгдэж үлдэнэ — шинэ падаан үүсэхэд дахин орно
+    await tx.driverDoc.updateMany({ where: { handoverId: id, status: 'REQUESTED' }, data: { handoverId: null } });
     await tx.handover.delete({ where: { id } });
     await writeAudit(actor, 'handover.deleted', 'Handover', String(id), { number: h.number, driver: h.driverName, date: ymdOf(h.date) }, tx, ['delivery']);
   });

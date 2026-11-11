@@ -289,22 +289,67 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     await recOk();
   });
 
-  it('нэмэлт бараа: захиалгын нөөцөд хүрэхгүй; зарахад системийн үнэ, буцаах бараанаас л; үлдсэнийг буцаана', async () => {
-    const [id] = await outFor(drv); // v1 2 жолоочид хүргэлтэд
+  it('нэмэлт бараа (#80): хүсэлт → падаанд тусдаа → агуулах Check, өгөх → жолооч хүлээн авахад л агуулахаас шилжинэ; нөөцөд хүрэхгүй; цуцлах', async () => {
+    const main = await locOf(mainWh);
+    // Падаан үүсэхээс өмнө хүсэлт
+    const ids: number[] = [(await O.createOrder(op, ub({ deliveryDate: today, lines: [{ variantId: v1, qty: 2 }] }))).order.id];
+    await L.assignOrders(lead, { ids, driverId: drv.id });
     const av = (await P.searchVariants(op, 'G1')).find((x) => x.variantId === v1)!.available;
     await err(G.extraTake(drv, { lines: [{ variantId: v1, qty: av + 1 }], idemKey: key() }), 409, 'insufficient_stock');
     await err(G.extraTake(op, { lines: [{ variantId: v1, qty: 1 }], idemKey: key() }), 403);
-    await G.extraTake(drv, { lines: [{ variantId: v1, qty: 3 }], idemKey: key() });
-    expect(await goods(drv)).toEqual({ [v1]: [5, 2, 3], [v2]: [1, 1, 0] });
+    const b0 = await bal(main, v1);
+    const rq = await G.extraTake(drv, { lines: [{ variantId: v1, qty: 3 }], idemKey: key() });
+    expect([rq.doc.status, await bal(main, v1)]).toEqual(['REQUESTED', b0]); // бараа хөдлөхгүй
+    expect((await P.searchVariants(op, 'G1')).find((x) => x.variantId === v1)!.available).toBe(av - 3); // давхар амлахгүй
+    const rq2 = await G.extraTake(drv, { lines: [{ variantId: v2, qty: 1 }], idemKey: key() });
+    await G.extraCancel(drv, rq2.doc.id);
+    expect((await db.driverDoc.findUniqueOrThrow({ where: { id: rq2.doc.id } })).status).toBe('CANCELLED');
+    // Падаан → нэмэлт бараа тусдаа
+    const h = await H.createHandover(wh, { driverId: drv.id, date: today, orderIds: ids });
+    const d0 = await H.handoverDetail(wh, h.id);
+    expect([d0.items.map((x) => [x.variantId, x.qty]), d0.extras.map((x) => [x.variantId, x.qty]), d0.totals.extraPieces]).toEqual([[[v1, 2]], [[v1, 3]], 3]);
+    await H.prepareHandover(wh, h.id);
+    await H.setCheck(wh, h.id, { variantId: v1, checked: true });
+    await err(H.confirmHandover(wh, h.id), 409, 'not_checked'); // нэмэлт бараа Check хийгээгүй
+    await H.setCheck(wh, h.id, { variantId: v1, checked: true, kind: 'EXTRA' });
+    await H.confirmHandover(wh, h.id);
+    await err(G.extraCancel(drv, rq.doc.id), 409, 'handed_over');
+    expect(await bal(main, v1)).toBe(b0);
+    await H.setDriverCheck(drv, h.id, { variantId: v1, checked: true });
+    await err(H.receiveHandover(drv, h.id), 409, 'not_checked'); // нэмэлтийг чагтлаагүй
+    await H.setDriverCheck(drv, h.id, { variantId: v1, checked: true, kind: 'EXTRA' });
+    await H.receiveHandover(drv, h.id);
+    expect([await bal(main, v1), (await db.driverDoc.findUniqueOrThrow({ where: { id: rq.doc.id } })).status]).toEqual([b0 - 5, 'GIVEN']);
+    expect(await db.stockReservation.count({ where: { ref: `extra:${rq.doc.id}` } })).toBe(0);
+    expect(await goods(drv)).toEqual({ [v1]: [5, 2, 3] });
+    // Падаан өгөгдсөн тул шинэ хүсэлт маргаашийн падаанд
+    const rq3 = await G.extraTake(drv, { lines: [{ variantId: v2, qty: 1 }], idemKey: key() });
+    expect(U.ymdOf(rq3.doc.date!)).toBe(tomorrow);
+    await G.extraCancel(drv, rq3.doc.id);
+    // Зарах, буцаах
     await err(G.extraSale(drv, { lines: [{ variantId: v1, qty: 4 }], payment: 'CASH', idemKey: key() }), 409, 'too_many');
-    await err(G.extraSale(drv, { lines: [{ variantId: v2, qty: 1 }], payment: 'CASH', idemKey: key() }), 409, 'too_many'); // хүргэлтийн бараа
     const s = await G.extraSale(drv, { lines: [{ variantId: v1, qty: 2 }], payment: 'CASH', idemKey: key(), note: 'Хөршид' });
     expect([s.doc.total, s.doc.kind]).toEqual([20000, 'EXTRA_SALE']);
-    await DR.deliverOrder(drv, id, { payment: 'CASH' });
+    await DR.deliverOrder(drv, ids[0]!, { payment: 'CASH' });
     await G.receiveReturn(wh, { driverId: drv.id, lines: [{ variantId: v1, qty: 1 }], idemKey: key() });
     expect(await goods(drv)).toEqual({});
     const c = await G.driverControl(sa);
-    expect(c.items.find((x) => x.id === drv.id)).toMatchObject({ delivered: 1, cash: 30000, extraSales: 20000, goods: 0, returnable: 0 });
+    expect(c.items.find((x) => x.id === drv.id)).toMatchObject({ delivered: 1, cash: 20000, extraSales: 20000, goods: 0, returnable: 0 });
+    await recOk();
+  });
+
+  it('нэмэлт бараатай падааныг хүлээн авсны дараа «Буцаах» — нэмэлт бараа ч агуулахад, хүсэлт дахин хүлээгдэнэ; зарсан бол буцаахгүй', async () => {
+    const main = await locOf(mainWh);
+    const ids = [(await O.createOrder(op, ub({ deliveryDate: today, lines: [{ variantId: v1, qty: 1 }] }))).order.id];
+    await L.assignOrders(lead, { ids, driverId: drv.id });
+    const rq = await G.extraTake(drv, { lines: [{ variantId: v1, qty: 2 }], idemKey: key() });
+    const b0 = await bal(main, v1);
+    const h = await H.createHandover(wh, { driverId: drv.id, date: today, orderIds: ids });
+    await H.prepareHandover(wh, h.id); await checkAll(h.id); await H.setCheck(wh, h.id, { variantId: v1, checked: true, kind: 'EXTRA' });
+    await H.confirmHandover(wh, h.id); await H.setDriverCheck(drv, h.id, { variantId: 'all', checked: true }); await H.receiveHandover(drv, h.id);
+    expect(await bal(main, v1)).toBe(b0 - 3);
+    await H.revertHandover(wh, h.id);
+    expect([await bal(main, v1), (await db.driverDoc.findUniqueOrThrow({ where: { id: rq.doc.id } })).status, await db.stockReservation.count({ where: { ref: `extra:${rq.doc.id}` } })]).toEqual([b0, 'REQUESTED', 1]);
     await recOk();
   });
 

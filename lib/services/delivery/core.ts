@@ -73,7 +73,7 @@ export async function removeFromHandover(tx: Tx, orderId: number, reason: string
   const h = await tx.handover.findUnique({ where: { id: o.handoverId }, select: { status: true } });
   if (h && isGiven(h.status)) throw badRequest('Падаан өгөгдсөн захиалга — агуулах падааныг «Буцаах»-аас өмнө өөрчлөх боломжгүй', 'handed_over');
   await tx.handoverOrder.updateMany({ where: { handoverId: o.handoverId, orderId, removedAt: null }, data: { removedAt: new Date(), removeReason: reason } });
-  await tx.handoverCheck.deleteMany({ where: { handoverId: o.handoverId, variantId: { in: o.lines.map((l) => l.variantId) } } });
+  await tx.handoverCheck.deleteMany({ where: { handoverId: o.handoverId, kind: 'ORDER', variantId: { in: o.lines.map((l) => l.variantId) } } });
   await tx.handover.update({ where: { id: o.handoverId }, data: { version: { increment: 1 } } });
   await tx.order.update({ where: { id: orderId }, data: { handoverId: null } });
 }
@@ -85,7 +85,7 @@ export async function addToHandover(tx: Tx, handoverId: number, orderId: number)
   if (existing) await tx.handoverOrder.update({ where: { id: existing.id }, data: { removedAt: null, removeReason: null, addedAt: new Date() } });
   else await tx.handoverOrder.create({ data: { handoverId, orderId, position: (max._max.position ?? 0) + 1 } });
   const lines = await tx.orderLine.findMany({ where: { orderId }, select: { variantId: true } });
-  await tx.handoverCheck.deleteMany({ where: { handoverId, variantId: { in: lines.map((l) => l.variantId) } } });
+  await tx.handoverCheck.deleteMany({ where: { handoverId, kind: 'ORDER', variantId: { in: lines.map((l) => l.variantId) } } });
   await tx.handover.update({ where: { id: handoverId }, data: { version: { increment: 1 } } });
   await tx.order.update({ where: { id: orderId }, data: { handoverId } });
 }

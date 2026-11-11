@@ -19,7 +19,7 @@ interface HOrder { orderId: number; position: number; number: string; phone: str
 interface Detail {
   id: number; number: string; date: string; driverId: string; driverName: string; status: 'DRAFT' | 'PREPARED' | 'HANDED_OVER' | 'RECEIVED'; statusLabel: string; receivedAt: string | null; receivedBy: string | null; version: number;
   createdByName: string; createdAt: string; preparedBy: string | null; preparedAt: string | null; handedOverBy: string | null; handedOverAt: string | null; canOperate: boolean;
-  totals: { orders: number; pieces: number; amount: number; checked: number; driverChecked: number; kinds: number }; items: Item[]; orders: HOrder[];
+  totals: { orders: number; pieces: number; amount: number; checked: number; driverChecked: number; kinds: number; extraPieces: number; extraAmount: number; extraRequests: number }; items: Item[]; extras: Item[]; orders: HOrder[];
 }
 interface Eligible { id: number; number: string; phone: string; items: number; total: number; note: string | null }
 interface Day { handover: Detail | null; eligible: Eligible[]; approval: { approved: boolean; source: string; note: string | null; byName: string | null } }
@@ -113,7 +113,7 @@ export function HandoverClient() {
 
       {!driverId ? <p className="rounded-xl border border-dashed border-line bg-surface p-10 text-center text-muted">Жолоочоо сонгоно уу</p>
         : !day ? <p className="py-8 text-center text-muted">Ачаалж байна…</p>
-        : h ? <HandoverView h={h} short={short} canOperate={canOperate} onCheck={(variantId, checked) => run(() => api(`/api/handover/${h.id}/check`, { method: 'POST', json: { variantId, checked } }), checked ? 'Check' : 'Check арилгалаа')} busy={busy} />
+        : h ? <HandoverView h={h} short={short} canOperate={canOperate} onCheck={(variantId, checked, kind) => run(() => api(`/api/handover/${h.id}/check`, { method: 'POST', json: { variantId, checked, kind } }), checked ? 'Check' : 'Check арилгалаа')} busy={busy} />
         : (
           <div className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-3">
             {!day.approval.approved ? <Notice>ХОРИГ — нягтлан зөвшөөрөл өгөөгүй{day.approval.note ? `: ${day.approval.note}` : ''}. Падаан үүсгэх боломжгүй.</Notice> : null}
@@ -181,7 +181,7 @@ function DriverRow({ d }: { d: BDriver }) {
 }
 
 /** Падаан: бараа нэгтгэсэн Check хүснэгт (тавиурын дарааллаар), явц, хайлт, «Шалгаагүй», хасагдсан/шинэ захиалга */
-function HandoverView({ h, short, canOperate, onCheck, busy }: { h: Detail; short: { code: string; name: string; need: number; have: number }[]; canOperate: boolean; onCheck: (variantId: number, checked: boolean) => void; busy: boolean }) {
+function HandoverView({ h, short, canOperate, onCheck, busy }: { h: Detail; short: { code: string; name: string; need: number; have: number }[]; canOperate: boolean; onCheck: (variantId: number, checked: boolean, kind?: 'ORDER' | 'EXTRA') => void; busy: boolean }) {
   const [q, setQ] = useState('');
   const [onlyUnchecked, setOnlyUnchecked] = useState(false);
   const [ordersOpen, setOrdersOpen] = useState(false);
@@ -231,7 +231,7 @@ function HandoverView({ h, short, canOperate, onCheck, busy }: { h: Detail; shor
       <div className="overflow-x-auto rounded-xl border border-line bg-surface">
         <table className="w-full min-w-[640px] text-[14px]">
           <thead className="border-b border-line bg-surface2/70 text-[11.5px] uppercase text-muted">
-            <tr><th className="px-3 py-2 text-left font-semibold">Бараа</th><th className="w-20 px-3 py-2 text-center font-semibold">Тоо</th><th className="w-24 px-3 py-2 text-center font-semibold">Check</th><th className="w-24 px-3 py-2 text-center font-semibold">Жолооч</th></tr>
+            <tr><th className="px-3 py-2 text-left font-semibold">Бараа</th><th className="w-20 px-3 py-2 text-center font-semibold">Тоо</th><th className="w-40 px-3 py-2 text-center font-semibold">Check · Жолооч</th></tr>
           </thead>
           <tbody className="divide-y divide-line">
             {items.map((i) => (
@@ -249,13 +249,34 @@ function HandoverView({ h, short, canOperate, onCheck, busy }: { h: Detail; shor
                 <td className="px-3 py-2 text-center">
                   <span className={clsx('inline-grid h-9 w-9 place-items-center rounded-lg border-2', i.checked ? 'border-ok bg-ok text-white' : 'border-line bg-surface')} title={i.checkedBy ? `Check: ${i.checkedBy}` : undefined}>{i.checked ? <Icon name="check" size={20} strokeWidth={3} /> : null}</span>{h.status === 'HANDED_OVER' || h.status === 'RECEIVED' ? <span className={clsx('ml-1 inline-flex h-9 items-center rounded-lg px-2 text-[11.5px] font-bold', i.driverChecked ? 'bg-ok-soft text-ok-ink' : 'bg-warn-soft text-warn')} title="Жолоочийн чагт">{i.driverChecked ? 'Жол. ✓' : 'Жол. —'}</span> : null}
                 </td>
-                <td className="px-3 py-2 text-center text-[12px] text-subtle" title="Жолоочийн хүлээн авалт — Модуль 5">○</td>
+                
               </tr>
             ))}
           </tbody>
         </table>
         {!items.length ? <p className="p-6 text-center text-subtle">{h.items.length ? 'Бүгд шалгагдсан' : 'Бараа алга'}</p> : null}
       </div>
+
+      {h.extras.length ? (
+        <div className="overflow-x-auto rounded-xl border-2 border-dashed border-info/50 bg-info-soft/30">
+          <p className="px-3 pt-2.5 font-bold text-info">➕ Нэмэлт бараа — жолоочийн хүсэлт ({h.totals.extraRequests} хүсэлт · {h.totals.extraPieces}ш · {money(h.totals.extraAmount)})</p>
+          <p className="px-3 text-[12px] text-muted">Захиалгаас гадна. Захиалгын бараатай хамт Check хийж өгнө; жолооч хүлээн авахад агуулахаас хасагдана.</p>
+          <table className="mt-1 w-full min-w-[520px] text-[13.5px]">
+            <tbody className="divide-y divide-line">
+              {h.extras.map((i) => (
+                <tr key={`x${i.variantId}`} onClick={() => { if (!locked && !busy) onCheck(i.variantId, !i.checked, 'EXTRA'); }} className={clsx(!locked && 'cursor-pointer', i.checked ? 'bg-ok-soft/40' : 'hover:bg-surface2/50')}>
+                  <td className="px-3 py-2"><span className="flex items-center gap-3"><Thumb src={i.thumb} alt={i.name} size={44} /><span className="flex min-w-0 flex-col"><span className="font-semibold [overflow-wrap:anywhere]">{i.name}{i.label ? <span className="text-muted"> · {i.label}</span> : null}</span><span className="text-[12px] text-subtle">{i.code}{i.shelfCode ? ` · 🗄 ${i.shelfCode}` : ''}</span></span></span></td>
+                  <td className="px-3 py-2 text-center text-[18px] font-extrabold">{i.qty}</td>
+                  <td className="px-3 py-2 text-center">
+                    <span className={clsx('inline-grid h-9 w-9 place-items-center rounded-lg border-2', i.checked ? 'border-ok bg-ok text-white' : 'border-line bg-surface')}>{i.checked ? <Icon name="check" size={20} strokeWidth={3} /> : null}</span>
+                    {h.status === 'HANDED_OVER' || h.status === 'RECEIVED' ? <span className={clsx('ml-1 inline-flex h-9 items-center rounded-lg px-2 text-[11.5px] font-bold', i.driverChecked ? 'bg-ok-soft text-ok-ink' : 'bg-warn-soft text-warn')}>{i.driverChecked ? 'Жол. ✓' : 'Жол. —'}</span> : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
 
       <div className="rounded-xl border border-line bg-surface">
         <button type="button" aria-expanded={ordersOpen} onClick={() => setOrdersOpen(!ordersOpen)} className="flex w-full items-center gap-1.5 px-3 py-2.5 font-semibold"><Icon name={ordersOpen ? 'up' : 'down'} size={14} />Захиалгууд ({h.totals.orders})</button>

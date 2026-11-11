@@ -607,10 +607,17 @@ model DriverDoc {
   total      Int              @default(0)
   idemKey    String           @unique
   createdAt  DateTime         @default(now())
+  /// Нэмэлт бараа (EXTRA_TAKE, #80): REQUESTED (хүсэлт, падаанд хүлээгдэж) → GIVEN (падаанаар жолооч хүлээн авсан) | CANCELLED; бусад баримт DONE
+  status     String           @default("DONE")
+  /// Нэмэлт барааны хүсэлт аль өдрийн падаанд орох вэ
+  date       DateTime?        @db.Date
+  handoverId Int?
   lines      DriverDocLine[]
 
   @@index([driverId, createdAt])
   @@index([kind, createdAt])
+  @@index([handoverId])
+  @@index([driverId, status])
 }
 
 model DriverDocLine {
@@ -915,8 +922,10 @@ model HandoverCheck {
   checkedBy       String
   /// Жолооч утсаараа чагталсан (#77)
   driverCheckedAt DateTime?
+  /// ORDER — захиалгын бараа; EXTRA — жолоочийн нэмэлт барааны хүсэлт (#80, падаанд тусдаа)
+  kind            String    @default("ORDER")
 
-  @@id([handoverId, variantId])
+  @@id([handoverId, variantId, kind])
 }
 
 /// Нягтлангийн өдрийн зөвшөөрөл (хуучин ERP-ийн OKEY / ХОРИГ). Итгэлтэй жолоочид автоматаар OKEY

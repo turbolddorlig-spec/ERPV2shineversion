@@ -465,8 +465,13 @@ async function main() {
     const iss = await req(`/api/issues/${o2.id}`, { cookie: op4.cookie, method: 'POST', body: { action: 'fix', note: 'Тест шийдвэр' } });
     check('оператор асуудал шийдэхгүй → 403', iss.status === 403, String(iss.status));
     const ex = await req('/api/driver/goods', { cookie: d5.cookie, method: 'POST', body: { kind: 'take', idemKey: `e2e-m5-ex-${Date.now()}`, lines: [{ variantId: vv.variantId, qty: 1 }] } });
+    const exj = JSON.parse(ex.text);
+    const tomorrow5 = new Date(Date.now() + 8 * 3600_000 + 86_400_000).toISOString().slice(0, 10);
+    check('нэмэлт бараа = хүсэлт (бараа хөдлөхгүй), өнөөдрийн падаан өгөгдсөн тул маргаашийн падаанд', ex.status === 200 && exj.doc?.status === 'REQUESTED' && String(exj.doc?.date).slice(0, 10) === tomorrow5, ex.text.slice(0, 120));
     const sl = await req('/api/driver/goods', { cookie: d5.cookie, method: 'POST', body: { kind: 'sale', payment: 'CASH', idemKey: `e2e-m5-sl-${Date.now()}`, lines: [{ variantId: vv.variantId, qty: 1 }] } });
-    check('нэмэлт бараа авч, системийн үнээр зарав', ex.status === 200 && sl.status === 200 && JSON.parse(sl.text).doc.total > 0, `${ex.text.slice(0, 60)} ${sl.text.slice(0, 60)}`);
+    check('хүлээн аваагүй нэмэлт барааг зарахгүй → 409', sl.status === 409, sl.text.slice(0, 80));
+    const cx = await req('/api/driver/goods', { cookie: d5.cookie, method: 'POST', body: { kind: 'cancel', docId: exj.doc?.id } });
+    check('нэмэлт барааны хүсэлт цуцлагдав', cx.status === 200, cx.text.slice(0, 80));
     const db5 = JSON.parse((await req('/api/driver/debts', { cookie: d5.cookie })).text);
     const dbOp = await req('/api/driver/debts', { cookie: op4.cookie });
     check('жолоочийн өрийн дэвтэр өөрт л (оператор 403)', Array.isArray(db5.items) && typeof db5.summary?.amount === 'number' && dbOp.status === 403, `${JSON.stringify(db5.summary)} ${dbOp.status}`);
@@ -475,7 +480,7 @@ async function main() {
     const ctl = await req('/api/driver-control', { cookie: lead4.cookie });
     const ctlOp = await req('/api/driver-control', { cookie: op4.cookie });
     const me5 = JSON.parse(ctl.text).items?.find((x: { id: string }) => x.id === free.id);
-    check('жолоочийн хяналт: хүргэсэн 1, маргааш 1, нэмэлт зарсан', ctl.status === 200 && me5?.delivered === 1 && me5?.postponed === 1 && me5?.extraSales > 0 && ctlOp.status === 403, JSON.stringify(me5).slice(0, 160));
+    check('жолоочийн хяналт: хүргэсэн 1, маргааш 1', ctl.status === 200 && me5?.delivered === 1 && me5?.postponed === 1 && ctlOp.status === 403, JSON.stringify(me5).slice(0, 160));
     const rec5 = JSON.parse((await req('/api/stock/reconcile?fresh=1', { cookie: adm.cookie })).text);
     check('Модуль 5-ын дараа тулгалт: журнал = үлдэгдэл', rec5.ok === true, JSON.stringify(rec5).slice(0, 120));
     }

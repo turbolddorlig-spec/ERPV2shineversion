@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { errorResponse, json, requireApiUser } from '@/lib/http';
-import { extraSale, extraTake, myGoods } from '@/lib/services/delivery/goods';
+import { extraCancel, extraSale, extraTake, myGoods } from '@/lib/services/delivery/goods';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +15,7 @@ export async function POST(req: NextRequest) {
   try {
     const ctx = await requireApiUser(req, { page: 'driver', need: 'edit' });
     const body = await req.json().catch(() => ({}));
+    if (body.kind === 'cancel') return json(await extraCancel(ctx.actor, body.docId));
     return json(body.kind === 'sale' ? await extraSale(ctx.actor, body) : await extraTake(ctx.actor, body));
   } catch (e) { return errorResponse(e); }
 }
