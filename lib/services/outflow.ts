@@ -277,7 +277,7 @@ export async function watchProduct(actor: UserActor, productIdIn: unknown) {
   const until = new Date(Date.now() + 24 * HOUR);
   await db.$transaction(async (tx) => {
     await tx.boostWatch.create({ data: { productId, until, byId: actor.id, byName: actor.name } });
-    await writeAudit(actor, 'outflow.watch', 'Product', String(productId), { product: `${p.code} ${p.name}`, until }, tx);
+    await writeAudit(actor, 'outflow.watch', 'ProductMarketing', String(productId), { product: `${p.code} ${p.name}`, until }, tx);
   });
   bustOutflowCache();
   return { until };
@@ -463,7 +463,7 @@ export async function saveBoost(actor: UserActor, b: { productId?: unknown; doll
     });
     await tx.boostEvent.create({ data: { productId, at: now, dollar, zones, adNumber, byId: actor.id, byName: actor.name } });
     const action = !cur?.zones && zones > 0 ? 'outflow.boost_on' : cur?.zones && zones === 0 ? 'outflow.boost_off' : 'outflow.boost';
-    await writeAudit(actor, action, 'Product', String(productId), { product: `${p.code} ${p.name}`, before: cur ? { dollar: cur.dollar, zones: cur.zones, adNumber: cur.adNumber } : null, after: { dollar, zones, adNumber } }, tx);
+    await writeAudit(actor, action, 'ProductMarketing', String(productId), { product: `${p.code} ${p.name}`, before: cur ? { dollar: cur.dollar, zones: cur.zones, adNumber: cur.adNumber } : null, after: { dollar, zones, adNumber } }, tx);
     bustOutflowCache(); bustTable();
     return r;
   });
@@ -476,7 +476,7 @@ export async function saveNote(actor: UserActor, b: { productId?: unknown; note?
   const note = cleanText(b.note, 500);
   await db.$transaction(async (tx) => {
     await tx.productMarketing.upsert({ where: { productId }, create: { productId, note, updatedByName: actor.name }, update: { note, updatedByName: actor.name } });
-    await writeAudit(actor, 'outflow.note', 'Product', String(productId), { note }, tx);
+    await writeAudit(actor, 'outflow.note', 'ProductMarketing', String(productId), { note }, tx);
   });
   bustTable();
   return { ok: true };
@@ -500,7 +500,7 @@ export async function setOwner(actor: UserActor, b: { productIds?: unknown; user
       await tx.productMarketing.upsert({ where: { productId }, create: { productId, ownerId: user?.id ?? null, ownerName: user?.name ?? null, updatedByName: actor.name },
         update: { ownerId: user?.id ?? null, ownerName: user?.name ?? null, updatedByName: actor.name } });
     }
-    await writeAudit(actor, 'outflow.owner', 'Product', ids.length === 1 ? String(ids[0]) : null, { count: ids.length, owner: user?.name ?? null }, tx);
+    await writeAudit(actor, 'outflow.owner', 'ProductMarketing', ids.length === 1 ? String(ids[0]) : null, { count: ids.length, owner: user?.name ?? null }, tx);
   }, { timeout: 60_000 });
   bustTable();
   return { updated: ids.length };
@@ -584,12 +584,12 @@ export async function syncClaims() {
         if (!u.count) return;
         await tx.productMarketing.upsert({ where: { productId: c.productId }, create: { productId: c.productId, doneAt: new Date(), doneByName: c.userName },
           update: { doneAt: new Date(), doneByName: c.userName } });
-        await writeAudit({ id: null, name: 'СИСТЕМ' }, 'outflow.claim_done', 'Product', String(c.productId), { by: c.userName, orders: n }, tx);
+        await writeAudit({ id: null, name: 'СИСТЕМ' }, 'outflow.claim_done', 'ProductMarketing', String(c.productId), { by: c.userName, orders: n }, tx);
       });
       changed++;
     } else if (Date.now() - c.claimedAt.getTime() > cfg.claimExpireDays * 86_400_000) {
       const u = await db.workClaim.updateMany({ where: { id: c.id, status: 'ACTIVE' }, data: { status: 'EXPIRED', progress: n, endedAt: new Date(), endedByName: 'СИСТЕМ' } });
-      if (u.count) { await writeAudit({ id: null, name: 'СИСТЕМ' }, 'outflow.claim_expired', 'Product', String(c.productId), { by: c.userName, days: cfg.claimExpireDays }); changed++; }
+      if (u.count) { await writeAudit({ id: null, name: 'СИСТЕМ' }, 'outflow.claim_expired', 'ProductMarketing', String(c.productId), { by: c.userName, days: cfg.claimExpireDays }); changed++; }
     } else if (n !== c.progress) await db.workClaim.update({ where: { id: c.id }, data: { progress: n } });
   }
   if (changed) bustTable();
@@ -637,7 +637,7 @@ export async function claim(actor: UserActor, productIdIn: unknown) {
   try {
     const c = await db.$transaction(async (tx) => {
       const c = await tx.workClaim.create({ data: { productId, userId: actor.id, userName: actor.name } });
-      await writeAudit(actor, 'outflow.claim', 'Product', String(productId), { product: `${p.code} ${p.name}` }, tx);
+      await writeAudit(actor, 'outflow.claim', 'ProductMarketing', String(productId), { product: `${p.code} ${p.name}` }, tx);
       return c;
     });
     return { id: c.id };
@@ -659,7 +659,7 @@ export async function release(actor: UserActor, claimIdIn: unknown) {
   if (!own && !isLead(actor)) throw forbidden('Бусдын сонголтыг ахлах маркетинг цуцална');
   await db.$transaction(async (tx) => {
     await tx.workClaim.update({ where: { id: c.id }, data: { status: own ? 'RETURNED' : 'CANCELLED', endedAt: new Date(), endedByName: actor.name } });
-    await writeAudit(actor, own ? 'outflow.claim_returned' : 'outflow.claim_cancelled', 'Product', String(c.productId), { by: c.userName }, tx);
+    await writeAudit(actor, own ? 'outflow.claim_returned' : 'outflow.claim_cancelled', 'ProductMarketing', String(c.productId), { by: c.userName }, tx);
   });
   return { ok: true };
 }

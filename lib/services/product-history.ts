@@ -56,7 +56,7 @@ function ubDayStart(ymd: string, addDays = 0): Date {
 
 export async function listProductHistory(actor: UserActor, params: HistoryParams) {
   if (!canView(actor.roles, 'product-history') && !(params.productId && canView(actor.roles, 'products'))) throw forbidden();
-  const and: Prisma.AuditLogWhereInput[] = [{ entityType: 'Product' }];
+  const and: Prisma.AuditLogWhereInput[] = [{ entityType: 'Product' }, { NOT: { action: { startsWith: 'outflow.' } } }];
   if (params.productId) and.push({ entityId: String(params.productId) });
   if (params.actorId) {
     if (!/^[0-9a-f-]{36}$/i.test(params.actorId)) throw badRequest('Хэрэглэгч буруу');
@@ -106,7 +106,7 @@ export async function unreviewedCount(actor: UserActor, opts: { fresh?: boolean 
   if (!opts.fresh && badgeCache && Date.now() - badgeCache.at < 30_000) return badgeCache.n;
   const rows = await db.$queryRaw<{ n: bigint }[]>`
     SELECT count(*)::bigint AS n FROM "AuditLog" a
-    WHERE a."entityType" = 'Product' AND a.action NOT IN ('product.created', 'product.cost')
+    WHERE a."entityType" = 'Product' AND a.action NOT IN ('product.created', 'product.cost') AND a.action NOT LIKE 'outflow.%'
       AND NOT EXISTS (SELECT 1 FROM "AuditReview" r WHERE r."auditLogId" = a.id)`;
   const n = Number(rows[0]?.n ?? 0);
   badgeCache = { n, at: Date.now() };
