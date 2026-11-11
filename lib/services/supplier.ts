@@ -242,7 +242,7 @@ export async function syncAdjustments(shopId: number) {
 
 // ───────────── Харах ─────────────
 
-async function shopOf(actor: UserActor, shopIdIn: unknown) {
+export async function shopOf(actor: UserActor, shopIdIn: unknown) {
   if (canEdit(actor.roles, 'supplier')) {
     const shop = await db.supplierShop.findUnique({ where: { id: shopIdOf(shopIdIn) } });
     if (!shop) throw notFound('Дэлгүүр олдсонгүй');

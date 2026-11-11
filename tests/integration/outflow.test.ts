@@ -207,6 +207,49 @@ describe('гаралтаа хангаагүй пэйж (#121)', () => {
   });
 });
 
+describe('нийлүүлэгчийн мини гарц (#122)', () => {
+  it('зөвхөн өөрийн бараа; 7 хоног; авах мөнгө = борлуулалт − суутгал × ш; өөрийн өртөг зөвхөн өөрт; «Захиалсан» өөрийн бараанд л', async () => {
+    const SP = await import('@/lib/services/supplier');
+    const SO = await import('@/lib/services/supplier-outflow');
+    const shop = await SP.saveShop(sa, { name: 'Нийлүүлэгч Б' });
+    await SP.assignProduct(sa, { shopId: shop.id, productId: prod });
+    await SP.saveDeduction(sa, { shopId: shop.id, productId: prod, operatorCost: 1200, deliveryCost: 5000, marketingCost: 3000, otherCost: 0 });
+    const other = await P.createProduct(sa, { code: 'X9', name: 'Миний бараа', price: 9000 });
+    const sup = await actor(['SUPPLIER']);
+    await db.supplierShop.update({ where: { id: shop.id }, data: { userId: sup.id } });
+    for (let d = 1; d <= 3; d++) for (let i = 0; i < 10; i++) await order({ daysAgo: d });
+    OF.bustOutflowCache();
+    let v1 = await SO.supplierOutflow(sup, null);
+    expect(v1.rows.map((r) => r.id)).toEqual([prod]);
+    const r = v1.rows[0]!;
+    // 30 ш × 20,000 − 30 × 9,200 = 324,000
+    expect([r.week, r.daily.slice(1, 4), r.money.perUnitEarn, r.money.earn, r.money.cost, r.reorder?.days]).toEqual([30, [10, 10, 10], 10800, 324000, null, 47]);
+    // өөрийн өртөг: зөвхөн нийлүүлэгч; админд харагдахгүй
+    await SO.saveOwnCost(sup, { productId: prod, cost: 6000 });
+    v1 = await SO.supplierOutflow(sup, null);
+    expect([v1.rows[0]!.money.profit, v1.rows[0]!.money.perUnitProfit]).toEqual([324000 - 180000, 4800]);
+    const va = await SO.supplierOutflow(adm, shop.id);
+    expect([va.isOwner, va.rows[0]!.money.cost, va.rows[0]!.money.profit]).toEqual([false, null, null]);
+    await err(SO.saveOwnCost(adm, { productId: prod, cost: 1 }), 403);
+    await err(SO.saveOwnCost(sup, { productId: other.id, cost: 1 }), 403);
+    // «Захиалсан» — өөрийн бараанд л; бусдын (эзний) бараанд 403
+    await err(SO.supplierReorder(sup, null, { productId: other.id, qty: 5 }), 403);
+    const o = await SO.supplierReorder(sup, null, { productId: prod, qty: 200 });
+    expect((await SO.supplierReorderDetail(sup, null, prod)).info?.level).toBe('ORDERED');
+    const mine = await OF.markReordered(sa, { productId: other.id, qty: 1 }).catch(() => null);
+    if (mine) await err(SO.supplierReorderCancel(sup, null, mine.id), 403);
+    await SO.supplierReorderCancel(sup, null, o.id);
+    // 340-ийг нөөцөлбөл 130 ÷ 10 = 13 хоног → нийлүүлэгчид 🚚 сануулга; СА-д нуугдсан (#120)
+    const { order: big } = await O.createOrder(op, { phone: '99488888', province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 13, addressDetail: 'Тест', pageId: page1, lines: [{ variantId: v, qty: 340 }], idemKey: randomUUID(), deliveryDate: U.ubDay(new Date(), 1) });
+    await db.order.update({ where: { id: big.id }, data: { confirmedAt: new Date(Date.now() - 400 * 86_400_000) } });
+    OF.bustOutflowCache();
+    expect(await SO.supplierReorderBanner(sup)).toEqual({ urgent: 0, order: 1, late: 0 });
+    expect((await SO.supplierOutflow(sup, null)).needs).toBe(1);
+    expect(await SO.supplierReorderBanner(adm)).toBeNull();
+    expect(await OF.reorderBanner(['SUPER_ADMIN'])).toBeNull();
+  });
+});
+
 describe('бөөний захиалга (#117)', () => {
   it('1 хүн 50 ширхэг: гарцад 50 + 📦, дундаж/өнгөнд орохгүй; опп+хүргэлт нэг л удаа; үр дүн 1 захиалга (💎 биш)', async () => {
     await boostAt(1, U.ubDayStart(yest));

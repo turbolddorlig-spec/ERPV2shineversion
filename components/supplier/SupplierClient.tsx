@@ -7,6 +7,7 @@ import { Notice } from '@/components/ui/Notice';
 import { Badge } from '@/components/ui/Badge';
 import { api, ApiError } from '@/components/ui/api';
 import { money, ubDateTime } from '@/lib/format';
+import { ReorderDialog } from '@/components/outflow/OutflowClient';
 
 /**
  * Нийлүүлэгч (Модуль 7в, хуучин «Гадны дэлгүүр удирдлага»): самбар → дэлгүүр → өдрийн тооцоо (падааны өдрөөр),
@@ -184,11 +185,11 @@ function ShopDialog({ shop, onClose, onDone }: { shop?: Detail['shop']; onClose:
   );
 }
 
-type Tab = 'day' | 'range' | 'done' | 'products' | 'adj' | 'login';
+type Tab = 'outflow' | 'day' | 'range' | 'done' | 'products' | 'adj' | 'login';
 
 function ShopPanel({ shopId, onBack }: { shopId: number | null; onBack?: () => void }) {
   const [d, setD] = useState<Detail | null>(null);
-  const [tab, setTab] = useState<Tab>('day');
+  const [tab, setTab] = useState<Tab>(shopId === null ? 'outflow' : 'day');
   const [date, setDate] = useState(ubToday());
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -200,7 +201,7 @@ function ShopPanel({ shopId, onBack }: { shopId: number | null; onBack?: () => v
     try { const r = await api<Record<string, unknown>>('/api/supplier', { method: 'POST', json: { shopId, ...json } }); if (m) setOk(m); setErr(null); await load(); return r; } catch (e) { setErr(msg(e)); setOk(null); return null; }
   };
   if (!d) return <div className="flex flex-col gap-3">{err ? <Notice>{err}</Notice> : <p className="text-muted">Ачаалж байна…</p>}</div>;
-  const tabs: [Tab, string][] = [['day', 'Өдрийн тооцоо'], ['range', 'Нэгтгэл'], ['done', 'Шилжүүлсэн'], ...(d.admin ? [['products', `Бараа (${d.products.filter((p) => p.active).length})`] as [Tab, string]] : []),
+  const tabs: [Tab, string][] = [['outflow', d.admin ? 'Барааны гарц' : 'Миний барааны гарц'], ['day', 'Өдрийн тооцоо'], ['range', 'Нэгтгэл'], ['done', 'Шилжүүлсэн'], ...(d.admin ? [['products', `Бараа (${d.products.filter((p) => p.active).length})`] as [Tab, string]] : []),
     ['adj', `Буцаалт${d.balance.pendingAdjCount ? ` (${d.balance.pendingAdjCount})` : ''}`], ...(d.admin ? [['login', 'Нэвтрэх эрх'] as [Tab, string]] : [])];
   return (
     <div className="flex flex-col gap-4">
@@ -235,6 +236,7 @@ function ShopPanel({ shopId, onBack }: { shopId: number | null; onBack?: () => v
           <button key={k} type="button" onClick={() => setTab(k)} className={clsx('shrink-0 rounded-lg px-3.5 py-2 text-[13.5px] font-semibold', tab === k ? 'bg-surface text-ink shadow-sm' : 'text-muted')}>{l}</button>
         ))}
       </div>
+      {tab === 'outflow' ? <OutflowTab shopId={shopId} /> : null}
       {tab === 'day' ? <DayTab detail={d} date={date} setDate={setDate} q={q} post={post} /> : null}
       {tab === 'range' ? <RangeTab q={q} onPick={(x) => { setDate(x); setTab('day'); }} /> : null}
       {tab === 'done' ? <DaysList days={d.transferredDays} empty="Сүүлийн 90 хоногт шилжүүлсэн тооцоо алга" onPick={(x) => { setDate(x); setTab('day'); }} /> : null}
@@ -512,6 +514,104 @@ function LoginTab({ d, post }: { d: Detail; post: Post }) {
           <div><Button variant="primary" size="sm" onClick={() => void post({ action: 'login', name, phone }, 'Нэвтрэх эрх үүслээ').then((r) => { if (r) setTemp({ phone: String(r.phone), pass: String(r.temporaryPassword) }); })}>Үүсгэх</Button></div>
         </>
       )}
+    </div>
+  );
+}
+
+// ───────────── #122 Миний барааны гарц ─────────────
+type RL = 'OK' | 'ORDER' | 'URGENT' | 'ORDERED' | 'LATE';
+interface SupRow {
+  id: number; code: string; name: string; price: number; daily: number[]; week: number; avg: number; available: number;
+  reorder: { level: RL; days: number | null; pace: number; runOutDay: string | null; order: { expectedDay: string; qty: number } | null } | null;
+  money: { perUnitDed: number; perUnitEarn: number; revenue: number; earn: number; cost: number | null; profit: number | null; perUnitProfit: number | null };
+}
+interface SupOutflow { shopId: number; days: string[]; rows: SupRow[]; isOwner: boolean; leadDays: number; urgentDays: number; needs: number }
+const mdS = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8))}`;
+const RLV: Record<RL, { cls: string; label: string }> = {
+  OK: { cls: 'text-muted hover:bg-surface2', label: 'хангалттай' }, ORDER: { cls: 'bg-warn-soft text-warn', label: '🟠 татах' },
+  URGENT: { cls: 'animate-pulse bg-bad text-white', label: '🔴 яаралтай' }, ORDERED: { cls: 'bg-surface2 text-info', label: '🚚 захиалсан' }, LATE: { cls: 'bg-bad-soft text-bad-ink', label: '⏰ хоцорсон' },
+};
+function CoverChip({ r, onOpen }: { r: SupRow; onOpen: () => void }) {
+  const x = r.reorder;
+  if (!x) return <span className="text-[12px] text-subtle" title="Сүүлийн 7 хоногт зарагдаагүй">—</span>;
+  const t = RLV[x.level];
+  return (
+    <button type="button" data-sup-cover={x.level} onClick={onOpen} className={clsx('inline-flex w-[80px] flex-col items-center rounded-lg px-1 py-0.5 leading-tight', t.cls)}>
+      <b className="text-[13px]">{x.days === null ? '—' : `${x.days} хоног`}</b>
+      <span className="text-[10.5px]">{x.order && x.level !== 'LATE' ? `🚚 ${mdS(x.order.expectedDay)}` : t.label}</span>
+    </button>
+  );
+}
+function CostInput({ r, onSave }: { r: SupRow; onSave: (v: string) => void }) {
+  const init = r.money.cost === null ? '' : String(r.money.cost);
+  const [v, setV] = useState(init);
+  useEffect(() => setV(init), [init]);
+  return <input value={v} inputMode="numeric" placeholder="өртөг" aria-label={`${r.name} өөрийн өртөг`} onChange={(e) => setV(digits(e.target.value))} onBlur={() => { if (v !== init) onSave(v); }} className={clsx(inputCls, 'h-8 w-[92px] text-right')} />;
+}
+function OutflowTab({ shopId }: { shopId: number | null }) {
+  const [d, setD] = useState<SupOutflow | null>(null); const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
+  const [dlg, setDlg] = useState<SupRow | null>(null);
+  const q = shopId === null ? '' : `?shop=${shopId}`;
+  const load = useCallback(async () => { try { setD(await api<SupOutflow>(`/api/supplier/outflow${q}`)); setErr(null); } catch (e) { setErr(msg(e)); } }, [q]);
+  useEffect(() => { void load(); }, [load]);
+  const post = async (json: Record<string, unknown>, m?: string) => {
+    try { const r = await api<Record<string, unknown>>('/api/supplier/outflow', { method: 'POST', json: { shopId, ...json } }); if (m) setOk(m); setErr(null); await load(); return r; } catch (e) { setErr(msg(e)); setOk(null); return null; }
+  };
+  if (!d) return err ? <Notice>{err}</Notice> : <p className="text-muted">Ачаалж байна…</p>;
+  const tot = d.rows.reduce((a, r) => ({ week: a.week + r.week, earn: a.earn + r.money.earn, profit: a.profit + (r.money.profit ?? 0) }), { week: 0, earn: 0, profit: 0 });
+  const hasCost = d.rows.some((r) => r.money.cost !== null);
+  return (
+    <div className="flex flex-col gap-3">
+      {err ? <Notice>{err}</Notice> : null}
+      {ok ? <Notice tone="ok">{ok}</Notice> : null}
+      {d.needs ? <p role="alert" className="rounded-[14px] border border-warn/40 bg-warn-soft px-4 py-3 text-[13.5px] font-semibold text-warn">🚚 Бараа их гарч байна, дуусах дөхлөө — {d.needs} бараагаа татаарай (Хятадаас ~{d.leadDays} хоногт ирнэ). «Нөөц» дээр дарж «Захиалсан» гэж тэмдэглэнэ.</p> : null}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <div className="rounded-2xl border border-line bg-surface p-3"><div className="text-[12.5px] text-muted">7 хоногт зарагдсан</div><b className="text-[20px]">{tot.week} ш</b></div>
+        <div className="rounded-2xl border border-line bg-surface p-3"><div className="text-[12.5px] text-muted">7 хоногт авах мөнгө (тооцоолол)</div><b className="text-[20px] text-accent">{money(tot.earn)}</b></div>
+        {d.isOwner && hasCost ? <div className="rounded-2xl border border-line bg-surface p-3"><div className="text-[12.5px] text-muted">7 хоногийн цэвэр ашиг</div><b className={clsx('text-[20px]', tot.profit < 0 ? 'text-bad-ink' : 'text-ok-ink')}>{money(tot.profit)}</b></div> : null}
+      </div>
+      {d.rows.length === 0 ? <p className="rounded-2xl border border-line bg-surface p-6 text-center text-muted">Танд оноогдсон бараа алга</p> : (<>
+        <div className="hidden overflow-x-auto rounded-2xl border border-line bg-surface lg:block">
+          <table className="w-full text-[13px]">
+            <thead><tr className="bg-surface2 text-[12px] text-muted">
+              <th className="px-2 py-2 text-left">Бараа</th>
+              {d.days.map((x, i) => <th key={x} className="px-1 py-2 text-center">{i === 0 ? 'Өнөөдөр' : mdS(x)}</th>)}
+              <th className="px-2 py-2 text-center">7 хоног</th><th className="px-2 py-2 text-right">Боломжтой</th><th className="px-2 py-2 text-center">Нөөц</th>
+              <th className="px-2 py-2 text-right">1 ш-д авах</th><th className="px-2 py-2 text-right">7 хоногт авах</th>
+              {d.isOwner ? <><th className="px-2 py-2 text-right">Өөрийн өртөг</th><th className="px-2 py-2 text-right">Цэвэр ашиг</th></> : null}
+            </tr></thead>
+            <tbody>{d.rows.map((r) => (
+              <tr key={r.id} data-sup-row className="border-t border-line">
+                <td className="w-[200px] min-w-[200px] max-w-[200px] px-2 py-1.5"><div title={r.name} className="line-clamp-2 [overflow-wrap:anywhere] font-semibold">{r.name}</div><div className="text-[11.5px] text-muted">{r.code} · {money(r.price)}</div></td>
+                {r.daily.map((n, i) => <td key={i} className="px-1 py-1 text-center"><div className={clsx('mx-auto w-9 rounded-md py-0.5', n ? 'bg-ok-soft font-semibold text-ok-ink' : 'text-subtle')}>{n}</div></td>)}
+                <td className="px-2 py-1 text-center font-bold">{r.week}<div className="text-[10.5px] font-normal text-muted">⌀{r.avg}</div></td>
+                <td className="px-2 py-1 text-right">{r.available}</td>
+                <td className="px-1 py-1 text-center"><CoverChip r={r} onOpen={() => setDlg(r)} /></td>
+                <td className="px-2 py-1 text-right" title={`Үнэ ${money(r.price)} − суутгал ${money(r.money.perUnitDed)}`}>{money(r.money.perUnitEarn)}</td>
+                <td className="px-2 py-1 text-right font-semibold">{money(r.money.earn)}</td>
+                {d.isOwner ? <><td className="px-2 py-1 text-right"><CostInput r={r} onSave={(v) => void post({ action: 'cost', productId: r.id, cost: v }, 'Өртөг хадгалагдлаа')} /></td>
+                  <td className={clsx('px-2 py-1 text-right font-semibold', (r.money.profit ?? 0) < 0 && 'text-bad-ink')}>{r.money.profit === null ? '—' : <>{money(r.money.profit)}<div className="text-[10.5px] font-normal text-muted">1 ш {money(r.money.perUnitProfit ?? 0)}</div></>}</td></> : null}
+              </tr>))}</tbody>
+          </table>
+        </div>
+        <div className="flex flex-col gap-2 lg:hidden">
+          {d.rows.map((r) => (
+            <div key={r.id} className="flex min-w-0 flex-col gap-2 rounded-2xl border border-line bg-surface p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0"><b className="[overflow-wrap:anywhere]">{r.name}</b><div className="text-[12px] text-muted">{r.code} · {money(r.price)} · боломжтой {r.available}</div></div>
+                <CoverChip r={r} onOpen={() => setDlg(r)} />
+              </div>
+              <div className="grid grid-cols-7 gap-1 text-center text-[12px]">{r.daily.map((n, i) => <div key={i} className={clsx('rounded-md py-1', n ? 'bg-ok-soft font-semibold text-ok-ink' : 'bg-surface2 text-subtle')}><div className="text-[10px] font-normal text-muted">{i === 0 ? 'Өнөө' : mdS(d.days[i]!)}</div>{n}</div>)}</div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px]">
+                <span>7 хоног <b>{r.week} ш</b></span><span>1 ш-д авах <b>{money(r.money.perUnitEarn)}</b></span><span>7 хоногт <b className="text-accent">{money(r.money.earn)}</b></span>
+                {d.isOwner ? <span className="flex items-center gap-1">Өртөг <CostInput r={r} onSave={(v) => void post({ action: 'cost', productId: r.id, cost: v }, 'Өртөг хадгалагдлаа')} /></span> : null}
+                {d.isOwner && r.money.profit !== null ? <span>Цэвэр ашиг <b className={clsx((r.money.profit ?? 0) < 0 ? 'text-bad-ink' : 'text-ok-ink')}>{money(r.money.profit)}</b></span> : null}
+              </div>
+            </div>))}
+        </div>
+      </>)}
+      <p className="text-[12px] text-muted [overflow-wrap:anywhere]">Гарц = тухайн өдөр баталгаажсан захиалгын ширхэг (төлбөр хүлээж буй, тэр өдөртөө цуцлагдсан орохгүй). «Авах мөнгө» = борлуулалт − 1 ширхэгийн суутгал × ширхэг — захиалгаар тооцоолсон; бодит шилжүүлэг нь хүргэгдсэн бараагаар «Өдрийн тооцоо»-нд. Нөөц = боломжтой ÷ өдрийн хурд; {d.leadDays} хоногоос бага бол 🟠, {d.urgentDays}-оос бага бол 🔴. {d.isOwner ? 'Өөрийн өртгийг зөвхөн та харна.' : ''}</p>
+      {dlg ? <ReorderDialog row={dlg} sub="нөөц ба захиалга" detailUrl={`/api/supplier/outflow?view=reorder&id=${dlg.id}${shopId === null ? '' : `&shop=${shopId}`}`} onClose={() => setDlg(null)} post={post} /> : null}
     </div>
   );
 }

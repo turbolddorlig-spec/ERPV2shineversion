@@ -298,10 +298,10 @@ function ReorderChip({ r, onOpen }: { r: Row; onOpen: () => void }) {
   );
 }
 interface ReorderD { info: Reorder | null; leadDays: number; urgentDays: number; defaultExpected: string; history: { id: number; qty: number; expectedDay: string; orderedAt: string; byName: string; note: string; receivedAt: string | null; cancelledAt: string | null }[] }
-function ReorderDialog({ row, onClose, post }: { row: Row; onClose: () => void; post: (j: Record<string, unknown>, m?: string) => Promise<unknown> }) {
+export function ReorderDialog({ row, onClose, post, detailUrl, sub = 'зөвхөн Супер админ' }: { row: { id: number; name: string; code: string }; onClose: () => void; post: (j: Record<string, unknown>, m?: string) => Promise<unknown>; detailUrl?: string; sub?: string }) {
   const [d, setD] = useState<ReorderD | null>(null); const [err, setErr] = useState<string | null>(null);
   const [qty, setQty] = useState(''); const [day, setDay] = useState(''); const [note, setNote] = useState('');
-  const load = useCallback(() => api<ReorderD>(`/api/goods-outflow?view=reorder&id=${row.id}`).then((r) => { setD(r); setDay(r.defaultExpected); }).catch((e) => setErr(msg(e))), [row.id]);
+  const load = useCallback(() => api<ReorderD>(detailUrl ?? `/api/goods-outflow?view=reorder&id=${row.id}`).then((r) => { setD(r); setDay(r.defaultExpected); }).catch((e) => setErr(msg(e))), [row.id, detailUrl]);
   useEffect(() => { void load(); }, [load]);
   const x = d?.info;
   const save = async () => {
@@ -311,7 +311,7 @@ function ReorderDialog({ row, onClose, post }: { row: Row; onClose: () => void; 
   };
   const cancel = async () => { if (x?.order && confirm('«Захиалсан» тэмдгийг цуцлах уу? Сануулга дахин гарна.')) { const r = await post({ action: 'reorder-cancel', id: x.order.id }, 'Цуцаллаа'); if (r) onClose(); } };
   return (
-    <Modal open onClose={onClose} title={`🚚 Нөөц · ${row.name}`} subtitle={`${row.code} · зөвхөн Супер админ`}
+    <Modal open onClose={onClose} title={`🚚 Нөөц · ${row.name}`} subtitle={`${row.code} · ${sub}`}
       footer={<><Button onClick={onClose}>Хаах</Button>{x?.order ? <Button onClick={() => void cancel()}>«Захиалсан»-ыг цуцлах</Button> : <Button variant="primary" onClick={() => void save()}>Захиалсан</Button>}</>}>
       {err ? <Notice>{err}</Notice> : null}
       {d ? (

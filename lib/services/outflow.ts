@@ -106,7 +106,7 @@ const COUNTED = Prisma.sql`o.status <> 'PENDING_PAYMENT' AND o."confirmedAt" IS 
 const LIVE = Prisma.sql`o.status NOT IN ('PENDING_PAYMENT', 'CANCELLED') AND o."confirmedAt" IS NOT NULL`;
 
 interface DayAgg { productId: number; day: string; qty: number; revenue: number; orderShare: number; orders: number; bulkOrders: number; bulkQty: number }
-async function unitsByDay(from: string, to: string, productIds?: number[]): Promise<DayAgg[]> {
+export async function unitsByDay(from: string, to: string, productIds?: number[]): Promise<DayAgg[]> {
   const pf = productIds ? (productIds.length ? Prisma.sql`AND l."productId" IN (${Prisma.join(productIds)})` : Prisma.sql`AND false`) : Prisma.empty;
   const bulkMin = (await getConfig()).bulkMin;
   // Захиалга × бараа бүрээр нэгтгээд (нэг захиалгад олон өнгө байж болно) бөөнийг ялгана
@@ -196,7 +196,7 @@ export interface BoostAlert {
   watchedUntil: Date | null; watchedBy: string | null; boostOnAt: Date | null; zones: number; dollar: number; ownerName: string | null;
 }
 let alertCache: { at: number; list: BoostAlert[] } | null = null;
-export function bustOutflowCache() { alertCache = null; reorderCache = null; shortCache = null; }
+export function bustOutflowCache() { alertCache = null; reorderCache = null; shortCache = null; cfgCache = null; }
 
 /** Одоо бүүст асаалттай бараануудын анхааруулга (60 сек кэш) */
 export async function computeAlerts(fresh = false): Promise<BoostAlert[]> {
@@ -1030,6 +1030,10 @@ export async function reorderBanner(roles: Role[]): Promise<{ urgent: number; or
 /** «Захиалсан» — хэдэн ширхэг, хэзээ ирэх (анх: өнөөдөр + ирэх хоног) */
 export async function markReordered(actor: UserActor, b: { productId?: unknown; qty?: unknown; expectedDay?: unknown; note?: unknown }) {
   assertSA(actor);
+  return createReorder(actor, b);
+}
+/** Эрх шалгасны дараа (СА эсвэл тухайн барааны нийлүүлэгч) */
+export async function createReorder(actor: UserActor, b: { productId?: unknown; qty?: unknown; expectedDay?: unknown; note?: unknown }) {
   const productId = Number(b.productId);
   const product = Number.isInteger(productId) ? await db.product.findUnique({ where: { id: productId }, select: { id: true, name: true } }) : null;
   if (!product) throw notFound('Бараа олдсонгүй');
@@ -1052,8 +1056,12 @@ export async function markReordered(actor: UserActor, b: { productId?: unknown; 
 /** «Захиалсан»-ыг цуцлах (андуурсан) — сануулга дахин гарна */
 export async function cancelReorder(actor: UserActor, idIn: unknown) {
   assertSA(actor);
+  return cancelReorderOf(actor, idIn);
+}
+export async function cancelReorderOf(actor: UserActor, idIn: unknown, productIds?: Set<number>) {
   const id = Number(idIn);
   const cur = Number.isInteger(id) ? await db.reorderOrder.findUnique({ where: { id } }) : null;
+  if (cur && productIds && !productIds.has(cur.productId)) throw forbidden('Таны бараа биш');
   if (!cur || cur.receivedAt || cur.cancelledAt) throw notFound('Идэвхтэй захиалга олдсонгүй');
   await db.$transaction(async (tx) => {
     await tx.reorderOrder.update({ where: { id }, data: { cancelledAt: new Date() } });
@@ -1066,6 +1074,9 @@ export async function cancelReorder(actor: UserActor, idIn: unknown) {
 /** Нэг барааны нөөцийн дэлгэрэнгүй + өмнөх захиалгууд */
 export async function reorderDetail(actor: UserActor, productIdIn: unknown) {
   assertSA(actor);
+  return reorderDetailOf(productIdIn);
+}
+export async function reorderDetailOf(productIdIn: unknown) {
   const id = Number(productIdIn);
   const m = await computeReorder();
   const cfg = await getConfig();

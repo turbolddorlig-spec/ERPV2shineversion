@@ -9,6 +9,7 @@ import { canView } from '@/lib/permissions';
 import { unreviewedDiscounts } from '@/lib/services/orders/queries';
 import { canReviewDiscounts } from '@/lib/permissions';
 import { alertBanner, reorderBanner } from '@/lib/services/outflow';
+import { supplierReorderBanner } from '@/lib/services/supplier-outflow';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,7 +30,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     // Модуль 7г: алдагдалтай / ашиг багассан бүүст (СА, Админ, маркетинг)
     alertBanner(user.roles).catch(() => null),
     // #119: бараа татах (нөөц ≤ ирэх хоног) — зөвхөн Супер админд
-    reorderBanner(user.roles).catch(() => null),
+    user.roles.includes('SUPPLIER') ? supplierReorderBanner(actor).catch(() => null) : reorderBanner(user.roles).catch(() => null),
   ]);
   const nav: NavItem[] = visiblePages(user.roles).map((p) => ({
     key: p.key, label: p.label, short: p.short, href: p.href, group: p.group, icon: p.icon,
@@ -38,7 +39,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }));
   return (
     <AppShell user={{ name: user.name, roleLabels: user.roles.map((r) => ROLE_LABEL[r]) }} nav={nav}
-      boostAlert={boost} reorderAlert={reorder}
+      boostAlert={boost} reorderAlert={reorder} reorderHref={user.roles.includes('SUPPLIER') ? '/supplier' : '/goods-outflow?tab=reorder'}
       alert={recAlert ? { kind: recAlert.kind, count: recAlert.status?.count ?? 0, at: recAlert.status?.at ?? null, since: recAlert.status?.since ?? null } : null}>
       {children}
     </AppShell>

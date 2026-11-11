@@ -32,7 +32,7 @@ async function logout() {
 export interface StockAlert { kind: 'mismatch' | 'stale'; count: number; at: string | null; since: string | null }
 const ubTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString('mn-MN', { timeZone: 'Asia/Ulaanbaatar', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 
-export function AppShell({ user, nav, alert, boostAlert, reorderAlert, children }: { user: { name: string; roleLabels: string[] }; nav: NavItem[]; alert?: StockAlert | null; boostAlert?: { red: number; orange: number } | null; reorderAlert?: { urgent: number; order: number; late: number } | null; children: ReactNode }) {
+export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHref, children }: { user: { name: string; roleLabels: string[] }; nav: NavItem[]; alert?: StockAlert | null; boostAlert?: { red: number; orange: number } | null; reorderAlert?: { urgent: number; order: number; late: number } | null; reorderHref?: string; children: ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [pathname]);
@@ -142,7 +142,7 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, children 
             </Link>
           ) : null}
           {reorderAlert ? (
-            <Link href="/goods-outflow?tab=reorder" role="alert" data-reorder-alert
+            <Link href={reorderHref ?? '/goods-outflow?tab=reorder'} role="alert" data-reorder-alert
               className={clsx('mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] border px-4 py-3 text-[13.5px] font-semibold hover:brightness-95',
                 reorderAlert.urgent || reorderAlert.late ? 'border-bad/40 bg-bad-soft text-bad-ink' : 'border-warn/40 bg-warn-soft text-warn')}>
               <span className="text-[16px]">🚚</span>
@@ -152,7 +152,7 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, children 
                 {reorderAlert.order ? ` 🟠 татах ${reorderAlert.order}` : ''}
                 {reorderAlert.late ? ` ⏰ ирэх хугацаа хэтэрсэн ${reorderAlert.late}` : ''} бараа.
               </span>
-              <span className="text-[12.5px] underline">Барааны гарц →</span>
+              <span className="text-[12.5px] underline">{reorderHref === '/supplier' ? 'Миний барааны гарц →' : 'Барааны гарц →'}</span>
             </Link>
           ) : null}
           {children}

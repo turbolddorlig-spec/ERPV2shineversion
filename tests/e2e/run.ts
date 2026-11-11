@@ -595,6 +595,19 @@ async function main() {
     check('нийлүүлэгч өөр дэлгүүр харахгүй', other.status !== 200 || JSON.parse(other.text).shop.id !== sid, `${other.status}`);
     const supPost = await req('/api/supplier', { cookie: sup8.cookie, method: 'POST', body: { action: 'shop', name: 'x' } });
     check('нийлүүлэгч юу ч өөрчлөхгүй (403)', supPost.status === 403, String(supPost.status));
+    // #122 Миний барааны гарц
+    const so = await req('/api/supplier/outflow', { cookie: sup8.cookie });
+    const soj = so.status === 200 ? JSON.parse(so.text) : null;
+    check('нийлүүлэгчийн мини гарц', so.status === 404 || (soj && Array.isArray(soj.rows) && soj.isOwner === true), `${so.status} ${so.text.slice(0, 80)}`);
+    check('мини гарцад бүүст/пэйж/эзний ашиг алга', !soj || soj.rows.every((r: Record<string, unknown>) => r.zones === undefined && r.dollar === undefined && r.profit === undefined), '');
+    const soA = await req(`/api/supplier/outflow?shop=${sid}`, { cookie: sa8.cookie });
+    check('СА дэлгүүрийн мини гарц харна (өртөггүй)', soA.status === 200 && JSON.parse(soA.text).isOwner === false, soA.text.slice(0, 80));
+    const soO = await req(`/api/supplier/outflow?shop=${sid}`, { cookie: op8.cookie });
+    check('оператор мини гарц харахгүй (403)', soO.status === 403, String(soO.status));
+    const soC = await req('/api/supplier/outflow', { cookie: sa8.cookie, method: 'POST', body: { action: 'cost', productId: 1, cost: 5 } });
+    check('өөрийн өртгийг СА ч бичихгүй (403)', soC.status === 403, String(soC.status));
+    const soR = await req('/api/supplier/outflow', { cookie: sup8.cookie, method: 'POST', body: { action: 'reorder', productId: 999999, qty: 5 } });
+    check('нийлүүлэгч бусдын барааг «Захиалсан» болгохгүй', [403, 404].includes(soR.status), String(soR.status));
     await req('/api/supplier', { cookie: sa8.cookie, method: 'POST', body: { action: 'active', shopId: sid, active: false } });
   }
 
