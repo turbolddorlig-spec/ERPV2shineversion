@@ -109,6 +109,64 @@ describe('бараа дуусах анхааруулга (#118)', () => {
   });
 });
 
+describe('бараа татах — нөөц хоног (#119, зөвхөн СА)', () => {
+  /** Үлдэгдлээс n ширхэгийг нөөцөлнө (гарцад тооцохгүй хуучин захиалгаар) */
+  async function reserve(n: number) {
+    const { order: o } = await O.createOrder(op, { phone: String(99400000 + ++ph), province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 13, addressDetail: 'Тест', pageId: page1, lines: [{ variantId: v, qty: n }], idemKey: randomUUID(), deliveryDate: U.ubDay(new Date(), 1) });
+    await db.order.update({ where: { id: o.id }, data: { confirmedAt: new Date(Date.now() - 400 * 86_400_000) } });
+  }
+  it('нөөц = боломжтой ÷ хурд; ≤15 → 🟠, ≤7 → 🔴; «Захиалсан» → 🚚 (сануулгагүй); хугацаа хэтэрвэл ⏰; орлого ормогц дахин эхэлнэ', async () => {
+    for (let d = 1; d <= 3; d++) for (let i = 0; i < 10; i++) await order({ daysAgo: d }); // өдөрт 10 (шинэ бараа — 3 өдөр)
+    await order({ daysAgo: 2, qty: 40 }); // бөөний — хурдад орохгүй
+    let x = (await OF.computeReorder(true)).get(prod)!;
+    // 500 − 30 − 40 = 430 боломжтой ÷ 10 = 43 хоног
+    expect([x.available, x.pace, x.days, x.level, x.basis.fullDays]).toEqual([430, 10, 43, 'OK', 3]);
+    expect(await OF.reorderBanner(['SUPER_ADMIN'])).toBeNull();
+    await reserve(310); // 120 → 12 хоног
+    x = (await OF.computeReorder(true)).get(prod)!;
+    expect([x.days, x.level]).toEqual([12, 'ORDER']);
+    expect(await OF.reorderBanner(['SUPER_ADMIN'])).toEqual({ urgent: 0, order: 1, late: 0 });
+    expect(await OF.reorderBanner(['ADMIN', 'MARKETING_LEAD'])).toBeNull();
+    // өнөөдөр 25 гарвал хурд = 25 → 95 ÷ 25 = 3 хоног → 🔴
+    for (let i = 0; i < 25; i++) await order({ daysAgo: 0 });
+    x = (await OF.computeReorder(true)).get(prod)!;
+    expect([x.pace, x.days, x.level]).toEqual([25, 3, 'URGENT']);
+    // эрх: зөвхөн СА
+    await err(OF.markReordered(adm, { productId: prod, qty: 300 }), 403);
+    await err(OF.reorderDetail(mk, prod), 403);
+    OF.bustTable();
+    expect((await OF.outflowTable(adm, {})).rows.find((r) => r.id === prod)?.reorder).toBeUndefined();
+    const t = await OF.outflowTable(sa, { tab: 'reorder' });
+    expect([t.rows.map((r) => r.id), t.rows[0]?.reorder?.level, t.counts.reorder]).toEqual([[prod], 'URGENT', 1]);
+    // «Захиалсан» — анх ирэх өдөр = өнөөдөр + 15
+    const o = await OF.markReordered(sa, { productId: prod, qty: 300 });
+    expect(o.expectedDay).toBe(U.ubDay(new Date(), 15));
+    await err(OF.markReordered(sa, { productId: prod, qty: 10 }), 409);
+    x = (await OF.computeReorder()).get(prod)!;
+    expect([x.level, x.order?.qty]).toEqual(['ORDERED', 300]);
+    expect(await OF.reorderBanner(['SUPER_ADMIN'])).toBeNull();
+    // ирэх өдөр өнгөрсөн → ⏰ хоцорсон
+    await db.reorderOrder.update({ where: { id: o.id }, data: { expectedDay: yest } });
+    x = (await OF.computeReorder(true)).get(prod)!;
+    expect(x.level).toBe('LATE');
+    expect(await OF.reorderBanner(['SUPER_ADMIN'])).toEqual({ urgent: 0, order: 0, late: 1 });
+    // агуулахад орлого → автоматаар хаагдаж, шинэ үлдэгдлээр
+    const wh = await db.warehouse.findFirstOrThrow();
+    await D.createReceipt(sa, { warehouseId: wh.id, lines: [{ variantId: v, qty: 300 }], idemKey: randomUUID() });
+    x = (await OF.computeReorder(true)).get(prod)!;
+    expect([x.available, x.days, x.level, x.order]).toEqual([395, 15, 'ORDER', null]);
+    expect((await db.reorderOrder.findUniqueOrThrow({ where: { id: o.id } })).receivedAt).not.toBeNull();
+    // андуурсан «Захиалсан»-ыг цуцлах → сануулга буцаж гарна; түүх үлдэнэ
+    const o2 = await OF.markReordered(sa, { productId: prod, qty: 50, expectedDay: U.ubDay(new Date(), 10), note: 'Тест' });
+    expect((await OF.computeReorder()).get(prod)!.level).toBe('ORDERED');
+    await OF.cancelReorder(sa, o2.id);
+    expect((await OF.computeReorder()).get(prod)!.level).toBe('ORDER');
+    expect((await OF.reorderDetail(sa, prod)).history).toHaveLength(2);
+    // үлдэгдэлд хүрэхгүй: журнал = үлдэгдэл
+    expect(await db.auditLog.count({ where: { action: { startsWith: 'outflow.reorder' } } })).toBe(3);
+  });
+});
+
 describe('бөөний захиалга (#117)', () => {
   it('1 хүн 50 ширхэг: гарцад 50 + 📦, дундаж/өнгөнд орохгүй; опп+хүргэлт нэг л удаа; үр дүн 1 захиалга (💎 биш)', async () => {
     await boostAt(1, U.ubDayStart(yest));

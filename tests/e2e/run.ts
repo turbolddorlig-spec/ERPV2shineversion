@@ -628,6 +628,14 @@ async function main() {
     check('анхааруулга жагсаалт', al.status === 200 && Array.isArray(JSON.parse(al.text).red), al.text.slice(0, 80));
     const ww = await req('/api/goods-outflow?view=work', { cookie: mk9.cookie });
     check('ажлын цонх', ww.status === 200 && JSON.parse(ww.text).target > 0, ww.text.slice(0, 80));
+    // #119 Бараа татах — зөвхөн Супер админ
+    check('нөөц хоног — Админ, маркетинг харахгүй', tA.rows.every((r: { reorder?: unknown }) => r.reorder === undefined) && tj.counts.reorder === undefined, '');
+    const roM = await req(`/api/goods-outflow?view=reorder&id=${pid}`, { cookie: mk9.cookie });
+    const roA = await req('/api/goods-outflow', { cookie: adm9.cookie, method: 'POST', body: { action: 'reorder', productId: pid, qty: 10 } });
+    check('«Захиалсан» — Админ/маркетинг 403', roM.status === 403 && roA.status === 403, `${roM.status} ${roA.status}`);
+    const tS = JSON.parse((await req('/api/goods-outflow?view=table&tab=reorder&sort=cover', { cookie: sa9.cookie })).text);
+    const roS = await req(`/api/goods-outflow?view=reorder&id=${pid}`, { cookie: sa9.cookie });
+    check('нөөц хоног — Супер админ', typeof tS.counts.reorder === 'number' && roS.status === 200 && JSON.parse(roS.text).leadDays === 15, roS.text.slice(0, 100));
   }
 
   // ───── «Зөвхөн ажлын байрнаас» (#86) ─────

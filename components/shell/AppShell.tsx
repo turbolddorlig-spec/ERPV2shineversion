@@ -32,7 +32,7 @@ async function logout() {
 export interface StockAlert { kind: 'mismatch' | 'stale'; count: number; at: string | null; since: string | null }
 const ubTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString('mn-MN', { timeZone: 'Asia/Ulaanbaatar', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 
-export function AppShell({ user, nav, alert, boostAlert, children }: { user: { name: string; roleLabels: string[] }; nav: NavItem[]; alert?: StockAlert | null; boostAlert?: { red: number; orange: number } | null; children: ReactNode }) {
+export function AppShell({ user, nav, alert, boostAlert, reorderAlert, children }: { user: { name: string; roleLabels: string[] }; nav: NavItem[]; alert?: StockAlert | null; boostAlert?: { red: number; orange: number } | null; reorderAlert?: { urgent: number; order: number; late: number } | null; children: ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [pathname]);
@@ -137,6 +137,20 @@ export function AppShell({ user, nav, alert, boostAlert, children }: { user: { n
               <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
                 {boostAlert.red ? `Алдагдалтай бүүст: ${boostAlert.red} бараа — яаралтай шалгаж унтраана уу.` : ''}
                 {boostAlert.orange ? ` Ашиг багассан / өсөлтгүй бүүст: ${boostAlert.orange} бараа.` : ''}
+              </span>
+              <span className="text-[12.5px] underline">Барааны гарц →</span>
+            </Link>
+          ) : null}
+          {reorderAlert ? (
+            <Link href="/goods-outflow?tab=reorder" role="alert" data-reorder-alert
+              className={clsx('mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] border px-4 py-3 text-[13.5px] font-semibold hover:brightness-95',
+                reorderAlert.urgent || reorderAlert.late ? 'border-bad/40 bg-bad-soft text-bad-ink' : 'border-warn/40 bg-warn-soft text-warn')}>
+              <span className="text-[16px]">🚚</span>
+              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+                Бараа их гарч байна, дуусах дөхлөө — бараагаа татаарай:
+                {reorderAlert.urgent ? ` 🔴 яаралтай ${reorderAlert.urgent}` : ''}
+                {reorderAlert.order ? ` 🟠 татах ${reorderAlert.order}` : ''}
+                {reorderAlert.late ? ` ⏰ ирэх хугацаа хэтэрсэн ${reorderAlert.late}` : ''} бараа.
               </span>
               <span className="text-[12.5px] underline">Барааны гарц →</span>
             </Link>

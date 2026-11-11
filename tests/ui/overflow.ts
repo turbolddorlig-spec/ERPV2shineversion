@@ -169,6 +169,8 @@ async function main() {
     { name: 'Барааны гарц: өдрийн дэлгэрэнгүй', path: '/goods-outflow', act: async (p) => { await p.getByRole('button', { name: 'Бусад цэс' }).click(); await p.getByRole('button', { name: 'Үнэлгээ' }).click(); await p.waitForTimeout(800); await p.getByRole('button', { name: 'Өдрийн дэлгэрэнгүй' }).click(); await p.waitForTimeout(1500); } },
     { name: 'Барааны гарц: пэйж', path: '/goods-outflow', act: async (p) => { await p.getByRole('button', { name: 'Бусад цэс' }).click(); await p.getByRole('button', { name: 'Пэйж хувиарлах' }).click(); await p.waitForTimeout(1000); } },
     { name: 'Барааны гарц: статистик', path: '/goods-outflow', act: async (p) => { await p.getByRole('button', { name: 'Бусад цэс' }).click(); await p.getByRole('button', { name: 'Статистик' }).click(); await p.waitForTimeout(1000); } },
+    { name: 'Барааны гарц: бараа татах', path: '/goods-outflow?tab=reorder' },
+    { name: 'Барааны гарц: нөөцийн цонх', path: '/goods-outflow?sort=cover', act: async (p) => { await p.locator('[data-reorder-chip]:visible').first().click(); await p.waitForTimeout(1500); } },
     { name: 'Барааны гарц: тохиргоо', path: '/goods-outflow', act: async (p) => { await p.getByRole('button', { name: 'Бусад цэс' }).click(); await p.getByRole('button', { name: 'Тохиргоо' }).click(); await p.waitForTimeout(800); } },
     { name: 'Барааны гарц (маркетинг): өөрийн ажил', path: '/goods-outflow', as: MARKETER, act: async (p) => { await p.getByRole('button', { name: 'Бусад цэс' }).click(); await p.getByRole('button', { name: 'Өөрийн ажил' }).click(); await p.waitForTimeout(1200); } },
     { name: 'Банкны импорт', path: '/bank-import' },

@@ -27,6 +27,7 @@ export async function GET(req: NextRequest) {
       case 'history': return json(await S.scoreHistory(ctx.actor, g('from'), g('to')));
       case 'profit': return json(await S.profitDetail(ctx.actor, g('id')));
       case 'config': return json(await S.configView(ctx.actor));
+      case 'reorder': return json(await S.reorderDetail(ctx.actor, g('id')));
       default: throw notFound();
     }
   } catch (e) { return errorResponse(e); }
@@ -47,6 +48,8 @@ export async function POST(req: NextRequest) {
       case 'page-owner': return json(await S.setPageOwner(ctx.actor, b));
       case 'score': return json(await S.saveScore(ctx.actor, b));
       case 'config': return json(await S.setConfig(ctx.actor, b));
+      case 'reorder': return json(await S.markReordered(ctx.actor, b));
+      case 'reorder-cancel': return json(await S.cancelReorder(ctx.actor, b.id));
       default: throw notFound();
     }
   } catch (e) { return errorResponse(e); }

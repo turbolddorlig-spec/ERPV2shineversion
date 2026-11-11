@@ -43,8 +43,10 @@ export interface OutflowConfig {
   bulkMin: number;
   /** Бараа дуусах анхааруулга: боломжтой ≤ (өдрийн хурд × энэ тоо) (#118) */
   stockDays: number;
+  /** Бараа татах (#119, СА): Хятадаас ирэх хоног — нөөц ≤ энэ бол 🟠; ≤ urgentDays бол 🔴 */
+  leadDays: number; urgentDays: number;
 }
-export const DEFAULT_CFG: OutflowConfig = { claimTarget: 5, claimExpireDays: 7, watchHours: 8, defaultDollar: 5, oppCost: 1200, deliveryCost: 5000, rate: 3600, costPct: 35, lowProfit: 1500, bulkMin: 5, stockDays: 1 };
+export const DEFAULT_CFG: OutflowConfig = { claimTarget: 5, claimExpireDays: 7, watchHours: 8, defaultDollar: 5, oppCost: 1200, deliveryCost: 5000, rate: 3600, costPct: 35, lowProfit: 1500, bulkMin: 5, stockDays: 1, leadDays: 15, urgentDays: 7 };
 let cfgCache: { at: number; v: OutflowConfig } | null = null;
 export async function getConfig(tx: Tx | typeof db = db): Promise<OutflowConfig> {
   if (tx === db && cfgCache && Date.now() - cfgCache.at < 30_000) return cfgCache.v;
@@ -68,7 +70,7 @@ export async function setConfig(actor: UserActor, b: Record<string, unknown>) {
   if (b.claimTarget !== undefined) next.claimTarget = cleanInt(b.claimTarget, '«Хийсэн» захиалгын тоо', 1, 1000);
   if (b.claimExpireDays !== undefined) next.claimExpireDays = cleanInt(b.claimExpireDays, 'Чөлөөлөх хоног', 1, 365);
   if (b.stockDays !== undefined) next.stockDays = cleanInt(b.stockDays, 'Дуусах анхааруулга (өдөр)', 1, 30);
-  const money = ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar', 'bulkMin'] as const;
+  const money = ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar', 'bulkMin', 'leadDays', 'urgentDays'] as const;
   if (money.some((k) => b[k] !== undefined)) {
     assertSA(actor);
     if (b.oppCost !== undefined) next.oppCost = cleanInt(b.oppCost, 'Опп цалин', 0, 1_000_000);
@@ -79,13 +81,16 @@ export async function setConfig(actor: UserActor, b: Record<string, unknown>) {
     if (b.watchHours !== undefined) next.watchHours = cleanInt(b.watchHours, 'Ажиглах цаг', 1, 24);
     if (b.defaultDollar !== undefined) next.defaultDollar = cleanInt(b.defaultDollar, 'Анхдагч $', 1, 10_000);
     if (b.bulkMin !== undefined) next.bulkMin = cleanInt(b.bulkMin, 'Бөөний захиалгын ширхэг', 2, 100_000);
+    if (b.leadDays !== undefined) next.leadDays = cleanInt(b.leadDays, 'Бараа ирэх хоног', 1, 180);
+    if (b.urgentDays !== undefined) next.urgentDays = cleanInt(b.urgentDays, 'Яаралтай хоног', 0, 180);
+    if (next.urgentDays >= next.leadDays) throw badRequest('Яаралтай хоног нь ирэх хоногоос бага байна');
   }
   const json = next as unknown as Prisma.InputJsonValue;
   await db.$transaction(async (tx) => {
     await tx.appSetting.upsert({ where: { key: KEY_CFG }, create: { key: KEY_CFG, value: json, updatedById: actor.id }, update: { value: json, updatedById: actor.id } });
     await writeAudit(actor, 'outflow.config', 'AppSetting', KEY_CFG, { before: cur, after: next } as unknown as Prisma.InputJsonValue, tx, ['money']);
   });
-  cfgCache = null;
+  cfgCache = null; reorderCache = null;
   return next;
 }
 
@@ -188,7 +193,7 @@ export interface BoostAlert {
   watchedUntil: Date | null; watchedBy: string | null; boostOnAt: Date | null; zones: number; dollar: number; ownerName: string | null;
 }
 let alertCache: { at: number; list: BoostAlert[] } | null = null;
-export function bustOutflowCache() { alertCache = null; }
+export function bustOutflowCache() { alertCache = null; reorderCache = null; }
 
 /** Одоо бүүст асаалттай бараануудын анхааруулга (60 сек кэш) */
 export async function computeAlerts(fresh = false): Promise<BoostAlert[]> {
@@ -329,6 +334,8 @@ export interface OutflowRow {
   alert?: AlertLevel | null; profit?: { status: ProfitStatus | null; perUnit: number | null } | null;
   /** Мөрийн ард жижиг тэмдэг — дарахад дэлгэрэнгүй */
   alertInfo?: { level: AlertLevel; reasons: string[]; pages: { name: string; n: number }[]; watchedUntil: Date | null; watchedBy: string | null } | null;
+  /** Нөөц хоног ба бараа татах (#119) — зөвхөн Супер админ */
+  reorder?: ReorderInfo | null;
 }
 
 async function phoneCounts(from: string, to: string) {
@@ -412,6 +419,9 @@ export async function outflowTable(actor: UserActor, p: TableParams) {
   let prof = new Map<number, DayProfit>();
   if (sa) prof = await yesterdayProfits(rows.filter((r) => r.zones > 0 || p.status).map((r) => r.id));
   if (sa && p.status) rows = rows.filter((r) => prof.get(r.id)?.status === p.status);
+  const ro = sa ? await computeReorder() : new Map<number, ReorderInfo>();
+  if (sa && p.tab === 'reorder') rows = rows.filter((r) => NEEDS.includes(ro.get(r.id)?.level as ReorderLevel));
+  if (sa && p.tab === 'ordered') rows = rows.filter((r) => ro.get(r.id)?.order);
   const dir = p.dir === 'asc' ? 1 : -1;
   const key = p.sort ?? 'week';
   const val = (r: OutflowRow): number | string => {
@@ -419,6 +429,7 @@ export async function outflowTable(actor: UserActor, p: TableParams) {
     if (key === 'avg') return r.avg;
     if (key === 'zones') return r.zones;
     if (key === 'profit') return prof.get(r.id)?.perUnit ?? -1e12;
+    if (key === 'cover') return -(ro.get(r.id)?.days ?? 1e9);
     if (/^d[0-6]$/.test(key)) return r.daily[Number(key[1])]!;
     return r.weekTotal;
   };
@@ -431,7 +442,7 @@ export async function outflowTable(actor: UserActor, p: TableParams) {
     const s = stock.get(r.id); r.stock = { total: s?.total ?? 0, available: s?.available ?? 0, driver: s?.driver ?? 0 };
     const a = alertMap.get(r.id); r.alert = a && !(a.watchedUntil && a.watchedUntil.getTime() > now) ? a.level : null;
     r.alertInfo = a ? { level: a.level, reasons: a.reasons, pages: a.pages, watchedUntil: a.watchedUntil && a.watchedUntil.getTime() > now ? a.watchedUntil : null, watchedBy: a.watchedBy } : null;
-    if (sa) { const pr = prof.get(r.id); r.profit = pr ? { status: pr.status, perUnit: pr.perUnit } : null; }
+    if (sa) { const pr = prof.get(r.id); r.profit = pr ? { status: pr.status, perUnit: pr.perUnit } : null; r.reorder = ro.get(r.id) ?? null; }
   }
   const all = await allRows();
   const watchedN = alerts.filter((a) => a.watchedUntil && a.watchedUntil.getTime() > now).length;
@@ -440,6 +451,7 @@ export async function outflowTable(actor: UserActor, p: TableParams) {
     red: alerts.filter((a) => a.level === 'RED' && !(a.watchedUntil && a.watchedUntil.getTime() > now)).length,
     orange: alerts.filter((a) => a.level === 'ORANGE' && !(a.watchedUntil && a.watchedUntil.getTime() > now)).length,
     watched: watchedN,
+    ...(sa ? { reorder: [...ro.values()].filter((x) => NEEDS.includes(x.level)).length, ordered: [...ro.values()].filter((x) => x.order).length } : {}),
   };
   const days = Array.from({ length: 7 }, (_, i) => addDays(ubDay(), -i));
   return {
@@ -922,4 +934,128 @@ export async function profitDetail(actor: UserActor, productIdIn: unknown) {
     lowProfitAt: dailyBoost > 0 && margin > cfg.lowProfit ? Math.ceil(dailyBoost / (margin - cfg.lowProfit)) : null,
     days,
   };
+}
+
+// ───────────── Бараа татах — нөөц хоног (#119, зөвхөн Супер админ) ─────────────
+/**
+ * Нөөц хоног = боломжтой үлдэгдэл ÷ өдрийн хурд. Хурд (бөөний захиалгагүй) = дараах гурвын ИХ нь:
+ *   сүүлийн 7 бүтэн өдрийн дундаж, сүүлийн 3 бүтэн өдрийн дундаж, өнөөдөр одоог хүртэл.
+ *   Шинэ бараа (7 хоногийн эхэнд зарагдаагүй өдрүүд) — анх зарагдсан өдрөөс тоолно.
+ * ≤ urgentDays → 🔴 «яаралтай татах», ≤ leadDays (Хятадаас ирэх 15 хоног) → 🟠 «бараа татах».
+ * «Захиалсан» дармагц сануулга 🚚 болно; агуулахад орлого (RECEIPT) ормогц автоматаар хаагдаж, шинэ үлдэгдлээр дахин эхэлнэ;
+ * ирэх өдөр өнгөрөөд ирээгүй бол 🔴 «Хоцорсон». Барааны үлдэгдэлд хүрэхгүй (зөвхөн уншина).
+ */
+export type ReorderLevel = 'OK' | 'ORDER' | 'URGENT' | 'ORDERED' | 'LATE';
+const NEEDS: ReorderLevel[] = ['ORDER', 'URGENT', 'LATE'];
+export interface ReorderInfo {
+  productId: number; available: number; pace: number; days: number | null; runOutDay: string | null; level: ReorderLevel;
+  basis: { avg7: number; avg3: number; today: number; fullDays: number };
+  order: { id: number; qty: number; expectedDay: string; orderedAt: Date; byName: string; note: string } | null;
+}
+let reorderCache: { at: number; map: Map<number, ReorderInfo> } | null = null;
+const r1 = (n: number) => Math.round(n * 10) / 10;
+
+export async function computeReorder(fresh = false): Promise<Map<number, ReorderInfo>> {
+  if (!fresh && reorderCache && Date.now() - reorderCache.at < 60_000) return reorderCache.map;
+  const cfg = await getConfig();
+  const today = ubDay();
+  const full = Array.from({ length: 7 }, (_, i) => addDays(today, -7 + i)); // хуучнаас шинэ рүү, өчигдөр хүртэл
+  let orders = await db.reorderOrder.findMany({ where: { receivedAt: null, cancelledAt: null } });
+  // Агуулахад орлого орсон бол «Захиалсан» хаагдана — нөөц дахин эхэлнэ
+  if (orders.length) {
+    const since = new Date(Math.min(...orders.map((o) => o.orderedAt.getTime())));
+    const rec = await db.$queryRaw<{ productId: number; at: Date }[]>`
+      SELECT v."productId", max(m.at) AS at FROM "StockMove" m JOIN "ProductVariant" v ON v.id = m."variantId"
+      WHERE m.type = 'RECEIPT' AND m.at > ${since} AND v."productId" IN (${Prisma.join(orders.map((o) => o.productId))}) GROUP BY 1`;
+    const rm = new Map(rec.map((x) => [x.productId, x.at]));
+    const done = orders.filter((o) => { const at = rm.get(o.productId); return at && at > o.orderedAt; });
+    for (const o of done) await db.reorderOrder.updateMany({ where: { id: o.id, receivedAt: null }, data: { receivedAt: rm.get(o.productId)! } });
+    if (done.length) { const ids = new Set(done.map((o) => o.id)); orders = orders.filter((o) => !ids.has(o.id)); }
+  }
+  const aggs = await unitsByDay(full[0]!, today);
+  const net = new Map<string, number>();
+  for (const a of aggs) net.set(`${a.productId}|${a.day}`, (net.get(`${a.productId}|${a.day}`) ?? 0) + a.qty - a.bulkQty);
+  const ids = [...new Set([...aggs.filter((a) => a.qty - a.bulkQty > 0).map((a) => a.productId), ...orders.map((o) => o.productId)])];
+  const stock = await productStockTotals(ids);
+  const om = new Map(orders.map((o) => [o.productId, o]));
+  const map = new Map<number, ReorderInfo>();
+  for (const id of ids) {
+    const v = full.map((d) => net.get(`${id}|${d}`) ?? 0);
+    const first = v.findIndex((n) => n > 0);
+    const fullDays = first < 0 ? 0 : 7 - first;
+    const avg7 = fullDays ? v.slice(first).reduce((s, n) => s + n, 0) / fullDays : 0;
+    const k3 = Math.min(3, fullDays);
+    const avg3 = k3 ? v.slice(-k3).reduce((s, n) => s + n, 0) / k3 : 0;
+    const td = net.get(`${id}|${today}`) ?? 0;
+    const pace = Math.max(avg7, avg3, td);
+    const available = stock.get(id)?.available ?? 0;
+    const days = pace > 0 ? Math.max(0, Math.floor(available / pace)) : null;
+    const o = om.get(id);
+    let level: ReorderLevel = 'OK';
+    if (o) level = o.expectedDay < today ? 'LATE' : 'ORDERED';
+    else if (days !== null && days <= cfg.urgentDays) level = 'URGENT';
+    else if (days !== null && days <= cfg.leadDays) level = 'ORDER';
+    map.set(id, {
+      productId: id, available, pace: r1(pace), days, runOutDay: days === null ? null : addDays(today, days), level,
+      basis: { avg7: r1(avg7), avg3: r1(avg3), today: td, fullDays },
+      order: o ? { id: o.id, qty: o.qty, expectedDay: o.expectedDay, orderedAt: o.orderedAt, byName: o.byName, note: o.note } : null,
+    });
+  }
+  reorderCache = { at: Date.now(), map };
+  return map;
+}
+
+/** Бүх хуудасны дээрх сануулга — зөвхөн Супер админд */
+export async function reorderBanner(roles: Role[]): Promise<{ urgent: number; order: number; late: number } | null> {
+  if (!roles.includes('SUPER_ADMIN')) return null;
+  const m = await computeReorder();
+  let urgent = 0, order = 0, late = 0;
+  for (const x of m.values()) { if (x.level === 'URGENT') urgent++; else if (x.level === 'ORDER') order++; else if (x.level === 'LATE') late++; }
+  return urgent || order || late ? { urgent, order, late } : null;
+}
+
+/** «Захиалсан» — хэдэн ширхэг, хэзээ ирэх (анх: өнөөдөр + ирэх хоног) */
+export async function markReordered(actor: UserActor, b: { productId?: unknown; qty?: unknown; expectedDay?: unknown; note?: unknown }) {
+  assertSA(actor);
+  const productId = Number(b.productId);
+  const product = Number.isInteger(productId) ? await db.product.findUnique({ where: { id: productId }, select: { id: true, name: true } }) : null;
+  if (!product) throw notFound('Бараа олдсонгүй');
+  const qty = cleanInt(b.qty, 'Захиалсан ширхэг', 1, 1_000_000);
+  const cfg = await getConfig();
+  const expectedDay = b.expectedDay ? String(b.expectedDay) : addDays(ubDay(), cfg.leadDays);
+  if (!isYmd(expectedDay)) throw badRequest('Ирэх өдөр буруу');
+  const note = cleanText(b.note, 300);
+  const row = await db.$transaction(async (tx) => {
+    const cur = await tx.reorderOrder.findFirst({ where: { productId, receivedAt: null, cancelledAt: null } });
+    if (cur) throw conflict('Энэ бараа аль хэдийн «Захиалсан» байна — эхлээд цуцална уу');
+    const r = await tx.reorderOrder.create({ data: { productId, qty, expectedDay, note, byName: actor.name } });
+    await writeAudit(actor, 'outflow.reorder', 'ReorderOrder', String(r.id), { productId, name: product.name, qty, expectedDay, note }, tx);
+    return r;
+  });
+  reorderCache = null;
+  return row;
+}
+
+/** «Захиалсан»-ыг цуцлах (андуурсан) — сануулга дахин гарна */
+export async function cancelReorder(actor: UserActor, idIn: unknown) {
+  assertSA(actor);
+  const id = Number(idIn);
+  const cur = Number.isInteger(id) ? await db.reorderOrder.findUnique({ where: { id } }) : null;
+  if (!cur || cur.receivedAt || cur.cancelledAt) throw notFound('Идэвхтэй захиалга олдсонгүй');
+  await db.$transaction(async (tx) => {
+    await tx.reorderOrder.update({ where: { id }, data: { cancelledAt: new Date() } });
+    await writeAudit(actor, 'outflow.reorder-cancel', 'ReorderOrder', String(id), { productId: cur.productId, qty: cur.qty, expectedDay: cur.expectedDay }, tx);
+  });
+  reorderCache = null;
+  return { ok: true };
+}
+
+/** Нэг барааны нөөцийн дэлгэрэнгүй + өмнөх захиалгууд */
+export async function reorderDetail(actor: UserActor, productIdIn: unknown) {
+  assertSA(actor);
+  const id = Number(productIdIn);
+  const m = await computeReorder();
+  const cfg = await getConfig();
+  const history = await db.reorderOrder.findMany({ where: { productId: id }, orderBy: { orderedAt: 'desc' }, take: 10 });
+  return { info: m.get(id) ?? null, leadDays: cfg.leadDays, urgentDays: cfg.urgentDays, defaultExpected: addDays(ubDay(), cfg.leadDays), history };
 }

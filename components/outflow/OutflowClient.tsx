@@ -30,9 +30,16 @@ interface Row {
   doneAt: string | null; doneByName: string | null; note: string; daily: number[]; weekTotal: number; avg: number; phones: number[]; phoneWeek: number; variantCount: number; bulk: { n: number; qty: number }[];
   stock?: { total: number; available: number; driver: number }; alert?: 'RED' | 'ORANGE' | null; profit?: { status: Status | null; perUnit: number | null } | null;
   alertInfo?: { level: 'RED' | 'ORANGE'; reasons: string[]; pages: { name: string; n: number }[]; watchedUntil: string | null; watchedBy: string | null } | null;
+  reorder?: Reorder | null;
+}
+type RLevel = 'OK' | 'ORDER' | 'URGENT' | 'ORDERED' | 'LATE';
+interface Reorder {
+  productId: number; available: number; pace: number; days: number | null; runOutDay: string | null; level: RLevel;
+  basis: { avg7: number; avg3: number; today: number; fullDays: number };
+  order: { id: number; qty: number; expectedDay: string; orderedAt: string; byName: string; note: string } | null;
 }
 interface Table {
-  rows: Row[]; total: number; page: number; pages: number; days: string[]; counts: { all: number; boost: number; noboost: number; red: number; orange: number; watched: number };
+  rows: Row[]; total: number; page: number; pages: number; days: string[]; counts: { all: number; boost: number; noboost: number; red: number; orange: number; watched: number; reorder?: number; ordered?: number };
   totals: { today: number; yesterday: number }; dollars: number[]; owners: { id: string; name: string }[]; isLead: boolean; isSA: boolean;
 }
 
@@ -55,7 +62,7 @@ export function OutflowClient() {
   const [d, setD] = useState<Table | null>(null);
   const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
   const [sel, setSel] = useState<Set<number>>(new Set());
-  const [dlg, setDlg] = useState<null | { k: 'alert'; row: Row } | { k: 'edit'; row: Row } | { k: 'profit'; id: number } | { k: 'bulk'; ids: number[] } | { k: 'pages' | 'stats' | 'work' | 'my' | 'eval' | 'config' }>(null);
+  const [dlg, setDlg] = useState<null | { k: 'alert'; row: Row } | { k: 'reorder'; row: Row } | { k: 'edit'; row: Row } | { k: 'profit'; id: number } | { k: 'bulk'; ids: number[] } | { k: 'pages' | 'stats' | 'work' | 'my' | 'eval' | 'config' }>(null);
   const [menu, setMenu] = useState(false);
   const [open, setOpen] = useState<Set<number>>(new Set());
   const toggle = (id: number) => { const n = new Set(open); if (n.has(id)) n.delete(id); else n.add(id); setOpen(n); };
@@ -108,6 +115,8 @@ export function OutflowClient() {
           <button type="button" data-alert-tab="orange" onClick={() => go('orange')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'orange' ? 'border-warn bg-warn text-white' : 'border-warn/40 bg-warn-soft text-warn')}>🟠 Ашиг бага ({d.counts.orange})</button>
           <button type="button" onClick={() => go('watched')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'watched' ? 'border-ink bg-ink text-surface' : 'border-line bg-surface')}>👁 Ажиглаж буй ({d.counts.watched})</button>
           {d.isSA ? <button type="button" onClick={() => { go('diamond'); setStatus('DIAMOND'); }} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'diamond' ? 'border-info bg-info text-white' : 'border-line bg-surface')}>💎 Маш ашигтай</button> : null}
+          {d.isSA ? <button type="button" data-reorder-tab onClick={() => go('reorder')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'reorder' ? 'border-warn bg-warn text-white' : 'border-warn/40 bg-warn-soft text-warn')}>🚚 Бараа татах ({d.counts.reorder ?? 0})</button> : null}
+          {d.isSA ? <button type="button" onClick={() => go('ordered')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'ordered' ? 'border-ink bg-ink text-surface' : 'border-line bg-surface')}>📦 Захиалсан ({d.counts.ordered ?? 0})</button> : null}
         </div>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
@@ -141,6 +150,7 @@ export function OutflowClient() {
                 <th className="px-2 py-2 text-right">Боломжтой</th>
                 {d.isSA ? th('profit', 'Ашиг/зах') : null}
                 <th className="px-1.5 py-2 text-left">Хариуцагч</th><th className="px-2 py-2 text-right">⚠</th>
+                {d.isSA ? th('cover', 'Нөөц', 'text-center') : null}
               </tr></thead>
               <tbody>
                 {d.rows.map((r) => (<Fragment key={r.id}>
@@ -165,6 +175,7 @@ export function OutflowClient() {
                     {d.isSA ? <td className="px-2 py-1 text-right">{r.profit?.status ? <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className={clsx('font-bold underline', STATUS[r.profit.status].cls)}>{STATUS[r.profit.status].icon} {money(r.profit.perUnit)}</button> : <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className="text-subtle underline">задаргаа</button>}</td> : null}
                     <td className="w-[110px] min-w-[110px] max-w-[110px] px-1.5 py-1"><div className="line-clamp-1 [overflow-wrap:anywhere] text-[12.5px] font-semibold">{r.ownerName ?? '—'}</div>{r.note ? <div title={r.note} className="line-clamp-1 [overflow-wrap:anywhere] text-[11.5px] text-muted">{r.note}</div> : null}</td>
                     <td className="px-1 py-1"><div className="flex items-center justify-end gap-1"><button type="button" aria-label={`${r.name} засах`} title="Засах" onClick={() => setDlg({ k: 'edit', row: r })} className="h-8 w-8 rounded-lg border border-line bg-surface text-[14px] hover:bg-surface2">✎</button><AlertChip r={r} onOpen={() => setDlg({ k: 'alert', row: r })} /></div></td>
+                    {d.isSA ? <td className="px-1 py-1 text-center"><ReorderChip r={r} onOpen={() => setDlg({ k: 'reorder', row: r })} /></td> : null}
                   </tr>
                   {open.has(r.id) ? <VariantRows id={r.id} lead={d.isLead} sa={d.isSA} /> : null}
                 </Fragment>
@@ -189,7 +200,7 @@ export function OutflowClient() {
                   <span>${r.dollar} · бүүст {r.zones} · AD{r.adNumber ?? '—'}</span><span>Боломжтой {r.stock?.available ?? 0}</span>
                   {d.isSA ? (r.profit?.status ? <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className={clsx('font-bold underline', STATUS[r.profit.status].cls)}>{STATUS[r.profit.status].icon} {money(r.profit.perUnit)}</button>
                     : <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className="text-subtle underline">задаргаа</button>) : null}
-                  <span className="ml-auto flex items-center gap-2"><AlertChip r={r} onOpen={() => setDlg({ k: 'alert', row: r })} /><Button size="sm" onClick={() => setDlg({ k: 'edit', row: r })}>Засах</Button></span>
+                  <span className="ml-auto flex items-center gap-2">{d.isSA ? <ReorderChip r={r} onOpen={() => setDlg({ k: 'reorder', row: r })} /> : null}<AlertChip r={r} onOpen={() => setDlg({ k: 'alert', row: r })} /><Button size="sm" onClick={() => setDlg({ k: 'edit', row: r })}>Засах</Button></span>
                 </div>
               </div>
             ))}
@@ -205,6 +216,7 @@ export function OutflowClient() {
       ) : <p className="text-muted">Ачаалж байна…</p>}
       {hover ? <HoverCard id={hover.id} x={hover.x} y={hover.y} /> : null}
       {dlg?.k === 'alert' ? <AlertDialog row={dlg.row} onClose={() => setDlg(null)} post={post} /> : null}
+      {dlg?.k === 'reorder' ? <ReorderDialog row={dlg.row} onClose={() => setDlg(null)} post={post} /> : null}
       {dlg?.k === 'edit' ? <EditDialog row={dlg.row} lead={!!d?.isLead} owners={d?.owners ?? []} onClose={() => setDlg(null)} post={post} /> : null}
       {dlg?.k === 'bulk' ? <BulkDialog ids={dlg.ids} owners={d?.owners ?? []} onClose={() => setDlg(null)} onDone={async (m) => { setDlg(null); setSel(new Set()); setOk(m); await load(); }} /> : null}
       {dlg?.k === 'profit' ? <ProfitDialog id={dlg.id} onClose={() => setDlg(null)} /> : null}
@@ -241,6 +253,7 @@ function VariantRows({ id, lead, sa }: { id: number; lead: boolean; sa: boolean 
           <td className={clsx('px-2 py-1 text-right', x.available < x.avg && 'font-bold text-bad-ink')}>{x.available}</td>
           {sa ? <td /> : null}
           <td /><td />
+          {sa ? <td /> : null}
         </tr>
       ))}
     </>
@@ -262,6 +275,84 @@ function VariantCards({ id, days }: { id: number; days: string[] }) {
 }
 
 /** Мөрийн ард жижиг тэмдэг: 🔴 / 🟠 (ажиглаж буй бол 👁) — дарахад дэлгэрэнгүй */
+const RL: Record<RLevel, { cls: string; label: string }> = {
+  OK: { cls: 'text-muted hover:bg-surface2', label: 'хангалттай' },
+  ORDER: { cls: 'bg-warn-soft text-warn', label: '🟠 татах' },
+  URGENT: { cls: 'animate-pulse bg-bad text-white', label: '🔴 яаралтай' },
+  ORDERED: { cls: 'bg-surface2 text-info-ink', label: '🚚 захиалсан' },
+  LATE: { cls: 'bg-bad-soft text-bad-ink', label: '⏰ хоцорсон' },
+};
+/** Мөрийн хамгийн ард: нөөц хоног (зөвхөн Супер админ, #119) */
+function ReorderChip({ r, onOpen }: { r: Row; onOpen: () => void }) {
+  const x = r.reorder;
+  if (!x) return <span className="text-[12px] text-subtle" title="Сүүлийн 7 хоногт зарагдаагүй">—</span>;
+  const t = RL[x.level];
+  return (
+    <button type="button" data-reorder-chip={x.level} onClick={onOpen} title={`Боломжтой ${x.available} · өдөрт ~${x.pace}`}
+      className={clsx('inline-flex w-[76px] flex-col items-center rounded-lg px-1 py-0.5 leading-tight', t.cls)}>
+      <b className="text-[13px]">{x.days === null ? '—' : `${x.days} хоног`}</b>
+      <span className="text-[10.5px]">{x.order ? (x.level === 'LATE' ? t.label : `🚚 ${md(x.order.expectedDay)}`) : t.label}</span>
+    </button>
+  );
+}
+interface ReorderD { info: Reorder | null; leadDays: number; urgentDays: number; defaultExpected: string; history: { id: number; qty: number; expectedDay: string; orderedAt: string; byName: string; note: string; receivedAt: string | null; cancelledAt: string | null }[] }
+function ReorderDialog({ row, onClose, post }: { row: Row; onClose: () => void; post: (j: Record<string, unknown>, m?: string) => Promise<unknown> }) {
+  const [d, setD] = useState<ReorderD | null>(null); const [err, setErr] = useState<string | null>(null);
+  const [qty, setQty] = useState(''); const [day, setDay] = useState(''); const [note, setNote] = useState('');
+  const load = useCallback(() => api<ReorderD>(`/api/goods-outflow?view=reorder&id=${row.id}`).then((r) => { setD(r); setDay(r.defaultExpected); }).catch((e) => setErr(msg(e))), [row.id]);
+  useEffect(() => { void load(); }, [load]);
+  const x = d?.info;
+  const save = async () => {
+    if (!Number(qty)) { setErr('Захиалсан ширхэгээ бичнэ үү'); return; }
+    const r = await post({ action: 'reorder', productId: row.id, qty: Number(qty), expectedDay: day, note }, `«${row.name}» — захиалсан гэж тэмдэглэлээ (${qty} ш, ${md(day)} ирнэ)`);
+    if (r) onClose();
+  };
+  const cancel = async () => { if (x?.order && confirm('«Захиалсан» тэмдгийг цуцлах уу? Сануулга дахин гарна.')) { const r = await post({ action: 'reorder-cancel', id: x.order.id }, 'Цуцаллаа'); if (r) onClose(); } };
+  return (
+    <Modal open onClose={onClose} title={`🚚 Нөөц · ${row.name}`} subtitle={`${row.code} · зөвхөн Супер админ`}
+      footer={<><Button onClick={onClose}>Хаах</Button>{x?.order ? <Button onClick={() => void cancel()}>«Захиалсан»-ыг цуцлах</Button> : <Button variant="primary" onClick={() => void save()}>Захиалсан</Button>}</>}>
+      {err ? <Notice>{err}</Notice> : null}
+      {d ? (
+        <div className="flex flex-col gap-3 text-[13.5px]">
+          {x ? (<>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-xl bg-surface2 p-3"><div className="text-muted">Боломжтой</div><b className="text-[17px]">{x.available}</b></div>
+              <div className="rounded-xl bg-surface2 p-3"><div className="text-muted">Өдөрт гарц</div><b className="text-[17px]">~{x.pace}</b></div>
+              <div className={clsx('rounded-xl p-3', x.level === 'URGENT' || x.level === 'LATE' ? 'bg-bad-soft text-bad-ink' : x.level === 'ORDER' ? 'bg-warn-soft text-warn' : 'bg-surface2')}><div>Нөөц</div><b className="text-[17px]">{x.days === null ? '—' : `${x.days} хоног`}</b></div>
+            </div>
+            <p className="[overflow-wrap:anywhere]">
+              {x.days === null ? 'Сүүлийн 7 хоногт зарагдаагүй — нөөц бодогдохгүй.' : x.available <= 0 ? <b className="text-bad-ink">Бараа дууссан — яаралтай татаарай (Хятадаас ~{d.leadDays} хоногт ирнэ).</b> : <>Энэ хурдаар <b>{md(x.runOutDay!)}</b> орчим дуусна. Хятадаас захиалбал ~{d.leadDays} хоногт ирнэ
+                {x.days <= d.urgentDays ? <b className="text-bad-ink"> — одоо захиалсан ч ирэхээс өмнө дуусна, яаралтай!</b> : x.days <= d.leadDays ? <b className="text-warn"> — бараагаа одоо татаарай.</b> : ' — одоохондоо хангалттай.'}</>}
+            </p>
+            <p className="text-[12.5px] text-muted [overflow-wrap:anywhere]">Хурд = аль их нь: 7 хоногийн дундаж {x.basis.avg7} ({x.basis.fullDays} өдөр) · сүүлийн 3 өдөр {x.basis.avg3} · өнөөдөр {x.basis.today}. Бөөний захиалга орохгүй.</p>
+          </>) : <p className="text-muted">Сүүлийн 7 хоногт зарагдаагүй.</p>}
+          {x?.order ? (
+            <div className={clsx('rounded-xl p-3', x.level === 'LATE' ? 'bg-bad-soft text-bad-ink' : 'bg-surface2')}>
+              <b>{x.level === 'LATE' ? '⏰ Ирэх хугацаа хэтэрсэн' : '🚚 Захиалсан — ирэхийг хүлээж байна'}</b>
+              <div className="[overflow-wrap:anywhere]">{x.order.qty} ширхэг · {md(x.order.expectedDay)} ирнэ · {x.order.byName}, {ubDateTime(x.order.orderedAt)}{x.order.note ? ` · ${x.order.note}` : ''}</div>
+              <div className="text-[12.5px] text-muted">Агуулахад орлого бүртгэгдэхэд автоматаар хаагдаж, нөөц шинэ үлдэгдлээр дахин бодогдоно.</div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2 rounded-xl border border-line p-3">
+              <b>Захиалсан бол тэмдэглэ — сануулга зогсоно</b>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex flex-col gap-1 text-[12.5px] font-semibold text-muted">Ширхэг<input value={qty} inputMode="numeric" onChange={(e) => setQty(digits(e.target.value))} className={clsx(inputCls, 'text-right')} /></label>
+                <label className="flex flex-col gap-1 text-[12.5px] font-semibold text-muted">Ирэх өдөр<input type="date" value={day} onChange={(e) => setDay(e.target.value)} className={inputCls} /></label>
+              </div>
+              <label className="flex flex-col gap-1 text-[12.5px] font-semibold text-muted">Тайлбар<input value={note} maxLength={300} onChange={(e) => setNote(e.target.value)} className={inputCls} /></label>
+            </div>
+          )}
+          {d.history.length ? (
+            <div className="text-[12.5px]"><b>Өмнөх захиалга</b>
+              {d.history.map((h) => <div key={h.id} className="flex justify-between gap-2 border-t border-line py-1"><span className="min-w-0 [overflow-wrap:anywhere]">{ubDateTime(h.orderedAt)} · {h.qty} ш · {h.byName}</span><span className="shrink-0 text-muted">{h.receivedAt ? `✓ ирсэн ${ubDateTime(h.receivedAt)}` : h.cancelledAt ? 'цуцалсан' : `${md(h.expectedDay)} ирнэ`}</span></div>)}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </Modal>
+  );
+}
+
 function AlertChip({ r, onOpen }: { r: Row; onOpen: () => void }) {
   const a = r.alertInfo;
   if (!a) return null;
@@ -626,7 +717,7 @@ function ConfigDialog({ sa, onClose, onDone }: { sa: boolean; onClose: () => voi
   const f = (k: string, l: string) => <label key={k} className="flex flex-col gap-1 text-[12.5px] font-semibold text-muted">{l}<input value={v?.[k] ?? ''} inputMode="numeric" onChange={(e) => setV({ ...v!, [k]: digits(e.target.value) })} className={clsx(inputCls, 'text-right')} /></label>;
   const save = async () => {
     try {
-      const keys = ['claimTarget', 'claimExpireDays', 'stockDays', ...(sa ? ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar', 'bulkMin'] : [])];
+      const keys = ['claimTarget', 'claimExpireDays', 'stockDays', ...(sa ? ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar', 'bulkMin', 'leadDays', 'urgentDays'] : [])];
       await api('/api/goods-outflow', { method: 'POST', json: { action: 'config', ...Object.fromEntries(keys.map((k) => [k, Number(v?.[k])])) } }); onDone();
     } catch (e) { setErr(msg(e)); }
   };
@@ -640,6 +731,8 @@ function ConfigDialog({ sa, onClose, onDone }: { sa: boolean; onClose: () => voi
           {sa ? (<>
             <b className="text-[14px]">Бүүстийн ашиг (зөвхөн Супер админ)</b>
             <div className="grid grid-cols-2 gap-3">{f('oppCost', 'Опп цалин (₮/захиалга)')}{f('deliveryCost', 'Хүргэлтийн цалин (₮/захиалга)')}{f('rate', 'Долларын ханш (₮)')}{f('defaultDollar', 'Анхдагч $ (бүүст)')}{f('costPct', 'Өртөг оруулаагүй бол үнийн %')}{f('lowProfit', '🟠 Ашгийн босго (₮/захиалга)')}{f('bulkMin', '📦 Бөөний захиалга (ширхэгээс)')}{f('watchHours', 'Ажиглах цаг (асаасан цагаас)')}</div>
+            <b className="text-[14px]">🚚 Бараа татах (зөвхөн Супер админ)</b>
+            <div className="grid grid-cols-2 gap-3">{f('leadDays', '🟠 Бараа ирэх хоног (нөөц үүнээс бага бол «татах»)')}{f('urgentDays', '🔴 Яаралтай (нөөц үүнээс бага)')}</div>
           </>) : null}
         </div>
       ) : null}

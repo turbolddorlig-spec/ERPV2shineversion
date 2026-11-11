@@ -1512,3 +1512,20 @@ model BoostWatch {
 
   @@index([productId, until])
 }
+
+/// Бараа татах (#119, зөвхөн Супер админ): «Захиалсан» тэмдэг. Агуулахад орлого (RECEIPT) ормогц receivedAt бөглөгдөж,
+/// нөөцийн тооцоо шинэ үлдэгдлээр дахин эхэлнэ. Нэг бараанд нэг л идэвхтэй захиалга.
+model ReorderOrder {
+  id          Int       @id @default(autoincrement())
+  productId   Int
+  qty         Int
+  /// Ирэх өдөр (UB, YYYY-MM-DD)
+  expectedDay String
+  note        String    @default("")
+  orderedAt   DateTime  @default(now())
+  byName      String
+  receivedAt  DateTime?
+  cancelledAt DateTime?
+
+  @@index([productId, orderedAt])
+}
