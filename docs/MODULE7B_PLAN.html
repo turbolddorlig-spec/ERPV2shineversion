@@ -1,0 +1,89 @@
+<title>Модуль 7б Төлөвлөгөө</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap">
+<style>
+/* Layout: report column; verdict → numbers → 13 sections of MASTER §13 → screenshots → owner actions */
+:root{--bg:#F5F4F0;--surface:#FFFFFF;--surface2:#EFEDE7;--line:#E1DED6;--ink:#16181D;--muted:#4D525C;--subtle:#5F646E;--accent:#C2410C;--accent-soft:#FFF1E8;--ok:#166534;--ok-bg:#E6F4EA;--warn:#92400E;--warn-bg:#FEF3C7;--font:"Onest",Inter,system-ui,sans-serif}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0E1014;--surface:#171A20;--surface2:#1D2028;--line:#2A2E38;--ink:#ECEDEF;--muted:#B0B4BD;--subtle:#9A9FA9;--accent:#FF8A4C;--accent-soft:rgba(255,122,61,.14);--ok:#86EFAC;--ok-bg:rgba(74,222,128,.13);--warn:#FCD34D;--warn-bg:rgba(251,191,36,.14);color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0E1014;--surface:#171A20;--surface2:#1D2028;--line:#2A2E38;--ink:#ECEDEF;--muted:#B0B4BD;--subtle:#9A9FA9;--accent:#FF8A4C;--accent-soft:rgba(255,122,61,.14);--ok:#86EFAC;--ok-bg:rgba(74,222,128,.13);--warn:#FCD34D;--warn-bg:rgba(251,191,36,.14);color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.6;font-variant-numeric:tabular-nums;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1000px;margin:0 auto;padding-block:36px 64px;display:flex;flex-direction:column;gap:34px}
+h1{font-size:clamp(28px,4vw,38px);font-weight:800;letter-spacing:-.03em;line-height:1.1;margin:0}
+h2{font-size:20px;font-weight:800;letter-spacing:-.02em;margin:0}
+p{margin:0;max-width:76ch}
+.eyebrow{font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--subtle)}
+.brand{font-weight:800}.brand span{color:var(--accent)}
+section{display:flex;flex-direction:column;gap:12px}
+.verdict{background:var(--ok-bg);color:var(--ok);border-radius:16px;padding:16px 18px;font-weight:700}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:2px}
+.stat b{font-size:26px;font-weight:800;letter-spacing:-.02em}
+.stat span{font-size:13px;color:var(--muted)}
+ul,ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;max-width:82ch}
+li{color:var(--muted)} li strong{color:var(--ink)}
+code{font-size:12.5px;background:var(--surface2);padding:1px 5px;border-radius:5px}
+.tablebox{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:13.5px}
+th{text-align:left;font-size:12px;font-weight:700;color:var(--muted);background:var(--surface2);padding:9px 12px;border-bottom:1px solid var(--line)}
+td{padding:9px 12px;border-bottom:1px solid var(--line);color:var(--muted);vertical-align:top}
+td:first-child{color:var(--ink);font-weight:600}
+td.n{text-align:right;font-weight:700;color:var(--ink)}
+tr:last-child td{border-bottom:0}
+.shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+figure{margin:0;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px;display:flex;flex-direction:column;gap:8px;min-width:0}
+figure img{width:100%;height:auto;max-height:520px;object-fit:contain;object-position:top;border-radius:8px;background:var(--surface2)}
+figcaption{font-size:13px;color:var(--muted);font-weight:600}
+.note{background:var(--warn-bg);color:var(--warn);border-radius:14px;padding:14px 16px;font-size:14px}
+.todo{background:var(--accent-soft);border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;gap:8px}
+footer{font-size:13px;color:var(--subtle)}
+</style>
+<div class="wrap">
+<header style="display:flex;flex-direction:column;gap:10px">
+<span class="eyebrow"><span class="brand">zahialga<span>•</span></span> · ERP V2 · Модуль 7б · Төлөвлөгөө (батлуулахаар)</span>
+<h1>Ажилтны цалин</h1>
+<p style="color:var(--muted)">2026.11.11 · Хуучин ERP-ийн «Ажилтны цалин» (/staff-salary) бүх хэсгийг уншсан дүн. Таны заавар: <b>яг хуучин логикийг дагана, сайжруулахыг хэлнэ</b>. Таныг «Модуль 7б-ын төлөвлөгөөг зөвшөөрч байна» гэж бичихээс өмнө код бичихгүй.</p>
+</header>
+
+<section><h2>1. Хуучин логик (яг хэвээр)</h2>
+<div class="tablebox"><table><thead><tr><th>Хэсэг</th><th>Хуучин ERP-д</th></tr></thead><tbody>
+<tr><td>Хэнд</td><td>Жолооч, ахлах жолооч, Супер админаас бусад идэвхтэй ажилтан (жолоочийн цалин «Тооцоо»-д) + <b>гадны ажилтан</b> (системд нэвтэрдэггүй — нэр, албан тушаал, үндсэн цалин)</td></tr>
+<tr><td>Хугацаа</td><td>Сар бүр 2 удаа: <b>1–15</b>, <b>16–сарын сүүл</b>. Сар сонгоход 2 багана</td></tr>
+<tr><td>Тохиргоо (ажилтан бүр)</td><td>Цалин бодох төрөл: <b>Тогтмол</b> эсвэл <b>Захиалгаар (хүргэгдсэн)</b>; үндсэн цалин (сарын), урамшууллын цалин, 1 захиалга = ₮, 1 өдрийн цалин (хоосон бол сарын цалин ÷ сарын хоног), банк, данс</td></tr>
+<tr><td>Ажлын хуваарь</td><td>Өдөр бүр: Ажилласан / Чөлөөтэй (Ч) / Өвчтэй (Ө) / Тасалсан (Т) / Амарсан (АМ) — хүснэгтээр тэмдэглэнэ</td></tr>
+<tr><td>Үндсэн цалин</td><td>Тогтмол: 1 өдрийн цалин × ажилласан өдөр (хугацааны хоног − Ч − Ө − Т − АМ). Захиалгаар (оператор): тухайн хугацаанд <b>авсан</b>, хүргэгдсэн (+мөнгө орсон) захиалга × 1 захиалгын хөлс — яг хуучин шиг үүссэн огноогоор</td></tr>
+<tr><td>Нэмэх</td><td>Урамшууллын цалин + «Нэмэлт орлого» (нэр, дүн — хэд ч)</td></tr>
+<tr><td>Хасах</td><td>«Хоцролт / Суутгал» (нэр, дүн); <b>Торгууль</b> — хугацааны торгуулийн нийлбэр, хэдийг хасахыг гараар (үлдэгдэл харагдана); <b>Зээлсэн бараа</b>; <b>Ажилтны өр</b> (урт хугацааны өр — хэсэгчлэн төлнө, үлдэгдэлтэй)</td></tr>
+<tr><td>Шилжүүлэх цалин</td><td>Үндсэн (эсвэл захиалгын) + урамшуулал + нэмэлт − суутгал − хассан торгууль − өрийн төлөлт − зээлсэн бараа</td></tr>
+<tr><td>Дараа нь</td><td>«Шилжүүлсэн» тэмдэг, <b>Цоожлох</b> (засварлахгүй), цоож тайлах, засварын түүх; «Нийт шилжүүлэх» хугацаа бүрээр; жолоочийн торгуулийн хураангуй</td></tr>
+</tbody></table></div></section>
+
+<section><h2>2. Таны шийдвэр (#93)</h2><ol>
+<li><b>Цоож тайлах — кодоор</b>, кодыг Супер админ Тохиргоо дээр өөрөө тогтооно (шифрлэгдэж хадгалагдана; хуучин шиг бүгдэд мэдэгдсэн кодонд бичигдсэн код биш).</li>
+<li><b>Торгууль — хуучин шиг нийлбэр + гараар дүн.</b> Цоожлоход хассан дүнгээр торгуулийг хуучнаас нь эхлэн «Цалингаас хассан» болгоно (бүрэн хасагдсан нь хассан, хэсэгчилсэн нь «хэсэгчлэн хассан», үлдэгдэлтэй) — Алдаа удирдлага, Миний торгууль хуудсанд давхар харагдана.</li>
+<li><b>Захиалгаар цалин — яг хуучин шиг</b> (тухайн хугацаанд авсан, хүргэгдсэн захиалга).</li>
+<li><b>Зээлсэн бараа — «Бараа зээл»-тэй холбоно:</b> буцаагаагүй олгосон зээл ажилчдын хөнгөлөлттэй үнээр (тохиргооны 5,000₮) автоматаар гарна, чагтласныг суутгана; цоожлоход зээл «Цалингаас суутгасан» болно — давхар суутгагдахгүй, барааны үлдэгдэлд хүрэхгүй.</li>
+</ol></section>
+
+<section><h2>3. Сайжруулалт (хуучин алдаа засна)</h2><div class="note"><ul>
+<li><b>Тооцоог сервер хийнэ</b> — хуучинд хөтөч бодоод илгээдэг байсан (дүнг өөрчилж илгээх боломжтой).</li>
+<li><b>Цоожны код кодонд бичигдсэн</b> байсан → Супер админ тохируулна.</li>
+<li><b>Торгууль, зээл хассан нь бусад хуудсанд тусдаггүй</b> байсан → давхар тусна.</li>
+<li><b>Операторын захиалгыг нэрээр хайдаг</b> (нэр солигдвол алдагдана) → ажилтны дугаараар (id).</li>
+<li><b>Хасагдаагүй торгууль дараагийн цалинд ордоггүй</b> байсан → өмнөх хугацааны хасагдаагүй үлдэгдэл ч гарч ирнэ.</li>
+<li>Огноо UTC-ээр байсан → Улаанбаатарын цагаар; засварын түүх (хэн, хэзээ, юу) бүх өөрчлөлтөд.</li>
+</ul></div></section>
+
+<section><h2>4. Хуудас</h2><ol>
+<li><b>Ажилтны цалин (/salary)</b> — Супер админ, Админ, Нягтлан: сар сонгох → ажилтан бүрийн мөр, 1–15 ба 16–сүүл баганаар шилжүүлэх дүн, төлөв (Хүлээгдэж буй / Шилжүүлсэн / Цоожтой); дээр нийт шилжүүлэх; шүүлт (роль); «Тохируулах» (цалингийн тохиргоо), «Гадны ажилтан нэмэх».</li>
+<li><b>Цалин бодох цонх</b>: өмнөх шиг хэсгүүд (үндсэн/захиалга, урамшуулал, нэмэлт, суутгал, торгууль, зээлсэн бараа, өр, данс, тэмдэглэл) — «Тооцоолох» товчоор ажлын хуваарь, захиалга, торгууль, зээл автоматаар татагдана; доор «Шилжүүлэх цалин»; Хадгалах / Цоожлох.</li>
+<li><b>Ажлын хуваарь</b> таб, <b>Ажилтны өр</b> цонх, <b>Засварын түүх</b> цонх, <b>Жолоочийн торгууль</b> хураангуй.</li>
+<li>Тохиргоо → «Цалингийн цоожны код» (Супер админ).</li>
+</ol></section>
+
+<section><h2>5. Тест</h2><p>Тогтмол/захиалгын цалин (ажлын хуваарьтай), шилжүүлэх дүнгийн томъёо, торгуулийн хэсэгчилсэн хасалт ба давхар харагдах, зээл давхар суутгагдахгүй, өрийн үлдэгдэл, цоож/код, эрх, урт текст, 150 хэрэглэгч, Docker.</p></section>
+
+<div class="todo"><b>Танаас:</b> зөвшөөрвөл «Модуль 7б-ын төлөвлөгөөг зөвшөөрч байна» гэж бичнэ үү.</div>
+<footer>Хуучин ERP-д хүрээгүй (зөвхөн кодыг уншсан).</footer>
+</div>
