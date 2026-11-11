@@ -291,6 +291,8 @@ export interface OutflowRow {
   daily: number[]; weekTotal: number; avg: number; phones: number[]; phoneWeek: number;
   stock?: { total: number; available: number; driver: number };
   alert?: AlertLevel | null; profit?: { status: ProfitStatus | null; perUnit: number | null } | null;
+  /** Мөрийн ард жижиг тэмдэг — дарахад дэлгэрэнгүй */
+  alertInfo?: { level: AlertLevel; reasons: string[]; pages: { name: string; n: number }[]; watchedUntil: Date | null; watchedBy: string | null } | null;
 }
 
 async function phoneCounts(from: string, to: string) {
@@ -385,6 +387,7 @@ export async function outflowTable(actor: UserActor, p: TableParams) {
   for (const r of slice) {
     const s = stock.get(r.id); r.stock = { total: s?.total ?? 0, available: s?.available ?? 0, driver: s?.driver ?? 0 };
     const a = alertMap.get(r.id); r.alert = a && !(a.watchedUntil && a.watchedUntil.getTime() > now) ? a.level : null;
+    r.alertInfo = a ? { level: a.level, reasons: a.reasons, pages: a.pages, watchedUntil: a.watchedUntil && a.watchedUntil.getTime() > now ? a.watchedUntil : null, watchedBy: a.watchedBy } : null;
     if (sa) { const pr = prof.get(r.id); r.profit = pr ? { status: pr.status, perUnit: pr.perUnit } : null; }
   }
   const all = await allRows();

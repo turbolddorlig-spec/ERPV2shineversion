@@ -29,12 +29,12 @@ interface Row {
   id: number; code: string; name: string; price: number; dollar: number; zones: number; adNumber: number | null; ownerId: string | null; ownerName: string | null;
   doneAt: string | null; doneByName: string | null; note: string; daily: number[]; weekTotal: number; avg: number; phones: number[]; phoneWeek: number;
   stock?: { total: number; available: number; driver: number }; alert?: 'RED' | 'ORANGE' | null; profit?: { status: Status | null; perUnit: number | null } | null;
+  alertInfo?: { level: 'RED' | 'ORANGE'; reasons: string[]; pages: { name: string; n: number }[]; watchedUntil: string | null; watchedBy: string | null } | null;
 }
 interface Table {
   rows: Row[]; total: number; page: number; pages: number; days: string[]; counts: { all: number; boost: number; noboost: number; red: number; orange: number; watched: number };
   totals: { today: number; yesterday: number }; dollars: number[]; owners: { id: string; name: string }[]; isLead: boolean; isSA: boolean;
 }
-interface Alert { productId: number; code: string; name: string; level: 'RED' | 'ORANGE'; reasons: string[]; pages: { name: string; n: number }[]; watchedUntil: string | null; watchedBy: string | null; zones: number; dollar: number; ownerName: string | null }
 
 /** Нүдний өнгө: бүүстэй — бүс × $ босго; бүүстгүй — дунджийн харьцаа (хуучин шиг) */
 function cellCls(v: number, r: Row) {
@@ -51,19 +51,17 @@ export function OutflowClient() {
   const [zone, setZone] = useState(''); const [owner, setOwner] = useState(''); const [dollar, setDollar] = useState(''); const [status, setStatus] = useState('');
   const [sort, setSort] = useState('week'); const [dir, setDir] = useState<'asc' | 'desc'>('desc'); const [page, setPage] = useState(1);
   const [d, setD] = useState<Table | null>(null);
-  const [alerts, setAlerts] = useState<{ red: Alert[]; orange: Alert[]; watched: Alert[] } | null>(null);
   const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
   const [sel, setSel] = useState<Set<number>>(new Set());
-  const [dlg, setDlg] = useState<null | { k: 'edit'; row: Row } | { k: 'profit'; id: number } | { k: 'bulk'; ids: number[] } | { k: 'pages' | 'stats' | 'work' | 'my' | 'eval' | 'config' }>(null);
+  const [dlg, setDlg] = useState<null | { k: 'alert'; row: Row } | { k: 'edit'; row: Row } | { k: 'profit'; id: number } | { k: 'bulk'; ids: number[] } | { k: 'pages' | 'stats' | 'work' | 'my' | 'eval' | 'config' }>(null);
   const [hover, setHover] = useState<{ id: number; x: number; y: number } | null>(null);
   useEffect(() => { const t = setTimeout(() => setQd(q), 300); return () => clearTimeout(t); }, [q]);
   const params = useMemo(() => new URLSearchParams({ tab, q: qd, zone, owner, dollar, status, sort, dir, page: String(page) }).toString(), [tab, qd, zone, owner, dollar, status, sort, dir, page]);
   const load = useCallback(async () => {
     try {
-      const [t, a] = await Promise.all([api<Table>(`/api/goods-outflow?view=table&${params}`), ['red', 'orange', 'watched'].includes(tab) ? api<{ red: Alert[]; orange: Alert[]; watched: Alert[] }>('/api/goods-outflow?view=alerts') : Promise.resolve(null)]);
-      setD(t); setAlerts(a); setErr(null);
+      setD(await api<Table>(`/api/goods-outflow?view=table&${params}`)); setErr(null);
     } catch (e) { setErr(msg(e)); }
-  }, [params, tab]);
+  }, [params]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { const t = setInterval(() => void load(), 120_000); return () => clearInterval(t); }, [load]);
   const post = async (json: Record<string, unknown>, m?: string) => {
@@ -74,7 +72,6 @@ export function OutflowClient() {
   const th = (k: string, l: string, extra = '') => (
     <th className={clsx('cursor-pointer select-none whitespace-nowrap px-2 py-2 text-right', extra)} onClick={() => sortBy(k)}>{l}{sort === k ? (dir === 'desc' ? ' ↓' : ' ↑') : ''}</th>
   );
-  const alertList = tab === 'red' ? alerts?.red : tab === 'orange' ? alerts?.orange : tab === 'watched' ? alerts?.watched : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -99,22 +96,6 @@ export function OutflowClient() {
           <button type="button" data-alert-tab="orange" onClick={() => go('orange')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'orange' ? 'border-warn bg-warn text-white' : 'border-warn/40 bg-warn-soft text-warn')}>🟠 Ашиг бага ({d.counts.orange})</button>
           <button type="button" onClick={() => go('watched')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'watched' ? 'border-ink bg-ink text-surface' : 'border-line bg-surface')}>👁 Ажиглаж буй ({d.counts.watched})</button>
           {d.isSA ? <button type="button" onClick={() => { go('diamond'); setStatus('DIAMOND'); }} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'diamond' ? 'border-info bg-info text-white' : 'border-line bg-surface')}>💎 Маш ашигтай</button> : null}
-        </div>
-      ) : null}
-      {alertList ? (
-        <div className="flex flex-col gap-2">
-          {alertList.length === 0 ? <p className="rounded-2xl border border-line bg-surface p-4 text-center text-[14px] text-muted">Энэ ангилалд бараа алга</p> : null}
-          {alertList.map((a) => (
-            <div key={a.productId} className={clsx('flex min-w-0 flex-col gap-1.5 rounded-2xl border p-3.5', a.level === 'RED' ? 'border-bad/40 bg-bad-soft' : 'border-warn/40 bg-warn-soft')}>
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0"><b className="[overflow-wrap:anywhere]">{a.level === 'RED' ? '🔴' : '🟠'} {a.name}</b> <span className="text-[12.5px] text-muted">{a.code} · {a.zones} бүүст × ${a.dollar}{a.ownerName ? ` · ${a.ownerName}` : ''}</span></div>
-                {tab !== 'watched' ? <Button size="sm" onClick={() => void post({ action: 'watch', productId: a.productId }, `«${a.name}» 1 өдөр ажиглана`)}>1 өдөр ажиглах</Button>
-                  : <span className="text-[12.5px] text-muted">👁 {a.watchedBy} · {ubDateTime(a.watchedUntil)} хүртэл</span>}
-              </div>
-              {a.reasons.map((r, i) => <p key={i} className="[overflow-wrap:anywhere] text-[13.5px] font-semibold">{r}</p>)}
-              {a.pages.length ? <p className="[overflow-wrap:anywhere] text-[13px] text-muted">Пэйжээр: {a.pages.map((x) => `${x.name} ${x.n}`).join(' · ')}</p> : <p className="text-[13px] text-muted">Пэйжээр: захиалга алга</p>}
-            </div>
-          ))}
         </div>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
@@ -147,14 +128,14 @@ export function OutflowClient() {
                 {th('week', '7 хоног', 'text-center')}{th('avg', 'Дундаж')}
                 <th className="px-2 py-2 text-right">Боломжтой</th>
                 {d.isSA ? th('profit', 'Ашиг/ш') : null}
-                <th className="px-2 py-2 text-left">Хариуцагч · тэмдэглэл</th><th className="px-2 py-2" />
+                <th className="px-2 py-2 text-left">Хариуцагч · тэмдэглэл</th><th className="px-2 py-2 text-right">⚠</th>
               </tr></thead>
               <tbody>
                 {d.rows.map((r) => (
-                  <tr key={r.id} className={clsx('border-t border-line', r.alert === 'RED' && 'bg-bad-soft', r.alert === 'ORANGE' && 'bg-warn-soft')}>
+                  <tr key={r.id} className={clsx('border-t border-line', r.alert === 'RED' && 'shadow-[inset_3px_0_0_var(--bad)]', r.alert === 'ORANGE' && 'shadow-[inset_3px_0_0_var(--warn-ink)]')}>
                     {d.isLead ? <td className="px-2"><input type="checkbox" aria-label={`${r.name} сонгох`} checked={sel.has(r.id)} onChange={(e) => { const n = new Set(sel); if (e.target.checked) n.add(r.id); else n.delete(r.id); setSel(n); }} /></td> : null}
                     <td className="w-[200px] min-w-[200px] max-w-[200px] px-2 py-1.5" onMouseEnter={(e) => setHover({ id: r.id, x: e.clientX, y: e.clientY })} onMouseLeave={() => setHover(null)}>
-                      <div className="[overflow-wrap:anywhere] font-semibold">{r.alert === 'RED' ? '🔴 ' : r.alert === 'ORANGE' ? '🟠 ' : ''}{r.name}</div>
+                      <div className="[overflow-wrap:anywhere] font-semibold">{r.name}</div>
                       <div className="[overflow-wrap:anywhere] text-[11.5px] text-muted">{r.code} · {money(r.price)}{r.doneAt ? ` · ✓ ${r.doneByName ?? ''}` : ''}</div>
                     </td>
                     <BoostCell row={r} field="dollar" post={post} />
@@ -168,7 +149,7 @@ export function OutflowClient() {
                     <td className={clsx('px-2 py-1 text-right', (r.stock?.available ?? 0) < r.avg && 'font-bold text-bad-ink')}>{r.stock?.available ?? 0}</td>
                     {d.isSA ? <td className="px-2 py-1 text-right">{r.profit?.status ? <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className={clsx('font-bold underline', STATUS[r.profit.status].cls)}>{STATUS[r.profit.status].icon} {money(r.profit.perUnit)}</button> : <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className="text-subtle underline">задаргаа</button>}</td> : null}
                     <td className="w-[180px] min-w-[180px] max-w-[180px] px-2 py-1"><div className="[overflow-wrap:anywhere] text-[12.5px] font-semibold">{r.ownerName ?? '—'}</div>{r.note ? <div title={r.note} className="line-clamp-2 [overflow-wrap:anywhere] text-[11.5px] text-muted">{r.note}</div> : null}</td>
-                    <td className="px-2 py-1"><Button size="sm" onClick={() => setDlg({ k: 'edit', row: r })}>Засах</Button></td>
+                    <td className="px-1 py-1"><div className="flex items-center justify-end gap-1"><button type="button" aria-label={`${r.name} засах`} title="Засах" onClick={() => setDlg({ k: 'edit', row: r })} className="h-8 w-8 rounded-lg border border-line bg-surface text-[14px] hover:bg-surface2">✎</button><AlertChip r={r} onOpen={() => setDlg({ k: 'alert', row: r })} /></div></td>
                   </tr>
                 ))}
               </tbody>
@@ -177,9 +158,9 @@ export function OutflowClient() {
           </div>
           <div className="flex flex-col gap-2 lg:hidden">
             {d.rows.map((r) => (
-              <div key={r.id} className={clsx('flex min-w-0 flex-col gap-2 rounded-2xl border border-line bg-surface p-3', r.alert === 'RED' && 'border-bad/40 bg-bad-soft', r.alert === 'ORANGE' && 'border-warn/40 bg-warn-soft')}>
+              <div key={r.id} className={clsx('flex min-w-0 flex-col gap-2 rounded-2xl border border-line bg-surface p-3', r.alert === 'RED' && 'border-l-4 border-l-bad', r.alert === 'ORANGE' && 'border-l-4 border-l-warn')}>
                 <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0"><b className="[overflow-wrap:anywhere]">{r.alert === 'RED' ? '🔴 ' : r.alert === 'ORANGE' ? '🟠 ' : ''}{r.name}</b><div className="[overflow-wrap:anywhere] text-[12px] text-muted">{r.code} · {r.ownerName ?? 'хариуцагчгүй'}{r.doneAt ? ' · ✓' : ''}</div></div>
+                  <div className="min-w-0"><b className="[overflow-wrap:anywhere]">{r.name}</b><div className="[overflow-wrap:anywhere] text-[12px] text-muted">{r.code} · {r.ownerName ?? 'хариуцагчгүй'}{r.doneAt ? ' · ✓' : ''}</div></div>
                   <div className="shrink-0 text-right"><b className="text-[18px]">{r.weekTotal}</b><div className="text-[11px] text-muted">7 хоног · ⌀{r.avg}</div></div>
                 </div>
                 <div className="grid grid-cols-7 gap-1 text-center text-[12px]">
@@ -189,7 +170,7 @@ export function OutflowClient() {
                   <span>${r.dollar} · бүүст {r.zones} · AD{r.adNumber ?? '—'}</span><span>Боломжтой {r.stock?.available ?? 0}</span>
                   {d.isSA ? (r.profit?.status ? <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className={clsx('font-bold underline', STATUS[r.profit.status].cls)}>{STATUS[r.profit.status].icon} {money(r.profit.perUnit)}</button>
                     : <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className="text-subtle underline">задаргаа</button>) : null}
-                  <Button size="sm" className="ml-auto" onClick={() => setDlg({ k: 'edit', row: r })}>Засах</Button>
+                  <span className="ml-auto flex items-center gap-2"><AlertChip r={r} onOpen={() => setDlg({ k: 'alert', row: r })} /><Button size="sm" onClick={() => setDlg({ k: 'edit', row: r })}>Засах</Button></span>
                 </div>
               </div>
             ))}
@@ -204,6 +185,7 @@ export function OutflowClient() {
         </>
       ) : <p className="text-muted">Ачаалж байна…</p>}
       {hover ? <HoverCard id={hover.id} x={hover.x} y={hover.y} /> : null}
+      {dlg?.k === 'alert' ? <AlertDialog row={dlg.row} onClose={() => setDlg(null)} post={post} /> : null}
       {dlg?.k === 'edit' ? <EditDialog row={dlg.row} lead={!!d?.isLead} owners={d?.owners ?? []} onClose={() => setDlg(null)} post={post} /> : null}
       {dlg?.k === 'bulk' ? <BulkDialog ids={dlg.ids} owners={d?.owners ?? []} onClose={() => setDlg(null)} onDone={async (m) => { setDlg(null); setSel(new Set()); setOk(m); await load(); }} /> : null}
       {dlg?.k === 'profit' ? <ProfitDialog id={dlg.id} onClose={() => setDlg(null)} /> : null}
@@ -214,6 +196,39 @@ export function OutflowClient() {
       {dlg?.k === 'eval' ? <EvalDialog onClose={() => setDlg(null)} /> : null}
       {dlg?.k === 'config' ? <ConfigDialog sa={!!d?.isSA} onClose={() => setDlg(null)} onDone={async () => { setDlg(null); setOk('Тохиргоо хадгалагдлаа'); await load(); }} /> : null}
     </div>
+  );
+}
+
+/** Мөрийн ард жижиг тэмдэг: 🔴 / 🟠 (ажиглаж буй бол 👁) — дарахад дэлгэрэнгүй */
+function AlertChip({ r, onOpen }: { r: Row; onOpen: () => void }) {
+  const a = r.alertInfo;
+  if (!a) return null;
+  const watched = !!a.watchedUntil;
+  return (
+    <button type="button" data-alert-chip onClick={onOpen} title={a.reasons.join(' / ')}
+      className={clsx('inline-flex h-7 items-center gap-1 rounded-full px-2 text-[12px] font-bold', watched ? 'bg-surface2 text-muted' : a.level === 'RED' ? 'animate-pulse bg-bad text-white' : 'bg-warn-soft text-warn')}>
+      {watched ? '👁' : a.level === 'RED' ? '🔴' : '🟠'}<span className="hidden 2xl:inline">{watched ? 'Ажиглаж' : a.level === 'RED' ? 'Алдагдал' : 'Анхаар'}</span>
+    </button>
+  );
+}
+
+function AlertDialog({ row, onClose, post }: { row: Row; onClose: () => void; post: (j: Record<string, unknown>, m?: string) => Promise<unknown> }) {
+  const a = row.alertInfo!;
+  const off = async () => { if (confirm(`«${row.name}»-ийн бүүстийг унтраах уу? (Бүүст = 0)`)) { await post({ action: 'boost', productId: row.id, zones: 0 }, `«${row.name}» бүүст унтарлаа`); onClose(); } };
+  const watch = async () => { await post({ action: 'watch', productId: row.id }, `«${row.name}» 1 өдөр ажиглана`); onClose(); };
+  return (
+    <Modal open onClose={onClose} title={`${a.level === 'RED' ? '🔴 Алдагдалтай бүүст' : '🟠 Анхааруулга'} · ${row.name}`} subtitle={`${row.code} · ${row.zones} бүүст × $${row.dollar}${row.ownerName ? ` · ${row.ownerName}` : ''}`}
+      footer={<><Button onClick={onClose}>Хаах</Button>{!a.watchedUntil ? <Button onClick={() => void watch()}>1 өдөр ажиглах</Button> : null}{row.zones > 0 ? <Button variant="primary" onClick={() => void off()}>Бүүст унтраах</Button> : null}</>}>
+      <div className="flex flex-col gap-2">
+        {a.reasons.map((x, i) => <p key={i} className={clsx('[overflow-wrap:anywhere] text-[14px] font-semibold', a.level === 'RED' ? 'text-bad-ink' : 'text-warn')}>{x}</p>)}
+        <div className="rounded-xl bg-surface2 p-3 text-[13px]">
+          <b>Пэйжээр</b>
+          {a.pages.length ? a.pages.map((p) => <div key={p.name} className="flex justify-between gap-2"><span className="min-w-0 [overflow-wrap:anywhere]">{p.name}</span><b className="shrink-0">{p.n}</b></div>) : <div className="text-muted">Захиалга алга</div>}
+        </div>
+        <p className="text-[13px] text-muted">Сүүлийн 7 хоног: {row.daily.join(' · ')} (өнөөдрөөс)</p>
+        {a.watchedUntil ? <p className="text-[13px] text-muted">👁 {a.watchedBy} ажиглаж байна — {ubDateTime(a.watchedUntil)} хүртэл</p> : null}
+      </div>
+    </Modal>
   );
 }
 
