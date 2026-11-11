@@ -27,7 +27,7 @@ const STATUS: Record<Status, { icon: string; label: string; cls: string }> = {
 };
 interface Row {
   id: number; code: string; name: string; price: number; dollar: number; zones: number; adNumber: number | null; ownerId: string | null; ownerName: string | null;
-  doneAt: string | null; doneByName: string | null; note: string; daily: number[]; weekTotal: number; avg: number; phones: number[]; phoneWeek: number; variantCount: number;
+  doneAt: string | null; doneByName: string | null; note: string; daily: number[]; weekTotal: number; avg: number; phones: number[]; phoneWeek: number; variantCount: number; bulk: { n: number; qty: number }[];
   stock?: { total: number; available: number; driver: number }; alert?: 'RED' | 'ORANGE' | null; profit?: { status: Status | null; perUnit: number | null } | null;
   alertInfo?: { level: 'RED' | 'ORANGE'; reasons: string[]; pages: { name: string; n: number }[]; watchedUntil: string | null; watchedBy: string | null } | null;
 }
@@ -37,7 +37,9 @@ interface Table {
 }
 
 /** Нүдний өнгө: бүүстэй — бүс × $ босго; бүүстгүй — дунджийн харьцаа (хуучин шиг) */
-function cellCls(v: number, r: Row) {
+function cellCls(v0: number, r: Row, i = -1) {
+  // Бөөний захиалгыг өнгөнд тооцохгүй (#117)
+  const v = i >= 0 ? v0 - (r.bulk?.[i]?.qty ?? 0) : v0;
   if (r.zones > 0) { const t = r.zones * (r.dollar || 5); return v >= t ? 'bg-ok-soft text-ok-ink' : v === 0 ? 'text-subtle' : 'bg-bad-soft text-bad-ink'; }
   if (v === 0) return 'text-subtle';
   const k = r.avg > 0 ? v / r.avg : 0;
@@ -137,7 +139,7 @@ export function OutflowClient() {
                 {d.days.map((day, i) => th(`d${i}`, i === 0 ? 'Өнөөдөр' : md(day), 'text-center'))}
                 {th('week', '7 хоног', 'text-center')}{th('avg', 'Дундаж', 'hidden min-[1360px]:table-cell')}
                 <th className="px-2 py-2 text-right">Боломжтой</th>
-                {d.isSA ? th('profit', 'Ашиг/ш') : null}
+                {d.isSA ? th('profit', 'Ашиг/зах') : null}
                 <th className="px-1.5 py-2 text-left">Хариуцагч</th><th className="px-2 py-2 text-right">⚠</th>
               </tr></thead>
               <tbody>
@@ -155,7 +157,7 @@ export function OutflowClient() {
                     <BoostCell row={r} field="zones" post={post} />
                     <BoostCell row={r} field="adNumber" post={post} />
                     {r.daily.map((v, i) => (
-                      <td key={i} className="px-0.5 py-1 text-center"><div className={clsx('mx-auto w-9 rounded-md py-0.5 font-semibold', cellCls(v, r))}>{v}</div>{r.phones[i] ? <div className="text-[10.5px] text-warn">☎{r.phones[i]}</div> : null}</td>
+                      <td key={i} className="px-0.5 py-1 text-center"><div className={clsx('mx-auto w-9 rounded-md py-0.5 font-semibold', cellCls(v, r, i))}>{v}</div>{r.bulk[i]?.n ? <div className="text-[10.5px] font-semibold text-info" title={`Бөөний захиалга: ${r.bulk[i]!.n} захиалга, ${r.bulk[i]!.qty} ширхэг — өнгө, дунджид тооцохгүй`}>📦{r.bulk[i]!.n}×{r.bulk[i]!.qty}</div> : null}{r.phones[i] ? <div className="text-[10.5px] text-warn">☎{r.phones[i]}</div> : null}</td>
                     ))}
                     <td className="px-1 py-1 text-center font-bold">{r.weekTotal}{r.phoneWeek ? <div className="text-[10.5px] font-normal text-warn">☎{r.phoneWeek}</div> : null}</td>
                     <td className="hidden px-2 py-1 text-right min-[1360px]:table-cell">{r.avg}</td>
@@ -179,7 +181,7 @@ export function OutflowClient() {
                   <div className="shrink-0 text-right"><b className="text-[18px]">{r.weekTotal}</b><div className="text-[11px] text-muted">7 хоног · ⌀{r.avg}</div></div>
                 </div>
                 <div className="grid grid-cols-7 gap-1 text-center text-[12px]">
-                  {r.daily.map((v, i) => <div key={i} className={clsx('rounded-md py-1 font-semibold', cellCls(v, r))}><div className="text-[10px] font-normal text-muted">{i === 0 ? 'Өнөө' : md(d.days[i]!)}</div>{v}</div>)}
+                  {r.daily.map((v, i) => <div key={i} className={clsx('rounded-md py-1 font-semibold', cellCls(v, r, i))}><div className="text-[10px] font-normal text-muted">{i === 0 ? 'Өнөө' : md(d.days[i]!)}</div>{v}{r.bulk[i]?.n ? <div className="text-[9.5px] text-info">📦{r.bulk[i]!.qty}</div> : null}</div>)}
                 </div>
                 {r.variantCount > 1 ? <button type="button" onClick={() => toggle(r.id)} className="self-start text-[12.5px] font-semibold text-accent">{open.has(r.id) ? '▾ Өнгө, хэмжээ нуух' : `▸ Өнгө, хэмжээгээр (${r.variantCount})`}</button> : null}
                 {open.has(r.id) ? <VariantCards id={r.id} days={d.days} /> : null}
@@ -358,7 +360,7 @@ interface Profit {
   product: { id: number; code: string; name: string; price: number; costPrice: number | null; unitCost: number; costEstimated: boolean };
   cfg: { oppCost: number; deliveryCost: number; rate: number; costPct: number; lowProfit: number };
   boost: { dollar: number; zones: number; dailyBoost: number; boostOnAt: string | null }; marginBeforeBoost: number; breakEven: number | null; lowProfitAt: number | null;
-  days: { day: string; qty: number; revenue: number; cost: number; costEstimated: boolean; oppDelivery: number; boost: number; profit: number; perUnit: number | null; status: Status | null }[];
+  days: { day: string; qty: number; orders: number; revenue: number; cost: number; costEstimated: boolean; oppDelivery: number; boost: number; profit: number; perUnit: number | null; status: Status | null }[];
 }
 function ProfitDialog({ id, onClose }: { id: number; onClose: () => void }) {
   const [d, setD] = useState<Profit | null>(null); const [err, setErr] = useState<string | null>(null); const [price, setPrice] = useState('');
@@ -367,7 +369,7 @@ function ProfitDialog({ id, onClose }: { id: number; onClose: () => void }) {
     if (!d) return null; const pr = Number(price) || 0;
     const cost = d.product.costPrice ?? Math.round((pr * d.cfg.costPct) / 100);
     const m = pr - cost - d.cfg.oppCost - d.cfg.deliveryCost; const b = d.boost.dailyBoost;
-    const y = d.days[1]; const qty = y?.qty ?? 0;
+    const y = d.days[1]; const qty = y?.orders ?? 0;
     return { margin: m, perUnit: qty ? Math.round(m - b / qty) : null, day: qty * m - b, breakEven: b > 0 && m > 0 ? Math.ceil(b / m) : null, low: b > 0 && m > d.cfg.lowProfit ? Math.ceil(b / (m - d.cfg.lowProfit)) : null, qty };
   }, [d, price]);
   return (
@@ -381,16 +383,16 @@ function ProfitDialog({ id, onClose }: { id: number; onClose: () => void }) {
             <div className="rounded-xl bg-surface2 p-3"><div className="text-muted">Опп + хүргэлт</div><b>{money(d.cfg.oppCost + d.cfg.deliveryCost)}</b></div>
             <div className="rounded-xl bg-surface2 p-3"><div className="text-muted">Бүүст/өдөр ({d.boost.zones} × ${d.boost.dollar})</div><b>{money(d.boost.dailyBoost)}</b></div>
           </div>
-          {d.boost.dailyBoost > 0 && d.days[1] ? (() => { const q = d.days[1]!.qty; const day = q * d.marginBeforeBoost - d.boost.dailyBoost; return (
+          {d.boost.dailyBoost > 0 && d.days[1] ? (() => { const q = d.days[1]!.orders; const day = q * d.marginBeforeBoost - d.boost.dailyBoost; return (
             <p className={clsx('rounded-xl p-3 text-[14px] font-semibold', day < 0 ? 'bg-bad-soft text-bad-ink' : 'bg-ok-soft text-ok-ink')}>
-              Одоогийн бүүст ({d.boost.zones} × ${d.boost.dollar} = {money(d.boost.dailyBoost)}/өдөр) бүтэн өдөр асаалттай, өчигдрийн шиг {q} ширхэг гарвал: өдрийн {day < 0 ? 'алдагдал' : 'ашиг'} <b>{money(day)}</b>{q ? `, ширхэгийн ${money(Math.round(day / q))}` : ''}.
+              Одоогийн бүүст ({d.boost.zones} × ${d.boost.dollar} = {money(d.boost.dailyBoost)}/өдөр) бүтэн өдөр асаалттай, өчигдрийн шиг {q} захиалга гарвал: өдрийн {day < 0 ? 'алдагдал' : 'ашиг'} <b>{money(day)}</b>{q ? `, захиалгын ${money(Math.round(day / q))}` : ''}.
             </p>); })() : null}
-          <p className="text-[13.5px]">Бүүстээс өмнөх ширхэгийн ашиг <b>{money(d.marginBeforeBoost)}</b>.{d.breakEven ? <> Энэ бүүстээр өдөрт <b>{d.breakEven}+</b> ширхэг гарвал алдагдалгүй{d.lowProfitAt ? <>, <b>{d.lowProfitAt}+</b> гарвал {money(d.cfg.lowProfit)}-аас дээш ашигтай</> : ''}.</> : d.boost.zones ? ' Бүүстгүйгээр ч ашиггүй — үнэ/өртгөө шалгана уу.' : ' Бүүст унтарсан.'}</p>
+          <p className="text-[13.5px]">Бүүстээс өмнөх (1 ширхэгтэй) захиалгын ашиг <b>{money(d.marginBeforeBoost)}</b>.{d.breakEven ? <> Энэ бүүстээр өдөрт <b>{d.breakEven}+</b> захиалга гарвал алдагдалгүй{d.lowProfitAt ? <>, <b>{d.lowProfitAt}+</b> гарвал {money(d.cfg.lowProfit)}-аас дээш ашигтай</> : ''}.</> : d.boost.zones ? ' Бүүстгүйгээр ч ашиггүй — үнэ/өртгөө шалгана уу.' : ' Бүүст унтарсан.'}</p>
           <div className="overflow-x-auto rounded-xl border border-line">
             <table className="w-full min-w-[640px] text-[13px]">
-              <thead><tr className="bg-surface2 text-[12px] text-muted"><th className="px-2 py-1.5 text-left">Өдөр</th><th className="px-2 text-right">Ширхэг</th><th className="px-2 text-right">Орлого</th><th className="px-2 text-right">Өртөг</th><th className="px-2 text-right">Опп+хүргэлт</th><th className="px-2 text-right">Бүүст</th><th className="px-2 text-right">Ашиг</th><th className="px-2 text-right">Ашиг/ш</th></tr></thead>
+              <thead><tr className="bg-surface2 text-[12px] text-muted"><th className="px-2 py-1.5 text-left">Өдөр</th><th className="px-2 text-right">Ширхэг</th><th className="px-2 text-right">Захиалга</th><th className="px-2 text-right">Орлого</th><th className="px-2 text-right">Өртөг</th><th className="px-2 text-right">Опп+хүргэлт</th><th className="px-2 text-right">Бүүст</th><th className="px-2 text-right">Ашиг</th><th className="px-2 text-right">Ашиг/захиалга</th></tr></thead>
               <tbody>{d.days.map((x, i) => (
-                <tr key={x.day} className="border-t border-line"><td className="px-2 py-1.5">{i === 0 ? 'Өнөөдөр (одоог хүртэл)' : x.day}</td><td className="px-2 text-right">{x.qty}</td><td className="px-2 text-right">{money(x.revenue)}</td><td className="px-2 text-right">{money(x.cost)}</td><td className="px-2 text-right">{money(x.oppDelivery)}</td><td className="px-2 text-right">{money(x.boost)}</td>
+                <tr key={x.day} className="border-t border-line"><td className="px-2 py-1.5">{i === 0 ? 'Өнөөдөр (одоог хүртэл)' : x.day}</td><td className="px-2 text-right">{x.qty}</td><td className="px-2 text-right">{x.orders}</td><td className="px-2 text-right">{money(x.revenue)}</td><td className="px-2 text-right">{money(x.cost)}</td><td className="px-2 text-right">{money(x.oppDelivery)}</td><td className="px-2 text-right">{money(x.boost)}</td>
                   <td className={clsx('px-2 text-right font-bold', x.profit < 0 && 'text-bad-ink')}>{money(x.profit)}</td><td className={clsx('px-2 text-right font-bold', x.status && STATUS[x.status].cls)}>{x.status ? `${STATUS[x.status].icon} ` : ''}{money(x.perUnit)}</td></tr>
               ))}</tbody>
             </table>
@@ -398,7 +400,7 @@ function ProfitDialog({ id, onClose }: { id: number; onClose: () => void }) {
           <div className="flex flex-col gap-2 rounded-xl border border-line p-3">
             <b className="text-[14px]">Үнэ туршиж үзэх (зөвхөн тооцоо)</b>
             <label className="flex items-center gap-2 text-[13px] text-muted">Шинэ үнэ<input value={price} inputMode="numeric" onChange={(e) => setPrice(digits(e.target.value))} className={clsx(inputCls, 'w-32 text-right')} aria-label="Шинэ үнэ" /></label>
-            {trial ? <p className="text-[13.5px]">Бүүстээс өмнөх ашиг <b>{money(trial.margin)}</b>/ш. Өчигдрийн шиг {trial.qty} ширхэг гарвал ширхэгийн ашиг <b className={clsx((trial.perUnit ?? 0) < 0 && 'text-bad-ink')}>{money(trial.perUnit)}</b>, өдрийн <b>{money(trial.day)}</b>.{trial.breakEven ? ` Алдагдалгүй: ${trial.breakEven}+ ширхэг.` : ''}{trial.low ? ` ${money(d.cfg.lowProfit)}+ ашигтай: ${trial.low}+ ширхэг.` : ''}</p> : null}
+            {trial ? <p className="text-[13.5px]">Бүүстээс өмнөх ашиг <b>{money(trial.margin)}</b>/захиалга. Өчигдрийн шиг {trial.qty} захиалга гарвал захиалгын ашиг <b className={clsx((trial.perUnit ?? 0) < 0 && 'text-bad-ink')}>{money(trial.perUnit)}</b>, өдрийн <b>{money(trial.day)}</b>.{trial.breakEven ? ` Алдагдалгүй: ${trial.breakEven}+ захиалга.` : ''}{trial.low ? ` ${money(d.cfg.lowProfit)}+ ашигтай: ${trial.low}+ захиалга.` : ''}</p> : null}
           </div>
         </div>
       ) : null}
@@ -624,7 +626,7 @@ function ConfigDialog({ sa, onClose, onDone }: { sa: boolean; onClose: () => voi
   const f = (k: string, l: string) => <label key={k} className="flex flex-col gap-1 text-[12.5px] font-semibold text-muted">{l}<input value={v?.[k] ?? ''} inputMode="numeric" onChange={(e) => setV({ ...v!, [k]: digits(e.target.value) })} className={clsx(inputCls, 'text-right')} /></label>;
   const save = async () => {
     try {
-      const keys = ['claimTarget', 'claimExpireDays', ...(sa ? ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar'] : [])];
+      const keys = ['claimTarget', 'claimExpireDays', ...(sa ? ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar', 'bulkMin'] : [])];
       await api('/api/goods-outflow', { method: 'POST', json: { action: 'config', ...Object.fromEntries(keys.map((k) => [k, Number(v?.[k])])) } }); onDone();
     } catch (e) { setErr(msg(e)); }
   };
@@ -637,7 +639,7 @@ function ConfigDialog({ sa, onClose, onDone }: { sa: boolean; onClose: () => voi
           <div className="grid grid-cols-2 gap-3">{f('claimTarget', '«Хийсэн» болох захиалга')}{f('claimExpireDays', 'Чөлөөлөх хоног')}</div>
           {sa ? (<>
             <b className="text-[14px]">Бүүстийн ашиг (зөвхөн Супер админ)</b>
-            <div className="grid grid-cols-2 gap-3">{f('oppCost', 'Опп цалин (₮/захиалга)')}{f('deliveryCost', 'Хүргэлтийн цалин (₮/захиалга)')}{f('rate', 'Долларын ханш (₮)')}{f('defaultDollar', 'Анхдагч $ (бүүст)')}{f('costPct', 'Өртөг оруулаагүй бол үнийн %')}{f('lowProfit', '🟠 Ашгийн босго (₮/ш)')}{f('watchHours', 'Ажиглах цаг (асаасан цагаас)')}</div>
+            <div className="grid grid-cols-2 gap-3">{f('oppCost', 'Опп цалин (₮/захиалга)')}{f('deliveryCost', 'Хүргэлтийн цалин (₮/захиалга)')}{f('rate', 'Долларын ханш (₮)')}{f('defaultDollar', 'Анхдагч $ (бүүст)')}{f('costPct', 'Өртөг оруулаагүй бол үнийн %')}{f('lowProfit', '🟠 Ашгийн босго (₮/захиалга)')}{f('bulkMin', '📦 Бөөний захиалга (ширхэгээс)')}{f('watchHours', 'Ажиглах цаг (асаасан цагаас)')}</div>
           </>) : null}
         </div>
       ) : null}

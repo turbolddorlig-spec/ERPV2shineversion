@@ -92,6 +92,24 @@ describe('7 хоногийн гарц — тоолох дүрэм (#104)', () =>
   });
 });
 
+describe('бөөний захиалга (#117)', () => {
+  it('1 хүн 50 ширхэг: гарцад 50 + 📦, дундаж/өнгөнд орохгүй; опп+хүргэлт нэг л удаа; үр дүн 1 захиалга (💎 биш)', async () => {
+    await boostAt(1, U.ubDayStart(yest));
+    await order({ daysAgo: 1, qty: 50 });
+    await order({ daysAgo: 1 });
+    OF.bustTable();
+    const r = (await OF.outflowTable(mk, {})).rows.find((x) => x.id === prod)!;
+    expect([r.daily[1], r.bulk[1], r.avg]).toEqual([51, { n: 1, qty: 50 }, 0.1]);
+    const y = (await OF.profitDetail(sa, prod)).days.find((x) => x.day === yest)!;
+    // 51 × 20000 − 51 × 4000 − 2 × 6200 − 18000 = 785,600; захиалгын ашиг 392,800; 2 захиалга < $5 → 💎 биш, 🟢
+    expect([y.qty, y.orders, y.oppDelivery, y.profit, y.perUnit, y.status]).toEqual([51, 2, 12400, 785600, 392800, 'GOOD']);
+    const ev = await OF.evaluation(lead, yest);
+    await OF.setOwner(lead, { productIds: [prod], userId: mk.id });
+    expect((await OF.evaluation(lead, yest)).rows.find((x) => x.userId === mk.id)?.items[0]).toMatchObject({ orders: 2, expected: 5, cls: 'POOR' });
+    expect(ev.date).toBe(yest);
+  });
+});
+
 describe('өнгө / хэмжээгээр (догол мөр)', () => {
   it('үндсэн мөр нийлбэр, хувилбар бүрийн гарц ба үлдэгдэл', async () => {
     const p2 = await P.createProduct(sa, { code: 'C2', name: 'Олон өнгөтэй', price: 10000, colors: ['Хар', 'Цагаан'] });

@@ -39,8 +39,10 @@ const KEY_CFG = 'outflow.config';
 export interface OutflowConfig {
   claimTarget: number; claimExpireDays: number; watchHours: number; defaultDollar: number;
   oppCost: number; deliveryCost: number; rate: number; costPct: number; lowProfit: number;
+  /** Нэг захиалгад энэ тооноос дээш ширхэг бол «бөөний» (#117) */
+  bulkMin: number;
 }
-export const DEFAULT_CFG: OutflowConfig = { claimTarget: 5, claimExpireDays: 7, watchHours: 8, defaultDollar: 5, oppCost: 1200, deliveryCost: 5000, rate: 3600, costPct: 35, lowProfit: 1500 };
+export const DEFAULT_CFG: OutflowConfig = { claimTarget: 5, claimExpireDays: 7, watchHours: 8, defaultDollar: 5, oppCost: 1200, deliveryCost: 5000, rate: 3600, costPct: 35, lowProfit: 1500, bulkMin: 5 };
 let cfgCache: { at: number; v: OutflowConfig } | null = null;
 export async function getConfig(tx: Tx | typeof db = db): Promise<OutflowConfig> {
   if (tx === db && cfgCache && Date.now() - cfgCache.at < 30_000) return cfgCache.v;
@@ -63,7 +65,7 @@ export async function setConfig(actor: UserActor, b: Record<string, unknown>) {
   const next: OutflowConfig = { ...cur };
   if (b.claimTarget !== undefined) next.claimTarget = cleanInt(b.claimTarget, '«Хийсэн» захиалгын тоо', 1, 1000);
   if (b.claimExpireDays !== undefined) next.claimExpireDays = cleanInt(b.claimExpireDays, 'Чөлөөлөх хоног', 1, 365);
-  const money = ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar'] as const;
+  const money = ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar', 'bulkMin'] as const;
   if (money.some((k) => b[k] !== undefined)) {
     assertSA(actor);
     if (b.oppCost !== undefined) next.oppCost = cleanInt(b.oppCost, 'Опп цалин', 0, 1_000_000);
@@ -73,6 +75,7 @@ export async function setConfig(actor: UserActor, b: Record<string, unknown>) {
     if (b.lowProfit !== undefined) next.lowProfit = cleanInt(b.lowProfit, 'Ашгийн босго', 0, 10_000_000);
     if (b.watchHours !== undefined) next.watchHours = cleanInt(b.watchHours, 'Ажиглах цаг', 1, 24);
     if (b.defaultDollar !== undefined) next.defaultDollar = cleanInt(b.defaultDollar, 'Анхдагч $', 1, 10_000);
+    if (b.bulkMin !== undefined) next.bulkMin = cleanInt(b.bulkMin, 'Бөөний захиалгын ширхэг', 2, 100_000);
   }
   const json = next as unknown as Prisma.InputJsonValue;
   await db.$transaction(async (tx) => {
@@ -91,17 +94,21 @@ const COUNTED = Prisma.sql`o.status <> 'PENDING_PAYMENT' AND o."confirmedAt" IS 
 /** Одоогийн (амьд) тоолол — цуцлагдсан бүгд хасагдана (ажлын цонхны «Хийсэн») */
 const LIVE = Prisma.sql`o.status NOT IN ('PENDING_PAYMENT', 'CANCELLED') AND o."confirmedAt" IS NOT NULL`;
 
-interface DayAgg { productId: number; day: string; qty: number; revenue: number; orderShare: number; orders: number }
+interface DayAgg { productId: number; day: string; qty: number; revenue: number; orderShare: number; orders: number; bulkOrders: number; bulkQty: number }
 async function unitsByDay(from: string, to: string, productIds?: number[]): Promise<DayAgg[]> {
   const pf = productIds ? (productIds.length ? Prisma.sql`AND l."productId" IN (${Prisma.join(productIds)})` : Prisma.sql`AND false`) : Prisma.empty;
-  const rows = await db.$queryRaw<{ productId: number; day: Date; qty: number; revenue: number; share: number; orders: number }[]>`
-    SELECT l."productId", (o."confirmedAt" + interval '8 hours')::date AS day, sum(l.qty)::int AS qty, sum(l.qty * l."unitPrice")::int AS revenue,
-           sum(CASE WHEN o.subtotal - o.discount > 0 THEN (l.qty * l."unitPrice")::numeric / (o.subtotal - o.discount) ELSE 1 END)::float8 AS share,
-           count(DISTINCT o.id)::int AS orders
-    FROM "Order" o JOIN "OrderLine" l ON l."orderId" = o.id
-    WHERE o."confirmedAt" >= ${ubDayStart(from)} AND o."confirmedAt" < ${ubDayStart(addDays(to, 1))} AND ${COUNTED} ${pf}
-    GROUP BY 1, 2`;
-  return rows.map((r) => ({ productId: r.productId, day: ymdOf(r.day), qty: r.qty, revenue: r.revenue, orderShare: r.share, orders: r.orders }));
+  const bulkMin = (await getConfig()).bulkMin;
+  // Захиалга × бараа бүрээр нэгтгээд (нэг захиалгад олон өнгө байж болно) бөөнийг ялгана
+  const rows = await db.$queryRaw<{ productId: number; day: Date; qty: number; revenue: number; orders: number; bulkOrders: number; bulkQty: number }[]>`
+    SELECT x."productId", x.day, sum(x.q)::int AS qty, sum(x.v)::int AS revenue, count(*)::int AS orders,
+           count(*) FILTER (WHERE x.q >= ${bulkMin})::int AS "bulkOrders", coalesce(sum(x.q) FILTER (WHERE x.q >= ${bulkMin}), 0)::int AS "bulkQty"
+    FROM (
+      SELECT l."productId", o.id, (o."confirmedAt" + interval '8 hours')::date AS day, sum(l.qty) AS q, sum(l.qty * l."unitPrice") AS v
+      FROM "Order" o JOIN "OrderLine" l ON l."orderId" = o.id
+      WHERE o."confirmedAt" >= ${ubDayStart(from)} AND o."confirmedAt" < ${ubDayStart(addDays(to, 1))} AND ${COUNTED} ${pf}
+      GROUP BY 1, 2, 3
+    ) x GROUP BY 1, 2`;
+  return rows.map((r) => ({ productId: r.productId, day: ymdOf(r.day), qty: r.qty, revenue: r.revenue, orderShare: r.orders, orders: r.orders, bulkOrders: r.bulkOrders, bulkQty: r.bulkQty }));
 }
 
 // ───────────── Бүүстийн цагийн хуваарь ба зардал ─────────────
@@ -151,19 +158,21 @@ export interface DayProfit {
   day: string; qty: number; orders: number; revenue: number; cost: number; costEstimated: boolean; oppDelivery: number; boost: number;
   profit: number; perUnit: number | null; status: ProfitStatus | null;
 }
-function profitOf(cfg: OutflowConfig, p: { price: number; costPrice: number | null }, a: { qty: number; revenue: number; orderShare: number; orders: number } | undefined, boost: number, day: string): DayProfit {
+function profitOf(cfg: OutflowConfig, p: { price: number; costPrice: number | null }, a: { qty: number; revenue: number; orders: number } | undefined, boost: number, day: string): DayProfit {
   const qty = a?.qty ?? 0, revenue = a?.revenue ?? 0;
   const unitCost = p.costPrice ?? Math.round((p.price * cfg.costPct) / 100);
   const cost = qty * unitCost;
-  // Эзний шийдвэр (#113): опп + хүргэлтийн зардал зарагдсан ширхэг бүрээс бүтнээр (1,200₮ + 5,000₮)
-  const oppDelivery = qty * (cfg.oppCost + cfg.deliveryCost);
+  // Эзний шийдвэр (#117): опп + хүргэлт ЗАХИАЛГА бүрээс (нэг хаягт нэг удаа); үр дүнг ЗАХИАЛГААР хэмжинэ (бөөний нэг захиалга = 1)
+  const orders = a?.orders ?? 0;
+  const oppDelivery = orders * (cfg.oppCost + cfg.deliveryCost);
   const profit = revenue - cost - oppDelivery - boost;
-  const perUnit = qty > 0 ? Math.round(profit / qty) : boost > 0 ? -boost : null;
+  /** Нэг захиалгын ашиг */
+  const perUnit = orders > 0 ? Math.round(profit / orders) : boost > 0 ? -boost : null;
   let status: ProfitStatus | null = null;
   if (boost > 0) {
     if (perUnit === null || perUnit < 0) status = 'LOSS';
     else if (perUnit < cfg.lowProfit) status = 'LOW';
-    else status = qty > boost / cfg.rate ? 'DIAMOND' : 'GOOD';
+    else status = orders > boost / cfg.rate ? 'DIAMOND' : 'GOOD';
   }
   return { day, qty, orders: a?.orders ?? 0, revenue, cost, costEstimated: p.costPrice === null, oppDelivery, boost, profit, perUnit, status };
 }
@@ -302,6 +311,8 @@ export interface OutflowRow {
   id: number; code: string; name: string; price: number; imageKey: string | null;
   dollar: number; zones: number; adNumber: number | null; ownerId: string | null; ownerName: string | null; doneAt: Date | null; doneByName: string | null; note: string;
   daily: number[]; weekTotal: number; avg: number; phones: number[]; phoneWeek: number; variantCount: number;
+  /** Бөөний захиалга өдөр бүр: тоо ба ширхэг (#117) — өнгө, дунджид орохгүй */
+  bulk: { n: number; qty: number }[];
   stock?: { total: number; available: number; driver: number };
   alert?: AlertLevel | null; profit?: { status: ProfitStatus | null; perUnit: number | null } | null;
   /** Мөрийн ард жижиг тэмдэг — дарахад дэлгэрэнгүй */
@@ -335,7 +346,12 @@ async function allRows(): Promise<OutflowRow[]> {
   const days = Array.from({ length: 7 }, (_, i) => addDays(today, -i));
   const di = new Map(days.map((d, i) => [d, i]));
   const daily = new Map<number, number[]>();
-  for (const a of aggs) { const i = di.get(a.day); if (i === undefined) continue; const arr = daily.get(a.productId) ?? Array(7).fill(0); arr[i] += a.qty; daily.set(a.productId, arr); }
+  const bulkM = new Map<number, { n: number; qty: number }[]>();
+  for (const a of aggs) {
+    const i = di.get(a.day); if (i === undefined) continue;
+    const arr = daily.get(a.productId) ?? Array(7).fill(0); arr[i] += a.qty; daily.set(a.productId, arr);
+    if (a.bulkOrders) { const b = bulkM.get(a.productId) ?? Array.from({ length: 7 }, () => ({ n: 0, qty: 0 })); b[i]!.n += a.bulkOrders; b[i]!.qty += a.bulkQty; bulkM.set(a.productId, b); }
+  }
   const ph = new Map<number, number[]>(); const phW = new Map<number, number>();
   for (const r of phones) {
     if (r.day === null) { phW.set(r.productId, r.n); continue; }
@@ -351,7 +367,9 @@ async function allRows(): Promise<OutflowRow[]> {
       id: p.id, code: p.code, name: p.name, price: p.price, imageKey: img,
       dollar: m?.dollar ?? 5, zones: m?.zones ?? 0, adNumber: m?.adNumber ?? null, ownerId: m?.ownerId ?? null, ownerName: m?.ownerName ?? null,
       doneAt: m?.doneAt ?? null, doneByName: m?.doneByName ?? null, note: m?.note ?? '',
-      daily: d, weekTotal: week, avg: Math.round((week / 7) * 10) / 10, phones: ph.get(p.id) ?? Array(7).fill(0), phoneWeek: phW.get(p.id) ?? 0, variantCount: p._count.variants,
+      daily: d, weekTotal: week, phones: ph.get(p.id) ?? Array(7).fill(0), phoneWeek: phW.get(p.id) ?? 0, variantCount: p._count.variants,
+      bulk: bulkM.get(p.id) ?? Array.from({ length: 7 }, () => ({ n: 0, qty: 0 })),
+      avg: Math.round(((week - (bulkM.get(p.id) ?? []).reduce((s, x) => s + x.qty, 0)) / 7) * 10) / 10,
     } as OutflowRow;
   });
   tableCache = { at: Date.now(), key: k, rows };
@@ -778,7 +796,7 @@ export async function evaluation(actor: UserActor, dateIn: unknown) {
   const rows = users.filter((u) => lead || u.id === actor.id).map((u) => {
     const items = [...(by.get(u.id) ?? [])].map((pid) => {
       const pk = peakBoost(segs.get(pid), d0, d1);
-      const orders = am.get(pid)?.qty ?? 0;
+      const orders = am.get(pid)?.orders ?? 0; // #117: захиалгаар (бөөний нэг захиалга = 1)
       const expected = pk ? pk.zones * (pk.dollar || 5) : 0;
       return { productId: pid, code: pn.get(pid)?.code ?? '', name: pn.get(pid)?.name ?? '', dollar: pk?.dollar ?? null, zones: pk?.zones ?? 0, expected, orders, cls: classify(orders, expected) };
     }).filter((x) => x.zones > 0 || x.orders > 0).sort((a, b) => b.orders - a.orders);
