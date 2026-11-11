@@ -9,6 +9,8 @@ export function Modal({ open, onClose, title, subtitle, children, footer, size =
   size?: 'md' | 'xl' | 'drawer'; bodyClassName?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  // Цонхны гадна (бүдгэрсэн хэсэгт) дарахад хаагдана. Дотор нь дарж эхлээд гадна суллавал (текст сонгох г.м.) хаахгүй
+  const downOnBackdrop = useRef(false);
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
@@ -24,6 +26,8 @@ export function Modal({ open, onClose, title, subtitle, children, footer, size =
       ref={ref}
       onClose={onClose}
       onCancel={(e) => { e.preventDefault(); onClose(); }}
+      onMouseDown={(e) => { downOnBackdrop.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (downOnBackdrop.current && e.target === e.currentTarget) onClose(); downOnBackdrop.current = false; }}
       aria-label={title}
       className={size === 'drawer'
         ? 'm-0 ml-auto h-full max-h-none w-full max-w-[560px] border-l border-line bg-surface p-0 text-ink shadow-pop backdrop:bg-black/30 backdrop:backdrop-blur-[2px]'

@@ -24,6 +24,8 @@ function Logo({ small }: { small?: boolean }) {
 
 async function logout() {
   await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
+  // Захиалгын ноорог дараагийн хэрэглэгчид харагдахгүй
+  try { localStorage.removeItem('zahialga:orderDraft:v1'); } catch { /* ignore */ }
   window.location.href = '/login';
 }
 

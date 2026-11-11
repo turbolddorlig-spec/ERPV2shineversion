@@ -38,6 +38,26 @@ export interface EditOrder {
 /** Цонх нээх үеийн урьдчилсан утга (дуудлагын бүртгэлээс «Захиалга» г.м.) */
 export interface OrderPrefill { phone?: string; pageId?: number | null; variantId?: number | null; code?: string | null }
 
+/** Шинэ захиалгын ноорог (санамсаргүй цонх хаагдвал алдагдахгүй) — зөвхөн энэ хөтөчид */
+const DRAFT_KEY = 'zahialga:orderDraft:v1';
+interface Draft {
+  pageId: string; phone: string; extraPhone: string; province: string; district: string; khoroo: string; detail: string; note: string;
+  dateMode: 'tomorrow' | 'today' | 'other'; otherDate: string; prepaidWait: boolean; lines: FormLine[]; feeOverride: string | null; feeReason: string;
+  blacklistNote: string; idemKey: string; savedAt: number;
+}
+function loadDraft(): Draft | null {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw) as Draft;
+    // 3 хоногоос хуучин ноорог хэрэггүй
+    return d && Date.now() - d.savedAt < 3 * 86_400_000 ? d : null;
+  } catch { return null; }
+}
+const saveDraft = (d: Draft | null) => { try { if (d) localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); else localStorage.removeItem(DRAFT_KEY); } catch { /* хадгалах боломжгүй — алгасна */ } };
+/** Захиалга амжилттай үүссэн эсвэл «Ноорог устгах» үед */
+export const clearOrderDraft = () => saveDraft(null);
+
 const ubDay = (add = 0) => new Date(Date.now() + 8 * 3600_000 + add * 86_400_000).toISOString().slice(0, 10);
 const newKey = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
@@ -83,26 +103,28 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
   edit?: EditOrder; addLines?: FormLine[]; prefill?: OrderPrefill | null; onClose: () => void; onDone: (msg: string, orderId: number) => void;
   onAddToExisting?: (orderId: number, lines: FormLine[]) => void; onBusy: (b: boolean) => void;
 }) {
+  // Ноорог: шинэ захиалгад (дуудлагаас бөглөөгүй үед) сэргээнэ
+  const [draft] = useState<Draft | null>(() => (!edit && !prefill?.phone ? loadDraft() : null));
   const [pages, setPages] = useState<{ id: number; name: string }[]>([]);
   const [fees, setFees] = useState({ feeUB: 5000, feeRural: 10000 });
-  const [pageId, setPageId] = useState(edit ? String(edit.pageId) : prefill?.pageId ? String(prefill.pageId) : '');
-  const [phone, setPhone] = useState(edit?.phone ?? prefill?.phone ?? '');
-  const [extraPhone, setExtraPhone] = useState(edit?.extraPhone ?? '');
-  const [province, setProvince] = useState(edit?.province ?? UB);
-  const [district, setDistrict] = useState(edit?.district ?? '');
-  const [khoroo, setKhoroo] = useState(edit?.khoroo ? String(edit.khoroo) : '');
-  const [detail, setDetail] = useState(edit?.addressDetail ?? '');
-  const [note, setNote] = useState(edit?.note ?? '');
-  const [dateMode, setDateMode] = useState<'tomorrow' | 'today' | 'other'>(edit ? (edit.deliveryDate === ubDay() ? 'today' : edit.deliveryDate === ubDay(1) ? 'tomorrow' : 'other') : 'tomorrow');
-  const [otherDate, setOtherDate] = useState(edit?.deliveryDate ?? ubDay(2));
-  const [prepaidWait, setPrepaidWait] = useState(false);
+  const [pageId, setPageId] = useState(edit ? String(edit.pageId) : prefill?.pageId ? String(prefill.pageId) : draft?.pageId ?? '');
+  const [phone, setPhone] = useState(edit?.phone ?? prefill?.phone ?? draft?.phone ?? '');
+  const [extraPhone, setExtraPhone] = useState(edit?.extraPhone ?? draft?.extraPhone ?? '');
+  const [province, setProvince] = useState(edit?.province ?? draft?.province ?? UB);
+  const [district, setDistrict] = useState(edit?.district ?? draft?.district ?? '');
+  const [khoroo, setKhoroo] = useState(edit?.khoroo ? String(edit.khoroo) : draft?.khoroo ?? '');
+  const [detail, setDetail] = useState(edit?.addressDetail ?? draft?.detail ?? '');
+  const [note, setNote] = useState(edit?.note ?? draft?.note ?? '');
+  const [dateMode, setDateMode] = useState<'tomorrow' | 'today' | 'other'>(edit ? (edit.deliveryDate === ubDay() ? 'today' : edit.deliveryDate === ubDay(1) ? 'tomorrow' : 'other') : draft?.dateMode ?? 'tomorrow');
+  const [otherDate, setOtherDate] = useState(edit?.deliveryDate ?? (draft?.otherDate && draft.otherDate > ubDay() ? draft.otherDate : ubDay(2)));
+  const [prepaidWait, setPrepaidWait] = useState(draft?.prepaidWait ?? false);
   const [lines, setLines] = useState<FormLine[]>(() => {
-    const base = edit ? edit.lines.map((l) => ({ ...l, description: null, discountReason: l.discountReason ?? '', available: null })) : [];
+    const base = edit ? edit.lines.map((l) => ({ ...l, description: null, discountReason: l.discountReason ?? '', available: null })) : draft?.lines ?? [];
     return addLines?.length ? mergeLines(base, addLines) : base;
   });
-  const [feeOverride, setFeeOverride] = useState<string | null>(edit?.deliveryFeeEdited ? String(edit.deliveryFee) : null);
-  const [feeReason, setFeeReason] = useState('');
-  const [blacklistNote, setBlacklistNote] = useState('');
+  const [feeOverride, setFeeOverride] = useState<string | null>(edit?.deliveryFeeEdited ? String(edit.deliveryFee) : draft?.feeOverride ?? null);
+  const [feeReason, setFeeReason] = useState(draft?.feeReason ?? '');
+  const [blacklistNote, setBlacklistNote] = useState(draft?.blacklistNote ?? '');
   const [card, setCard] = useState<Card | null>(null);
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<Hit[]>([]);
@@ -110,7 +132,9 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
   const [popular, setPopular] = useState<Hit[]>([]);
   const [busy, setBusyState] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [idemKey] = useState(newKey);
+  const [idemKey, setIdemKey] = useState(() => draft?.idemKey ?? newKey());
+  const [restored, setRestored] = useState(!!draft);
+  const submitted = useRef(false);
   const qReq = useRef(0);
   const setBusy = (b: boolean) => { setBusyState(b); onBusy(b); };
 
@@ -146,6 +170,22 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
       .then((r) => { if (id === qReq.current) { setHits(r.items); setSearching(false); } }).catch(() => setSearching(false)), 220);
     return () => clearTimeout(t);
   }, [q]);
+
+  // Ноорог автоматаар хадгална (шинэ захиалга): цонх санамсаргүй хаагдсан ч алдагдахгүй
+  useEffect(() => {
+    if (edit || submitted.current) return;
+    const t = setTimeout(() => {
+      if (submitted.current) return;
+      const has = phone.trim() || extraPhone.trim() || detail.trim() || note.trim() || lines.length;
+      saveDraft(has ? { pageId, phone, extraPhone, province, district, khoroo, detail, note, dateMode, otherDate, prepaidWait, lines, feeOverride, feeReason, blacklistNote, idemKey, savedAt: Date.now() } : null);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [edit, pageId, phone, extraPhone, province, district, khoroo, detail, note, dateMode, otherDate, prepaidWait, lines, feeOverride, feeReason, blacklistNote, idemKey]);
+  function discardDraft() {
+    clearOrderDraft();
+    setPhone(''); setExtraPhone(''); setProvince(UB); setDistrict(''); setKhoroo(''); setDetail(''); setNote(''); setDateMode('tomorrow'); setOtherDate(ubDay(2));
+    setPrepaidWait(false); setLines([]); setFeeOverride(null); setFeeReason(''); setBlacklistNote(''); setIdemKey(newKey()); setRestored(false); setError(null);
+  }
 
   const ub = isUB(province);
   const deliveryDate = dateMode === 'today' ? ubDay() : dateMode === 'tomorrow' ? ubDay(1) : otherDate;
@@ -198,6 +238,8 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
           onDone(`№${edit.number} хадгалагдлаа`, edit.id);
         } else {
           const r = await api<{ order: { id: number; number: string } }>('/api/orders', { method: 'POST', json: { ...body, prepaidWait, idemKey } });
+          submitted.current = true;
+          clearOrderDraft();
           setBusy(false);
           onDone(`№${r.order.number} захиалга үүслээ`, r.order.id);
         }
@@ -233,7 +275,7 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
           </div>
           {card ? <CustomerCard card={card} dup={dup} hasLines={lines.length > 0}
             onAddress={() => { if (card.lastAddress) { setProvince(card.lastAddress.province); setDistrict(card.lastAddress.district ?? ''); setKhoroo(card.lastAddress.khoroo ? String(card.lastAddress.khoroo) : ''); setDetail(card.lastAddress.addressDetail); } }}
-            onAddToExisting={() => { if (dup && onAddToExisting) onAddToExisting(dup.id, lines); }}
+            onAddToExisting={() => { if (dup && onAddToExisting) (clearOrderDraft(), onAddToExisting(dup.id, lines)); }}
             onCall={(c) => { if (c.pageId) setPageId(String(c.pageId)); if (c.variantId) api<{ items: Hit[] }>(`/api/products/search?q=${encodeURIComponent((c.product ?? '').match(/\(([^)]+)\)$/)?.[1] ?? '')}&limit=5`).then((r) => { const h = r.items.find((x) => x.variantId === c.variantId); if (h) addHit(h); }).catch(() => undefined); }} /> : null}
           {card?.blacklist.length ? (
             <label className="flex flex-col gap-1 text-[12.5px] font-semibold text-bad-ink">Хар жагсаалттай — яагаад авч байгаагаа бичнэ үү (5+ тэмдэгт)
@@ -376,11 +418,13 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
       </div>
       <div className="flex flex-col gap-2 border-t border-line bg-surface2/60 px-4 py-2.5 pb-[max(10px,env(safe-area-inset-bottom))]">
         {error ? <Notice>{error}</Notice> : null}
+        {restored && !edit ? <p className="rounded-lg bg-info-soft px-3 py-1.5 text-[12.5px] text-info">📝 Өмнө бөглөж байсан ноорог сэргээгдлээ{draft ? ` (${new Date(draft.savedAt + 8 * 3600_000).toISOString().slice(11, 16)})` : ''}. Шинээр эхлэх бол «Ноорог устгах».</p> : null}
         {dup && !edit ? <Notice tone="warn">Энэ утсаар идэвхтэй захиалга №{dup.number} байна — шинэ захиалга үүсгэхгүй, тэр захиалгад бараа нэмнэ.</Notice> : null}
         <div className="flex flex-wrap items-center justify-end gap-2">
           {statusHint ? <span className="mr-auto text-[12.5px] text-muted">Төлөв: <b className="text-ink">{statusHint}</b></span> : null}
+          {!edit && (restored || phone || detail || lines.length) ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => { if (confirm('Бөглөсөн мэдээллийг устгаж шинээр эхлэх үү?')) discardDraft(); }}>Ноорог устгах</Button> : null}
           <Button size="sm" onClick={onClose} disabled={busy}>Болих</Button>
-          {dup && !edit ? <Button size="sm" variant="primary" disabled={dup.inHandover || !onAddToExisting} onClick={() => onAddToExisting?.(dup.id, lines)}>№{dup.number} захиалгад бараа нэмэх</Button>
+          {dup && !edit ? <Button size="sm" variant="primary" disabled={dup.inHandover || !onAddToExisting} onClick={() => (clearOrderDraft(), onAddToExisting?.(dup.id, lines))}>№{dup.number} захиалгад бараа нэмэх</Button>
             : <Button size="sm" variant="primary" loading={busy} onClick={submit}>{edit ? 'Хадгалах' : 'Захиалга үүсгэх'}</Button>}
         </div>
       </div>

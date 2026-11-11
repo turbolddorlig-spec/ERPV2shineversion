@@ -24,6 +24,8 @@ export function MeActions({ theme }: { theme: string }) {
   async function out(all: boolean) {
     setBusy(all ? 'all' : 'one');
     await fetch(all ? '/api/auth/logout-all' : '/api/auth/logout', { method: 'POST' }).catch(() => undefined);
+    // Захиалгын ноорог дараагийн хэрэглэгчид харагдахгүй
+    try { localStorage.removeItem('zahialga:orderDraft:v1'); } catch { /* ignore */ }
     window.location.href = '/login';
   }
 
