@@ -1,0 +1,118 @@
+<title>Модуль 5 Төлөвлөгөө</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap">
+<style>
+/* Layout: report column; verdict → numbers → 13 sections of MASTER §13 → screenshots → owner actions */
+:root{--bg:#F5F4F0;--surface:#FFFFFF;--surface2:#EFEDE7;--line:#E1DED6;--ink:#16181D;--muted:#4D525C;--subtle:#5F646E;--accent:#C2410C;--accent-soft:#FFF1E8;--ok:#166534;--ok-bg:#E6F4EA;--warn:#92400E;--warn-bg:#FEF3C7;--font:"Onest",Inter,system-ui,sans-serif}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0E1014;--surface:#171A20;--surface2:#1D2028;--line:#2A2E38;--ink:#ECEDEF;--muted:#B0B4BD;--subtle:#9A9FA9;--accent:#FF8A4C;--accent-soft:rgba(255,122,61,.14);--ok:#86EFAC;--ok-bg:rgba(74,222,128,.13);--warn:#FCD34D;--warn-bg:rgba(251,191,36,.14);color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0E1014;--surface:#171A20;--surface2:#1D2028;--line:#2A2E38;--ink:#ECEDEF;--muted:#B0B4BD;--subtle:#9A9FA9;--accent:#FF8A4C;--accent-soft:rgba(255,122,61,.14);--ok:#86EFAC;--ok-bg:rgba(74,222,128,.13);--warn:#FCD34D;--warn-bg:rgba(251,191,36,.14);color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.6;font-variant-numeric:tabular-nums;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1000px;margin:0 auto;padding-block:36px 64px;display:flex;flex-direction:column;gap:34px}
+h1{font-size:clamp(28px,4vw,38px);font-weight:800;letter-spacing:-.03em;line-height:1.1;margin:0}
+h2{font-size:20px;font-weight:800;letter-spacing:-.02em;margin:0}
+p{margin:0;max-width:76ch}
+.eyebrow{font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--subtle)}
+.brand{font-weight:800}.brand span{color:var(--accent)}
+section{display:flex;flex-direction:column;gap:12px}
+.verdict{background:var(--ok-bg);color:var(--ok);border-radius:16px;padding:16px 18px;font-weight:700}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:2px}
+.stat b{font-size:26px;font-weight:800;letter-spacing:-.02em}
+.stat span{font-size:13px;color:var(--muted)}
+ul,ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;max-width:82ch}
+li{color:var(--muted)} li strong{color:var(--ink)}
+code{font-size:12.5px;background:var(--surface2);padding:1px 5px;border-radius:5px}
+.tablebox{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:13.5px}
+th{text-align:left;font-size:12px;font-weight:700;color:var(--muted);background:var(--surface2);padding:9px 12px;border-bottom:1px solid var(--line)}
+td{padding:9px 12px;border-bottom:1px solid var(--line);color:var(--muted);vertical-align:top}
+td:first-child{color:var(--ink);font-weight:600}
+td.n{text-align:right;font-weight:700;color:var(--ink)}
+tr:last-child td{border-bottom:0}
+.shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+figure{margin:0;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px;display:flex;flex-direction:column;gap:8px;min-width:0}
+figure img{width:100%;height:auto;max-height:520px;object-fit:contain;object-position:top;border-radius:8px;background:var(--surface2)}
+figcaption{font-size:13px;color:var(--muted);font-weight:600}
+.note{background:var(--warn-bg);color:var(--warn);border-radius:14px;padding:14px 16px;font-size:14px}
+.todo{background:var(--accent-soft);border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;gap:8px}
+footer{font-size:13px;color:var(--subtle)}
+</style>
+<div class="wrap">
+<header style="display:flex;flex-direction:column;gap:10px">
+<span class="eyebrow"><span class="brand">zahialga<span>•</span></span> · ERP V2 · Модуль 4 · Төлөвлөгөө (таны хариутай, батлуулахаар)</span>
+<h1>Падаан — жолоочид бараа өгөх</h1>
+<p style="color:var(--muted)">2026.11.11 · Хуучин ERP-ийн кодыг судалсан дүн, шинэ системд хэрхэн хийх санал, танаас асуух зүйлс. <b>Код бичээгүй.</b></p>
+<header style="display:flex;flex-direction:column;gap:10px">
+<span class="eyebrow"><span class="brand">zahialga<span>•</span></span> · ERP V2 · Модуль 5 · Төлөвлөгөө (батлуулахаар)</span>
+<h1>Жолооч — хүргэлт, цуцлалт, «Маргааш», буцаалт</h1>
+<p style="color:var(--muted)">2026.11.11 · Хуучин ERP-ийн кодыг судалсан дүн, таны хариулт, шинэ системд хэрхэн хийх. <b>Таныг «Модуль 5-ын төлөвлөгөөг зөвшөөрч байна» гэж бичихээс өмнө код бичихгүй.</b></p>
+</header>
+
+<section><h2>1. Хуучин ERP яаж ажилладаг байсан</h2><ol>
+<li><strong>Жолоочийн апп:</strong> табууд «Бүгд · Хүргэлт · Хүргэсэн · Цуцласан · Маргааш · Өчигдөр», захиалгын карт (дугаар, утас — дарахад залгана, хаяг, санамж, бараа зурагтай, дүн), жолооч өөрөө дарааллын «#» дугаар бичнэ.</li>
+<li><strong>«Хүргэсэн»:</strong> «Үйлчлүүлэгч мөнгөө өгсөн үү?» → «Төлсөн» (Бэлэн / Данс) эсвэл «Төлөөгүй» (өр үүснэ). Урьдчилж төлсөн бол тайлбар бичнэ.</li>
+<li><strong>«Цуцлах»:</strong> шалтгаан (5+ тэмдэгт), «Мөнгө өгдөггүй хүн» чагтлавал хар жагсаалтад. Хүргэсэн захиалгыг «Цуцлах (буцаах)», цуцалсныг «Хүргэсэн болгох».</li>
+<li><strong>«Маргааш»:</strong> захиалгыг ЦУЦАЛЖ, шинэ дугаартай хуулбар захиалга үүсгэдэг; «2 удаа» хязгаар ажилладаггүй; нэвтрэлт шалгадаггүй.</li>
+<li><strong>«Опп-руу явуулах»:</strong> Бараа буруу / Дугаар буруу / Хаяг тодорхойгүй — ахлах оператор шийднэ (Опп-н алдаа / Жолоочийн алдаа / Зассан).</li>
+<li><strong>Буцаалт (агуулах):</strong> огноо → жолооч → захиалгууд; «бүх барааг буцааж авах», хүргэсэн захиалгаас хэсэгчлэн буцаах, «өр үүсгэх» (дутуу бараа).</li>
+<li><strong>Нэмэлт бараа:</strong> жолооч өөрөө бараа, тоо бичээд авч явна, зарсан мөнгөө тушаана, үлдсэнийг буцаана. <strong>Pickup:</strong> жолооч хуваарилаагүй захиалгыг өөрөө авна.</li>
+</ol></section>
+
+<section><h2>2. Хуучин үлдэгдэл яагаад зөрдөг байсан (энэ хэсэгт)</h2>
+<div class="note"><ul>
+<li>Падаанаар өгөхөд үлдэгдэл хасагддаггүй, «Хүргэсэн» үед л хасагддаг; харин цуцалсан/хойшилсон барааг буцааж авахад <b>+</b> нэмэгддэг → цуцлалт бүрт байхгүй бараа нэмэгддэг.</li>
+<li>«Маргааш» нөөцийг 2 удаа суллаж, шинэ захиалгын нөөцийг «хулгайлдаг».</li>
+<li>Буцааж авсан захиалгыг «Хүргэсэн болгох» дарахад дахин хасдаг; хэсэгчилсэн буцаалтыг давтан хийж болдог; нэмэлт барааны буцаалтыг 2 дарвал 2 дахин нэмдэг.</li>
+<li>Үлдэгдэл, нөөц, боломжтой гэсэн 3 тоог тус тусад нь нэмж хасдаг — нэг удаа зөрвөл үүрд зөрнө.</li>
+</ul></div>
+<p>V2-т эдгээр боломжгүй: бараа бүрийн хөдөлгөөн нэг журналаар (B2), байршил бүр (агуулах, <b>жолооч</b>) өөрийн үлдэгдэлтэй, давхар дарахад нэг л удаа бүртгэгдэнэ, цаг тутам автомат тулгалт.</p></section>
+
+<section><h2>3. Шинэ системд хэрхэн ажиллах (жишээ: №1001, гутал 2ш + малгай 1ш, жолооч Бат)</h2>
+<div class="tablebox"><table>
+<thead><tr><th>Үйлдэл</th><th>Захиалга</th><th>Бараа (журнал)</th></tr></thead>
+<tbody>
+<tr><td>Падаан өгсөн (Модуль 4)</td><td>Хүргэлтэд гарсан</td><td>Агуулах → <b>Бат</b> (гутал 2, малгай 1)</td></tr>
+<tr><td>«Хүргэсэн» — бүгдийг авсан, Бэлэн</td><td>Хүргэсэн · Бэлэн · дүн хэвээр</td><td>Бат → үйлчлүүлэгч (гутал 2, малгай 1)</td></tr>
+<tr><td>«Хүргэсэн» — малгайг <b>болиулсан</b> (чагтаа авсан)</td><td>Хүргэсэн · дүн автоматаар дахин бодогдоно (малгайн үнэ хасагдана) · малгайн мөр «Болиулсан» гэж харагдана</td><td>Бат → үйлчлүүлэгч (гутал 2); малгай 1 <b>Батад үлдэж</b> «буцаах» жагсаалтад</td></tr>
+<tr><td>«Цуцлах» (шалтгаантай)</td><td>Цуцлагдсан</td><td>Бүх бараа Батад үлдэж «буцаах» жагсаалтад</td></tr>
+<tr><td>«Маргааш» (1 эсвэл 2 дахь удаа)</td><td><b>Ижил дугаар №1001</b> → «Шинэ», хүргэх өдөр = маргааш, «Хойшилсон ×1» тэмдэг, жолоочгүй болно. Ахлах жолооч дурын жолоочид оноож, эсвэл жолооч өөрөө (Pickup) авч болно — бараа буцахаас өмнө ч</td><td>Бараа Батад үлдэж «буцаах» жагсаалтад; агуулахад нөөц дахин тавигдана (бараа буцах хүртэл «боломжтой» түр багасна — давхар зарагдахаас хамгаална)</td></tr>
+<tr><td>Орой агуулах «Буцаалт хүлээн авах»</td><td>—</td><td>Бат → үндсэн агуулах (тоолж авсан тоогоор). Дутуу бол Батын «буцаагаагүй» үлдэгдэлд үлдэнэ (өр болгох нь Модуль 6)</td></tr>
+<tr><td>Маргааш шинэ падаан</td><td>Оноогдсон → Хүргэлтэд гарсан</td><td>Агуулах → шинэ жолооч (ердийн падаан). Бараа буцаагүй бол падаан «үлдэгдэл хүрэлцэхгүй» гэж анхааруулж, «Бат буцаагаагүй» гэж харуулна</td></tr>
+<tr><td>3 дахь «Маргааш»</td><td>Товч <b>цоожтой</b> — «2 удаа хойшилсон, ахлах жолооч / оператор шийднэ»</td><td>—</td></tr>
+<tr><td>«Цуцлах (буцаах)» хүргэсэн захиалгыг</td><td>Цуцлагдсан</td><td>Үйлчлүүлэгч → Бат (буцаах жагсаалтад)</td></tr>
+<tr><td>«Хүргэсэн болгох» цуцалсныг</td><td>Хүргэсэн</td><td>Бараа Батад байгаа бол л болно; агуулахад буцсан бол «бараа агуулахад буцсан» гэж татгалзана (хуучны давхар хасалт гарахгүй)</td></tr>
+</tbody></table></div></section>
+
+<section><h2>4. Хийх ажлууд</h2><ol>
+<li><strong>Жолоочийн апп (/driver, утсанд зориулсан):</strong> хуучин табууд — Бүгд · Хүргэлт · Хүргэсэн · Цуцласан · Маргааш · Өчигдөр, мөн «Авах» (Pickup), «Нэмэлт бараа», «Миний бараа» (гарт байгаа, буцаах). Карт хуучин шиг; утас дарахад залгана; «#» дараалал. Захиалгыг <b>хүргэх өдөр + жолоочоор</b> сонгоно (хуучны «үүссэн өдөр» алдаа гарахгүй). Урт хаяг, санамж багтана (B3).</li>
+<li><strong>Хүргэсэн:</strong> бараа бүр чагттай (анхдагч бүгд); болиулсныг чагтаа авна → дүн шууд шинэчлэгдэнэ; дараа нь Бэлэн / Данс / Төлөөгүй (өр), урьдчилж төлсөн бол тайлбар. Мөнгөний дүн хадгалагдана — тооцоо, цалин Модуль 6-д (хэсэгчилсэн хүргэлтийн тооцоог тэнд заавал шалгана).</li>
+<li><strong>Цуцлах, Маргааш, Опп-руу явуулах, Цуцлах (буцаах), Хүргэсэн болгох</strong> — дээрх хүснэгтээр. «Маргааш» 2 удаа, дараа нь цоож.</li>
+<li><strong>Асуудал (Опп-руу):</strong> захиалга хүргэлтэд хэвээр, «Асуудалтай» тэмдэг; ахлах оператор «Зассан» (жолооч үргэлжлүүлнэ) эсвэл «Цуцлах» (Опп-н / Жолоочийн / Маркетингийн / Агуулахын алдаа гэж тэмдэглэнэ — торгууль Модуль 7).</li>
+<li><strong>Буцаалт хүлээн авах (агуулах):</strong> жолооч сонгоход түүний гарт байгаа, хүргэлтэд хамааралгүй бүх бараа (цуцалсан, хойшилсон, болиулсан, нэмэлт) нэг жагсаалтаар; бараа бүрийн ирсэн тоог оруулж «Хүлээн авсан». Давхар дарахад нэг удаа. Дутууг жолоочийн «буцаагаагүй» үлдэгдэлд үлдээнэ.</li>
+<li><strong>Нэмэлт бараа (хуучин шиг):</strong> жолооч бараа, тоог сонгож авна → бараа агуулахаас жолоочид шилжинэ (журналаар). Зарсныг жолооч бүртгэнэ — үнэ системийн үнээр (хуучин шиг жолооч өөрөө үнэ бичихгүй); үлдсэнийг буцаалтаар.</li>
+<li><strong>Pickup (хуучин шиг):</strong> жолооч хуваарилаагүй «Шинэ» захиалгыг өөрөө авна — Модуль 4-ийн дүрэм хэвээр (падаан өгөгдсөн бол маргааш, падаанд автоматаар нэмэгдэнэ, төлбөр хүлээж буй / он сар өдөртэйг авахгүй). Ахлах жолоочид харагдана.</li>
+<li><strong>Жолоочийн хяналт (Супер админ, Админ, Ахлах жолооч, Нягтлан):</strong> өдрөөр, жолооч бүрээр — оноосон, хүргэлтэд, хүргэсэн, цуцалсан, хойшилсон, гарт байгаа бараа (ширхэг), 1+ өдөр буцаагаагүй бараа, авсан мөнгө (Бэлэн / Данс / Өр) — зөвхөн харах.</li>
+<li><strong>Аюулгүй байдал:</strong> бүх товч сессээр — жолооч зөвхөн өөрийн захиалгад (хуучинд хэн ч дарж болдог байсан).</li>
+<li><strong>Өөрчлөгдөхгүй:</strong> Meta CAPI хүргэлт/цуцлалтад илгээхгүй (хуучин шиг).</li>
+</ol></section>
+
+<section><h2>5. Таны шийдвэр (#73)</h2><ol>
+<li>«Маргааш»: бараа заавал агуулахад буцаж, маргааш шинэ падаанаар; захиалгыг бараа буцахаас өмнө дурын жолоочид оноож / жолооч өөрөө авч болно.</li>
+<li>«Маргааш» 2 удаа, дараа нь цоож.</li>
+<li>Хэсэгчилсэн хүргэлт: жолооч «Хүргэсэн» дарахаасаа өмнө болиулах барааг чагтаа авна, жолоочид төвөггүй; тооцоолол зөрөхгүй — Модуль 6-д заавал шалгана.</li>
+<li>Нэмэлт бараа, Pickup — хуучин шиг.</li>
+</ol></section>
+
+<section><h2>6. Ажлын дараалал</h2><ol>
+<li>Өгөгдлийн сан: хүргэлтийн мэдээлэл (төлбөрийн хэлбэр, дүн, болиулсан мөр, хойшилсон тоо, асуудал), нэмэлт бараа, буцаалтын баримт; журналын шинэ төрлүүд: Хүргэсэн, Буцаан авсан (үйлчлүүлэгчээс), Жолоочоос буцаалт, Нэмэлт бараа, Нэмэлт бараа зарсан.</li>
+<li>Сервисүүд + эрх + түүх (writeAudit).</li>
+<li>Жолоочийн апп, буцаалт хүлээн авах (агуулах), асуудал шийдэх (ахлах оператор), жолоочийн хяналт, ахлах жолоочийн KPI-д «хойшилсон».</li>
+<li>Тест: бүх замын үлдэгдэл (тулгалт 0), давхар дарах, зэрэг үйлдэл, урт текст (B3), 150 хэрэглэгчийн ачаалал (жолооч 40+ зэрэг хүргэж байхад), Docker шинэчлэл.</li>
+<li>Тайлан, дэлгэцийн зураг → таны баталгаа.</li>
+</ol></section>
+
+<div class="todo"><b>Танаас:</b> зөвшөөрвөл «Модуль 5-ын төлөвлөгөөг зөвшөөрч байна» гэж бичнэ үү. Өөрчлөх зүйл байвал хэлээрэй.</div>
+<footer>Хуучин ERP-д хүрээгүй (зөвхөн кодыг уншсан). Бодит өгөгдөл ашиглаагүй.</footer>
+</div>
