@@ -54,6 +54,7 @@ export function OutflowClient() {
   const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [dlg, setDlg] = useState<null | { k: 'alert'; row: Row } | { k: 'edit'; row: Row } | { k: 'profit'; id: number } | { k: 'bulk'; ids: number[] } | { k: 'pages' | 'stats' | 'work' | 'my' | 'eval' | 'config' }>(null);
+  const [menu, setMenu] = useState(false);
   const [hover, setHover] = useState<{ id: number; x: number; y: number } | null>(null);
   useEffect(() => { const t = setTimeout(() => setQd(q), 300); return () => clearTimeout(t); }, [q]);
   const params = useMemo(() => new URLSearchParams({ tab, q: qd, zone, owner, dollar, status, sort, dir, page: String(page) }).toString(), [tab, qd, zone, owner, dollar, status, sort, dir, page]);
@@ -81,11 +82,18 @@ export function OutflowClient() {
           <p className="text-[13.5px] text-muted">7 хоног · захиалгын өдрөөр (төлбөр хүлээж буй, тэр өдөртөө цуцлагдсан орохгүй) · өдрийн дундаж = 7 хоног ÷ 7</p>
           {d ? <div className="mt-2 flex flex-wrap gap-2 text-[13px]"><span className="rounded-full bg-accent-soft px-3 py-1 font-bold text-accent">Өнөөдөр {d.totals.today}</span><span className="rounded-full bg-surface2 px-3 py-1 font-semibold">Өчигдөр {d.totals.yesterday}</span></div> : null}
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => setDlg({ k: 'my' })}>Өөрийн ажил</Button>
-          <Button size="sm" onClick={() => setDlg({ k: 'work' })}>Ажлын цонх</Button>
-          <Button size="sm" onClick={() => setDlg({ k: 'eval' })}>Үнэлгээ</Button>
-          {d?.isLead ? <><Button size="sm" onClick={() => setDlg({ k: 'pages' })}>Пэйж хувиарлах</Button><Button size="sm" onClick={() => setDlg({ k: 'stats' })}>Статистик</Button><Button size="sm" onClick={() => setDlg({ k: 'config' })}>Тохиргоо</Button></> : null}
+        <div className="relative">
+          <Button size="sm" onClick={() => setMenu(!menu)} aria-expanded={menu} aria-label="Бусад цэс">⋯</Button>
+          {menu ? (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setMenu(false)} />
+              <div className="absolute right-0 z-20 mt-1 flex w-[220px] flex-col rounded-[12px] border border-line bg-surface p-1 shadow-card">
+                {([['my', 'Өөрийн ажил'], ['work', 'Ажлын цонх'], ['eval', 'Үнэлгээ'], ...(d?.isLead ? [['pages', 'Пэйж хувиарлах'], ['stats', 'Статистик'], ['config', 'Тохиргоо']] : [])] as ['my' | 'work' | 'eval' | 'pages' | 'stats' | 'config', string][]).map(([k, l]) => (
+                  <button key={k} type="button" onClick={() => { setMenu(false); setDlg({ k }); }} className="rounded-[9px] px-3 py-2 text-left text-[13.5px] font-semibold hover:bg-surface2">{l}</button>
+                ))}
+              </div>
+            </>
+          ) : null}
         </div>
       </div>
       {err ? <Notice>{err}</Notice> : null}
