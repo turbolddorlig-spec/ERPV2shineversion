@@ -75,7 +75,7 @@ export function OutflowClient() {
   );
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="full-bleed flex flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-[24px] font-extrabold tracking-tight">Барааны гарц</h1>
@@ -126,23 +126,23 @@ export function OutflowClient() {
       </div>
       {d ? (
         <>
-          <div className="hidden overflow-x-auto rounded-2xl border border-line bg-surface lg:block">
-            <table className="w-full min-w-[1120px] text-[13px]">
+          <div className="hidden overflow-x-auto rounded-2xl border border-line bg-surface xl:block">
+            <table className="w-full min-w-[960px] text-[13px]">
               <thead><tr className="bg-surface2 text-[12px] text-muted">
                 {d.isLead ? <th className="w-8 px-2"><input type="checkbox" aria-label="Бүгдийг сонгох" checked={d.rows.length > 0 && d.rows.every((r) => sel.has(r.id))} onChange={(e) => setSel(e.target.checked ? new Set(d.rows.map((r) => r.id)) : new Set())} /></th> : null}
                 <th className="cursor-pointer px-2 py-2 text-left" onClick={() => sortBy('name')}>Бараа{sort === 'name' ? (dir === 'desc' ? ' ↓' : ' ↑') : ''}</th>
                 <th className="px-1 py-2">$</th>{th('zones', 'Бүүст', 'text-center')}<th className="px-1 py-2">AD</th>
                 {d.days.map((day, i) => th(`d${i}`, i === 0 ? 'Өнөөдөр' : md(day), 'text-center'))}
-                {th('week', '7 хоног', 'text-center')}{th('avg', 'Дундаж')}
+                {th('week', '7 хоног', 'text-center')}{th('avg', 'Дундаж', 'hidden min-[1360px]:table-cell')}
                 <th className="px-2 py-2 text-right">Боломжтой</th>
                 {d.isSA ? th('profit', 'Ашиг/ш') : null}
-                <th className="px-2 py-2 text-left">Хариуцагч · тэмдэглэл</th><th className="px-2 py-2 text-right">⚠</th>
+                <th className="px-1.5 py-2 text-left">Хариуцагч</th><th className="px-2 py-2 text-right">⚠</th>
               </tr></thead>
               <tbody>
                 {d.rows.map((r) => (
                   <tr key={r.id} className={clsx('border-t border-line', r.alert === 'RED' && 'shadow-[inset_3px_0_0_var(--bad)]', r.alert === 'ORANGE' && 'shadow-[inset_3px_0_0_var(--warn-ink)]')}>
                     {d.isLead ? <td className="px-2"><input type="checkbox" aria-label={`${r.name} сонгох`} checked={sel.has(r.id)} onChange={(e) => { const n = new Set(sel); if (e.target.checked) n.add(r.id); else n.delete(r.id); setSel(n); }} /></td> : null}
-                    <td className="w-[200px] min-w-[200px] max-w-[200px] px-2 py-1.5" onMouseEnter={(e) => setHover({ id: r.id, x: e.clientX, y: e.clientY })} onMouseLeave={() => setHover(null)}>
+                    <td className="w-[160px] min-w-[160px] max-w-[160px] px-2 py-1.5" onMouseEnter={(e) => setHover({ id: r.id, x: e.clientX, y: e.clientY })} onMouseLeave={() => setHover(null)}>
                       <div className="[overflow-wrap:anywhere] font-semibold">{r.name}</div>
                       <div className="[overflow-wrap:anywhere] text-[11.5px] text-muted">{r.code} · {money(r.price)}{r.doneAt ? ` · ✓ ${r.doneByName ?? ''}` : ''}</div>
                     </td>
@@ -150,13 +150,13 @@ export function OutflowClient() {
                     <BoostCell row={r} field="zones" post={post} />
                     <BoostCell row={r} field="adNumber" post={post} />
                     {r.daily.map((v, i) => (
-                      <td key={i} className="px-0.5 py-1 text-center"><div className={clsx('mx-auto w-11 rounded-md py-0.5 font-semibold', cellCls(v, r))}>{v}</div>{r.phones[i] ? <div className="text-[10.5px] text-warn">☎{r.phones[i]}</div> : null}</td>
+                      <td key={i} className="px-0.5 py-1 text-center"><div className={clsx('mx-auto w-9 rounded-md py-0.5 font-semibold', cellCls(v, r))}>{v}</div>{r.phones[i] ? <div className="text-[10.5px] text-warn">☎{r.phones[i]}</div> : null}</td>
                     ))}
                     <td className="px-1 py-1 text-center font-bold">{r.weekTotal}{r.phoneWeek ? <div className="text-[10.5px] font-normal text-warn">☎{r.phoneWeek}</div> : null}</td>
-                    <td className="px-2 py-1 text-right">{r.avg}</td>
+                    <td className="hidden px-2 py-1 text-right min-[1360px]:table-cell">{r.avg}</td>
                     <td className={clsx('px-2 py-1 text-right', (r.stock?.available ?? 0) < r.avg && 'font-bold text-bad-ink')}>{r.stock?.available ?? 0}</td>
                     {d.isSA ? <td className="px-2 py-1 text-right">{r.profit?.status ? <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className={clsx('font-bold underline', STATUS[r.profit.status].cls)}>{STATUS[r.profit.status].icon} {money(r.profit.perUnit)}</button> : <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className="text-subtle underline">задаргаа</button>}</td> : null}
-                    <td className="w-[180px] min-w-[180px] max-w-[180px] px-2 py-1"><div className="[overflow-wrap:anywhere] text-[12.5px] font-semibold">{r.ownerName ?? '—'}</div>{r.note ? <div title={r.note} className="line-clamp-2 [overflow-wrap:anywhere] text-[11.5px] text-muted">{r.note}</div> : null}</td>
+                    <td className="w-[110px] min-w-[110px] max-w-[110px] px-1.5 py-1"><div className="[overflow-wrap:anywhere] text-[12.5px] font-semibold">{r.ownerName ?? '—'}</div>{r.note ? <div title={r.note} className="line-clamp-2 [overflow-wrap:anywhere] text-[11.5px] text-muted">{r.note}</div> : null}</td>
                     <td className="px-1 py-1"><div className="flex items-center justify-end gap-1"><button type="button" aria-label={`${r.name} засах`} title="Засах" onClick={() => setDlg({ k: 'edit', row: r })} className="h-8 w-8 rounded-lg border border-line bg-surface text-[14px] hover:bg-surface2">✎</button><AlertChip r={r} onOpen={() => setDlg({ k: 'alert', row: r })} /></div></td>
                   </tr>
                 ))}
@@ -164,7 +164,7 @@ export function OutflowClient() {
             </table>
             {d.rows.length === 0 ? <p className="p-6 text-center text-[14px] text-muted">Бараа олдсонгүй</p> : null}
           </div>
-          <div className="flex flex-col gap-2 lg:hidden">
+          <div className="flex flex-col gap-2 xl:hidden">
             {d.rows.map((r) => (
               <div key={r.id} className={clsx('flex min-w-0 flex-col gap-2 rounded-2xl border border-line bg-surface p-3', r.alert === 'RED' && 'border-l-4 border-l-bad', r.alert === 'ORANGE' && 'border-l-4 border-l-warn')}>
                 <div className="flex items-start justify-between gap-2">
@@ -214,8 +214,8 @@ function AlertChip({ r, onOpen }: { r: Row; onOpen: () => void }) {
   const watched = !!a.watchedUntil;
   return (
     <button type="button" data-alert-chip onClick={onOpen} title={a.reasons.join(' / ')}
-      className={clsx('inline-flex h-7 items-center gap-1 rounded-full px-2 text-[12px] font-bold', watched ? 'bg-surface2 text-muted' : a.level === 'RED' ? 'animate-pulse bg-bad text-white' : 'bg-warn-soft text-warn')}>
-      {watched ? '👁' : a.level === 'RED' ? '🔴' : '🟠'}<span className="hidden 2xl:inline">{watched ? 'Ажиглаж' : a.level === 'RED' ? 'Алдагдал' : 'Анхаар'}</span>
+      className={clsx('inline-flex h-8 w-8 items-center justify-center rounded-full text-[13px] font-bold', watched ? 'bg-surface2 text-muted' : a.level === 'RED' ? 'animate-pulse bg-bad text-white' : 'bg-warn-soft text-warn')}>
+      {watched ? '👁' : a.level === 'RED' ? '🔴' : '🟠'}
     </button>
   );
 }
@@ -249,7 +249,7 @@ function BoostCell({ row, field, post }: { row: Row; field: 'dollar' | 'zones' |
     <td className="px-0.5 py-1 text-center">
       <input value={v} inputMode="numeric" aria-label={`${row.name} ${label}`} onChange={(e) => setV(digits(e.target.value))}
         onBlur={() => { if (v !== init && !(field !== 'adNumber' && v === '')) void post({ action: 'boost', productId: row.id, [field]: v === '' ? null : Number(v) }, field === 'zones' ? (Number(v) > 0 ? `«${row.name}» бүүст ${v} — ажиглалт эхэллээ` : `«${row.name}» бүүст унтарлаа`) : undefined); }}
-        className={clsx('h-8 w-12 rounded-md border border-line bg-surface text-center text-[13px]', field === 'zones' && row.zones > 0 && 'border-accent font-bold text-accent')} />
+        className={clsx('h-8 w-10 rounded-md border border-line bg-surface text-center text-[13px]', field === 'zones' && row.zones > 0 && 'border-accent font-bold text-accent')} />
     </td>
   );
 }
