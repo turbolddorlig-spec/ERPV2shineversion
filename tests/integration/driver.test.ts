@@ -95,7 +95,14 @@ async function outFor(driver: UserActor, n = 1, lines = [{ variantId: v1, qty: 2
   await L.assignOrders(lead, { ids, driverId: driver.id });
   const h = await H.createHandover(wh, { driverId: driver.id, date: today, orderIds: ids });
   await H.prepareHandover(wh, h.id); await checkAll(h.id); await H.confirmHandover(wh, h.id);
+  await H.setDriverCheck(driver, h.id, { variantId: 'all', checked: true }); await H.receiveHandover(driver, h.id);
   return ids;
+}
+/** Тухайн өдрийн падаан → агуулах өгөх → жолооч хүлээн авах */
+async function handTo(driver: UserActor, date: string, ids: number[]) {
+  const h = await H.createHandover(wh, { driverId: driver.id, date, orderIds: ids });
+  await H.prepareHandover(wh, h.id); await checkAll(h.id); await H.confirmHandover(wh, h.id);
+  await H.setDriverCheck(driver, h.id, { variantId: 'all', checked: true }); await H.receiveHandover(driver, h.id);
 }
 const goods = async (u: UserActor) => {
   const g = await G.goodsView(u.id);
@@ -183,9 +190,14 @@ describe('цуцлах, маргааш', () => {
     await L.assignOrders(lead, { ids: [b], driverId: drv.id });
     const h = await H.createHandover(wh, { driverId: drv.id, date: tomorrow, orderIds: [b] });
     expect(await db.stockReservation.count({ where: { orderId: b } })).toBe(1);
-    await DR.driverCancel(drv, b, { note: 'Үйлчлүүлэгч болисон' });
-    expect(await db.stockReservation.count({ where: { orderId: b } })).toBe(0);
-    expect((await db.handoverOrder.findFirstOrThrow({ where: { handoverId: h.id, orderId: b } })).removedAt).not.toBeNull();
+    // #77 (хуучин шиг): падаанаа хүлээн авахаас өмнө жолооч цуцлах/маргааш/асуудал дарахгүй — карт зөвхөн хаягтай
+    await err(DR.driverCancel(drv, b, { note: 'Үйлчлүүлэгч болисон' }), 409, 'not_received');
+    await err(DR.postponeOrder(drv, b, {}), 409, 'not_received');
+    await err(DR.reportIssue(drv, b, { type: 'WRONG_NUMBER' }), 409, 'not_received');
+    const card = (await DR.driverOrders(drv, 'tomorrow')).items.find((x) => x.id === b)!;
+    expect([card.goodsHidden, card.lines.length, card.total, Object.values(card.can).some(Boolean)]).toEqual([true, 0, 0, false]);
+    expect(await db.stockReservation.count({ where: { orderId: b } })).toBe(1);
+    expect((await db.handoverOrder.findFirstOrThrow({ where: { handoverId: h.id, orderId: b } })).removedAt).toBeNull();
     await recOk();
   });
 
@@ -208,6 +220,7 @@ describe('цуцлах, маргааш', () => {
     expect(await goods(drv)).toEqual({});
     const h2 = await H.createHandover(wh, { driverId: drv2.id, date: tomorrow, orderIds: [id] });
     await H.prepareHandover(wh, h2.id); await checkAll(h2.id); await H.confirmHandover(wh, h2.id);
+    await H.setDriverCheck(drv2, h2.id, { variantId: 'all', checked: true }); await H.receiveHandover(drv2, h2.id);
     expect(await goods(drv2)).toEqual({ [v1]: [2, 2, 0], [v2]: [1, 1, 0] });
     await DR.deliverOrder(drv2, id, { payment: 'CASH' });
     await recOk();
@@ -224,10 +237,12 @@ describe('цуцлах, маргааш', () => {
     await DR.postponeOrder(drv, id, {});
     await L.assignOrders(lead, { ids: [id], driverId: drv.id }); // өнөөдрийн падаан өгөгдсөн → маргааш
     await err(DR.undoPostpone(drv, id), 409, 'already_reassigned');
-    await DR.postponeOrder(drv, id, {}); // 2 дахь (ASSIGNED-ээс)
+    await handTo(drv, tomorrow, [id]);
+    await DR.postponeOrder(drv, id, {}); // 2 дахь
     o = await db.order.findUniqueOrThrow({ where: { id } });
     expect([o.status, o.postponeCount]).toEqual(['NEW', 2]);
-    await L.assignOrders(lead, { ids: [id], driverId: drv.id });
+    const r = await L.assignOrders(lead, { ids: [id], driverId: drv.id }); // маргаашийн падаан ч өгөгдсөн → нөгөөдөр
+    await handTo(drv, r.assigned[0]!.date, [id]);
     await err(DR.postponeOrder(drv, id, {}), 409, 'postpone_locked');
     await recOk();
   });
@@ -303,7 +318,7 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     expect((await db.order.findUniqueOrThrow({ where: { id: a } })).driverId).toBe(drv.id);
     expect(await db.auditLog.count({ where: { action: 'order.picked_up' } })).toBe(1);
     const all = await DR.driverOrders(drv, 'all');
-    expect(all.items.map((x) => [x.id, x.can.deliver, x.can.postpone])).toEqual([[a, false, true]]);
+    expect(all.items.map((x) => [x.id, x.can.deliver, x.can.postpone, x.goodsHidden])).toEqual([[a, false, false, true]]);
     const c = await G.driverControl(lead);
     expect(c.items.find((x) => x.id === drv.id)?.assigned).toBe(1);
     await err(G.driverControl(op), 403);
@@ -320,5 +335,25 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     const out = await db.order.count({ where: { driverId: drv.id, status: 'OUT_FOR_DELIVERY' } });
     expect([out, g.items.every((i) => i.held === 0)]).toEqual([0, true]);
     await recOk();
+  });
+});
+
+describe('ахлах жолоочийн «Жолоочийн гүйцэтгэл», «График» (#77)', () => {
+  it('хүргэсэн/цуцалсан/маргааш тусдаа, амжилт = хүргэсэн ÷ (хүргэсэн + цуцалсан), өдрөөр зөв, эрх', async () => {
+    const ids = await outFor(drv, 4);
+    await DR.deliverOrder(drv, ids[0], { payment: 'CASH' });
+    await DR.deliverOrder(drv, ids[1], { payment: 'BANK' });
+    await DR.driverCancel(drv, ids[2], { note: 'Үйлчлүүлэгч болисон' });
+    await DR.postponeOrder(drv, ids[3], {});
+    const p = await L.leadPerformance(lead, {});
+    const me = p.items.find((x) => x.id === drv.id)!;
+    expect([me.delivered, me.cancelled, me.postponed, me.total, me.rate, me.revenue]).toEqual([2, 1, 1, 4, 66.7, 60000]);
+    expect((await L.leadPerformance(lead, { driverId: drv2.id })).items).toEqual([]);
+    const c = await L.leadChart(lead, {});
+    expect(c.daily).toHaveLength(14);
+    expect(c.daily.at(-1)).toMatchObject({ date: today, delivered: 2, cancelled: 1, postponed: 1, total: 4 });
+    expect(c.daily.slice(0, -1).every((d) => d.total === 0)).toBe(true);
+    await err(L.leadPerformance(wh, {}), 403);
+    await err(L.leadChart(op, {}), 403);
   });
 });

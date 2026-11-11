@@ -26,7 +26,9 @@ export async function lockHandover(tx: Tx, id: number) {
   return r.length > 0;
 }
 
-export const HANDOVER_STATUS_LABEL = { DRAFT: 'Бэлдэж байна', PREPARED: 'Бэлдсэн', HANDED_OVER: 'Өгсөн' } as const;
+export const HANDOVER_STATUS_LABEL = { DRAFT: 'Бэлдэж байна', PREPARED: 'Бэлдсэн', HANDED_OVER: 'Жолооч хүлээн авна', RECEIVED: 'Жолооч хүлээн авсан' } as const;
+/** Агуулах барааг өгсөн (жолооч хүлээн авсан эсэхээс үл хамааран) — падаанд захиалга нэмэх/хасахгүй */
+export const isGiven = (s: string) => s === 'HANDED_OVER' || s === 'RECEIVED';
 
 export function cleanYmd(v: unknown, label = 'Огноо'): string {
   const s = String(v ?? '').trim();
@@ -69,7 +71,7 @@ export async function removeFromHandover(tx: Tx, orderId: number, reason: string
   const o = await tx.order.findUnique({ where: { id: orderId }, select: { handoverId: true, lines: { select: { variantId: true } } } });
   if (!o?.handoverId) return;
   const h = await tx.handover.findUnique({ where: { id: o.handoverId }, select: { status: true } });
-  if (h?.status === 'HANDED_OVER') throw badRequest('Бараа нь жолоочид өгөгдсөн захиалга — жолоочийн буцаалтаар (Модуль 5)', 'handed_over');
+  if (h && isGiven(h.status)) throw badRequest('Падаан өгөгдсөн захиалга — агуулах падааныг «Буцаах»-аас өмнө өөрчлөх боломжгүй', 'handed_over');
   await tx.handoverOrder.updateMany({ where: { handoverId: o.handoverId, orderId, removedAt: null }, data: { removedAt: new Date(), removeReason: reason } });
   await tx.handoverCheck.deleteMany({ where: { handoverId: o.handoverId, variantId: { in: o.lines.map((l) => l.variantId) } } });
   await tx.handover.update({ where: { id: o.handoverId }, data: { version: { increment: 1 } } });

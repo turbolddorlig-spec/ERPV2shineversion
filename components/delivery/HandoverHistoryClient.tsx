@@ -7,7 +7,7 @@ import { ubDateTime } from '@/lib/format';
 
 interface Row { id: number; number: string; date: string; driverName: string; status: string; statusLabel: string; orders: number; createdByName: string; createdAt: string; handedOverBy: string | null; handedOverAt: string | null }
 const ubToday = (add = 0) => new Date(Date.now() + 8 * 3600_000 + add * 86_400_000).toISOString().slice(0, 10);
-const TONE: Record<string, string> = { DRAFT: 'bg-surface2 text-muted', PREPARED: 'bg-info-soft text-info', HANDED_OVER: 'bg-warn-soft text-warn' };
+const TONE: Record<string, string> = { DRAFT: 'bg-surface2 text-muted', PREPARED: 'bg-info-soft text-info', HANDED_OVER: 'bg-warn-soft text-warn', RECEIVED: 'bg-ok-soft text-ok-ink' };
 
 /** Падааны түүх — хуучин шиг: эхлэх/дуусах огноо, жолооч; карт дээр дарахад хэвлэх хуудас шинэ табд */
 export function HandoverHistoryClient() {

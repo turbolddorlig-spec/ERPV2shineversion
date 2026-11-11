@@ -855,7 +855,10 @@ model MetaEvent {
 enum HandoverStatus {
   DRAFT
   PREPARED
+  /// Агуулах «Барааг бүрэн өгсөн» — жолооч утсаараа хүлээн авахыг хүлээж байна (бараа агуулахад)
   HANDED_OVER
+  /// Жолооч «Барааг бүрэн хүлээн авсан» — бараа жолоочид шилжсэн, захиалгууд хүргэлтэд (#77)
+  RECEIVED
 }
 
 /// Падаан — нэг жолоочид нэг өдөрт нэг (database-ээр хамгаална)
@@ -875,6 +878,8 @@ model Handover {
   preparedBy    String?
   handedOverAt  DateTime?
   handedOverBy  String?
+  receivedAt    DateTime?
+  receivedBy    String?
   version       Int             @default(1)
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
@@ -903,11 +908,13 @@ model HandoverOrder {
 
 /// Агуулахын Check — нэгтгэсэн бараа (хувилбар) бүрээр
 model HandoverCheck {
-  handoverId Int
-  handover   Handover @relation(fields: [handoverId], references: [id], onDelete: Cascade)
-  variantId  Int
-  checkedAt  DateTime @default(now())
-  checkedBy  String
+  handoverId      Int
+  handover        Handover  @relation(fields: [handoverId], references: [id], onDelete: Cascade)
+  variantId       Int
+  checkedAt       DateTime  @default(now())
+  checkedBy       String
+  /// Жолооч утсаараа чагталсан (#77)
+  driverCheckedAt DateTime?
 
   @@id([handoverId, variantId])
 }

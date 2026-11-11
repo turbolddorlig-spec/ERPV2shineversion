@@ -121,7 +121,7 @@ export async function deliverOrder(actor: UserActor, idIn: unknown, input: { tak
     const recover = o.status === 'CANCELLED';
     if (recover) {
       if (!o.outForDeliveryAt || !['DRIVER_CANCELLED', 'ISSUE'].includes(o.cancelReason ?? '')) throw conflict('Энэ цуцлалтын бараа жолоочид өгөгдөөгүй — «Хүргэсэн болгох» боломжгүй', 'bad_status');
-    } else if (o.status === 'ASSIGNED') throw conflict('Падаанаар бараагаа аваагүй байна (агуулах «Барааг бүрэн өгсөн» дарна)', 'not_handed_over');
+    } else if (o.status === 'ASSIGNED') throw conflict('Падаанаа хүлээн аваагүй байна — «Падаан» табаас бараагаа чагтлаад «Барааг бүрэн хүлээн авсан» дарна уу', 'not_handed_over');
     else if (o.status !== 'OUT_FOR_DELIVERY') throw conflict('Энэ захиалгыг хүргэх боломжгүй', 'bad_status');
     checkVersion(o, input.version);
     noPendingIssue(o);
@@ -202,7 +202,8 @@ export async function driverCancel(actor: UserActor, idIn: unknown, input: { not
   const r = await inTx(async (tx) => {
     const o = await loadOwn(tx, actor, id);
     if (o.status === 'CANCELLED') return { order: o, duplicate: true };
-    if (!['ASSIGNED', 'OUT_FOR_DELIVERY'].includes(o.status)) throw conflict('Энэ захиалгыг цуцлах боломжгүй', 'bad_status');
+    if (o.status === 'ASSIGNED') throw conflict('Падаанаа хүлээн авсны дараа цуцална (бараа хүлээн аваагүй бол ахлах жолоочид хэлнэ)', 'not_received');
+    if (o.status !== 'OUT_FOR_DELIVERY') throw conflict('Энэ захиалгыг цуцлах боломжгүй', 'bad_status');
     checkVersion(o, input.version);
     noPendingIssue(o);
     await cancelCore(tx, o, actor.name, 'DRIVER_CANCELLED', note);
@@ -244,7 +245,8 @@ export async function postponeOrder(actor: UserActor, idIn: unknown, input: { ve
     // Давхар дарахад: аль хэдийн энэ жолооч хойшлуулсан
     if (o.status === 'NEW' && o.postponedByDriverId === actor.id && o.postponedAt && Date.now() - o.postponedAt.getTime() < 60_000) return { order: o, duplicate: true };
     if (o.driverId !== actor.id) throw notFound('Захиалга олдсонгүй');
-    if (!['ASSIGNED', 'OUT_FOR_DELIVERY'].includes(o.status)) throw conflict('Энэ захиалгыг хойшлуулах боломжгүй', 'bad_status');
+    if (o.status === 'ASSIGNED') throw conflict('Падаанаа хүлээн авсны дараа «Маргааш» дарна (хүлээн аваагүй бол ахлах жолоочид хэлнэ)', 'not_received');
+    if (o.status !== 'OUT_FOR_DELIVERY') throw conflict('Энэ захиалгыг хойшлуулах боломжгүй', 'bad_status');
     checkVersion(o, input.version);
     noPendingIssue(o);
     if (o.postponeCount >= MAX_POSTPONE) throw conflict(`«Маргааш» ${MAX_POSTPONE} удаа дарагдсан тул цоожтой — ахлах жолооч / оператор шийднэ`, 'postpone_locked');
@@ -315,7 +317,8 @@ export async function reportIssue(actor: UserActor, idIn: unknown, input: { type
   const r = await inTx(async (tx) => {
     const o = await loadOwn(tx, actor, id);
     if (o.issueStatus === 'PENDING') return { order: o, duplicate: true };
-    if (!['ASSIGNED', 'OUT_FOR_DELIVERY'].includes(o.status)) throw conflict('Энэ захиалгад асуудал мэдэгдэх боломжгүй', 'bad_status');
+    if (o.status === 'ASSIGNED') throw conflict('Падаанаа хүлээн авсны дараа', 'not_received');
+    if (o.status !== 'OUT_FOR_DELIVERY') throw conflict('Энэ захиалгад асуудал мэдэгдэх боломжгүй', 'bad_status');
     const u = await tx.order.update({
       where: { id },
       data: { issueType: type, issueNote: note, issueAt: new Date(), issueStatus: 'PENDING', issueFault: null, issueResolvedAt: null, issueResolvedByName: null, issueResolveNote: null, version: { increment: 1 } },
@@ -421,17 +424,21 @@ export async function driverOrders(actor: UserActor, tabIn?: string) {
       const s = serializeOrder(o);
       const mine = o.driverId === me;
       const postponedByMe = o.postponedByDriverId === me && o.status === 'NEW';
+      // Падаанаа хүлээн авахаас өмнө (хуучин шиг): зөвхөн дугаар, утас, хаяг, санамж — бараа, дүн, товч харагдахгүй
+      const hidden = o.status === 'ASSIGNED';
       return {
         ...s,
+        ...(hidden ? { lines: [], total: 0, subtotal: 0, discount: 0, deliveryFee: 0, originalTotal: null } : {}),
+        goodsHidden: hidden,
         fromPrevDay: o.status !== 'DELIVERED' && o.status !== 'CANCELLED' && ymdOf(o.deliveryDate) < today,
         issueLabel: o.issueType ? ISSUE_LABEL[o.issueType] : null,
         paymentLabel: o.deliveryPayment ? PAYMENT_LABEL[o.deliveryPayment] : null,
         can: {
           deliver: mine && o.status === 'OUT_FOR_DELIVERY' && o.issueStatus !== 'PENDING',
-          cancel: mine && ['ASSIGNED', 'OUT_FOR_DELIVERY'].includes(o.status) && o.issueStatus !== 'PENDING',
-          postpone: mine && ['ASSIGNED', 'OUT_FOR_DELIVERY'].includes(o.status) && o.issueStatus !== 'PENDING' && o.postponeCount < MAX_POSTPONE,
-          postponeLocked: mine && ['ASSIGNED', 'OUT_FOR_DELIVERY'].includes(o.status) && o.postponeCount >= MAX_POSTPONE,
-          issue: mine && ['ASSIGNED', 'OUT_FOR_DELIVERY'].includes(o.status) && o.issueStatus !== 'PENDING',
+          cancel: mine && o.status === 'OUT_FOR_DELIVERY' && o.issueStatus !== 'PENDING',
+          postpone: mine && o.status === 'OUT_FOR_DELIVERY' && o.issueStatus !== 'PENDING' && o.postponeCount < MAX_POSTPONE,
+          postponeLocked: mine && o.status === 'OUT_FOR_DELIVERY' && o.postponeCount >= MAX_POSTPONE,
+          issue: mine && o.status === 'OUT_FOR_DELIVERY' && o.issueStatus !== 'PENDING',
           undoDelivery: mine && o.status === 'DELIVERED',
           redeliver: mine && o.status === 'CANCELLED' && !!o.outForDeliveryAt && ['DRIVER_CANCELLED', 'ISSUE'].includes(o.cancelReason ?? ''),
           undoPostpone: postponedByMe && !o.driverId && !!o.postponedAt && o.postponedAt >= t0,

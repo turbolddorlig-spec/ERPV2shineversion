@@ -7,7 +7,7 @@ import { RURAL, UB_DISTRICTS } from '../../geo';
 import { dateOnly, ubDay, ubDayStart, ymdOf, isYmd } from '../../ubdate';
 import { inTx, type UserActor } from '../orders/core';
 import { bustCounts, searchIds, serializeOrder } from '../orders/queries';
-import { addDays, addToHandover, cleanYmd, lockDelivery, lockOrders, removeFromHandover, type Tx } from './core';
+import { addDays, addToHandover, cleanYmd, isGiven, lockDelivery, lockOrders, removeFromHandover, type Tx } from './core';
 
 /**
  * Ахлах жолооч (хуучин ERP-ийн «Ахлах жолооч» хуудас):
@@ -166,7 +166,7 @@ async function placeForDriver(tx: Tx, orderId: number, driver: { id: string }, w
   let date = wanted; let moved = false;
   for (let i = 0; i < 60; i++) {
     const h = await tx.handover.findUnique({ where: { driverId_date: { driverId: driver.id, date: dateOnly(date) } }, select: { id: true, status: true } });
-    if (h?.status === 'HANDED_OVER') { date = addDays(date, 1); moved = true; continue; }
+    if (h && isGiven(h.status)) { date = addDays(date, 1); moved = true; continue; }
     await tx.order.update({ where: { id: orderId }, data: { deliveryDate: dateOnly(date) } });
     if (h) await addToHandover(tx, h.id, orderId);
     break;
@@ -193,7 +193,7 @@ export async function setDeliveryDate(actor: UserActor, input: { ids?: unknown; 
       if (from === date) { done.push(o.id); continue; }
       if (o.status === 'ASSIGNED' && o.driverId) {
         const h = await tx.handover.findUnique({ where: { driverId_date: { driverId: o.driverId, date: dateOnly(date) } }, select: { id: true, status: true } });
-        if (h?.status === 'HANDED_OVER') { skipped.push({ id: o.id, number: o.number, reason: `${o.driverName}-ийн ${date}-ны падаан өгөгдсөн` }); continue; }
+        if (h && isGiven(h.status)) { skipped.push({ id: o.id, number: o.number, reason: `${o.driverName}-ийн ${date}-ны падаан өгөгдсөн` }); continue; }
         if (o.handoverId) await removeFromHandover(tx, o.id, `Огноо ${date} болсон`);
         await tx.order.update({ where: { id: o.id }, data: { deliveryDate: dateOnly(date), version: { increment: 1 } } });
         if (h) await addToHandover(tx, h.id, o.id);
@@ -214,4 +214,57 @@ export async function getLeadOrder(actor: UserActor, id: number) {
   const o = await db.order.findUnique({ where: { id }, include: { lines: true } });
   if (!o) throw notFound('Захиалга олдсонгүй');
   return serializeOrder(o);
+}
+
+// ───────────────────────── Жолоочийн гүйцэтгэл, график (хуучин шиг, алдааг зассан — #77) ─────────────────────────
+
+/**
+ * «Жолоочийн гүйцэтгэл»: хугацаанд (Улаанбаатарын өдрөөр) жолооч бүрийн Хүргэсэн (хүргэсэн өдрөөр, B1), Цуцалсан
+ * (жолооч/асуудлаар — цуцалсан өдрөөр), Маргааш (хойшлуулсан өдрөөр — цуцлалтад орохгүй), Амжилт = хүргэсэн ÷ (хүргэсэн + цуцалсан).
+ * Хуучин алдаа засав: үүссэн огноогоор биш, хойшилсныг цуцлалт гэж тоолохгүй, дуусаагүй захиалга хувийг бууруулахгүй.
+ */
+export async function leadPerformance(actor: UserActor, p: { from?: string; to?: string; driverId?: string }) {
+  if (!canView(actor.roles, 'driver-lead')) throw forbidden(); // хуучин шиг: SA, A, ахлах жолооч
+  const to = p.to && isYmd(p.to) ? p.to : ubDay();
+  const from = p.from && isYmd(p.from) ? p.from : ubDay(new Date(), -6);
+  if (from > to) throw badRequest('Эхлэх огноо дуусахаас хойш байна');
+  const t0 = ubDayStart(from); const t1 = ubDayStart(addDays(to, 1));
+  const drv = p.driverId ? (/^[0-9a-f-]{36}$/i.test(p.driverId) ? p.driverId : (() => { throw badRequest('Жолооч буруу'); })()) : null;
+  const rows = await db.$queryRaw<{ id: string; delivered: number; revenue: number; cancelled: number; postponed: number }[]>`
+    SELECT id, sum(d)::int AS delivered, sum(rev)::int AS revenue, sum(c)::int AS cancelled, sum(p)::int AS postponed FROM (
+      SELECT "driverId" AS id, 1 AS d, total AS rev, 0 AS c, 0 AS p FROM "Order" WHERE status = 'DELIVERED' AND "driverId" IS NOT NULL AND "deliveredAt" >= ${t0} AND "deliveredAt" < ${t1}
+      UNION ALL SELECT "driverId", 0, 0, 1, 0 FROM "Order" WHERE status = 'CANCELLED' AND "driverId" IS NOT NULL AND "cancelReason" IN ('DRIVER_CANCELLED', 'ISSUE') AND "cancelledAt" >= ${t0} AND "cancelledAt" < ${t1}
+      UNION ALL SELECT "postponedByDriverId", 0, 0, 0, 1 FROM "Order" WHERE "postponedByDriverId" IS NOT NULL AND "postponedAt" >= ${t0} AND "postponedAt" < ${t1}
+    ) x WHERE ${drv}::uuid IS NULL OR id = ${drv}::uuid GROUP BY id`;
+  const users = await db.user.findMany({ where: { id: { in: rows.map((r) => r.id) } }, select: { id: true, name: true, phone: true } });
+  const um = new Map(users.map((u) => [u.id, u]));
+  const rate = (d: number, c: number) => (d + c ? Math.round((d / (d + c)) * 1000) / 10 : null);
+  const items = rows.map((r) => ({ id: r.id, name: um.get(r.id)?.name ?? '—', phone: um.get(r.id)?.phone ?? '', delivered: r.delivered, cancelled: r.cancelled, postponed: r.postponed, total: r.delivered + r.cancelled + r.postponed, revenue: r.revenue, rate: rate(r.delivered, r.cancelled) }))
+    .sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1) || b.delivered - a.delivered || a.name.localeCompare(b.name, 'mn'));
+  const sum = (k: 'delivered' | 'cancelled' | 'postponed' | 'revenue') => items.reduce((n, x) => n + x[k], 0);
+  return { from, to, items, totals: { delivered: sum('delivered'), cancelled: sum('cancelled'), postponed: sum('postponed'), revenue: sum('revenue'), total: sum('delivered') + sum('cancelled') + sum('postponed'), rate: rate(sum('delivered'), sum('cancelled')) } };
+}
+
+/** «График»: сүүлийн 14 хоног (Улаанбаатарын өдрөөр, хуучны 1 өдөр хазайдаг алдаагүй) — хүргэсэн, цуцалсан, маргааш; жолоочоор шүүх */
+export async function leadChart(actor: UserActor, p: { days?: number; driverId?: string }) {
+  if (!canView(actor.roles, 'driver-lead')) throw forbidden(); // хуучин шиг: SA, A, ахлах жолооч
+  const days = [7, 14, 30].includes(Number(p.days)) ? Number(p.days) : 14;
+  const today = ubDay(); const from = addDays(today, -(days - 1));
+  const t0 = ubDayStart(from); const t1 = ubDayStart(addDays(today, 1));
+  const drv = p.driverId ? (/^[0-9a-f-]{36}$/i.test(p.driverId) ? p.driverId : (() => { throw badRequest('Жолооч буруу'); })()) : null;
+  const rows = await db.$queryRaw<{ day: string; delivered: number; cancelled: number; postponed: number }[]>`
+    SELECT to_char(day, 'YYYY-MM-DD') AS day, sum(d)::int AS delivered, sum(c)::int AS cancelled, sum(p)::int AS postponed FROM (
+      SELECT ("deliveredAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Ulaanbaatar')::date AS day, 1 AS d, 0 AS c, 0 AS p FROM "Order"
+        WHERE status = 'DELIVERED' AND "driverId" IS NOT NULL AND "deliveredAt" >= ${t0} AND "deliveredAt" < ${t1} AND (${drv}::uuid IS NULL OR "driverId" = ${drv}::uuid)
+      UNION ALL SELECT ("cancelledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Ulaanbaatar')::date, 0, 1, 0 FROM "Order"
+        WHERE status = 'CANCELLED' AND "driverId" IS NOT NULL AND "cancelReason" IN ('DRIVER_CANCELLED', 'ISSUE') AND "cancelledAt" >= ${t0} AND "cancelledAt" < ${t1} AND (${drv}::uuid IS NULL OR "driverId" = ${drv}::uuid)
+      UNION ALL SELECT ("postponedAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Ulaanbaatar')::date, 0, 0, 1 FROM "Order"
+        WHERE "postponedByDriverId" IS NOT NULL AND "postponedAt" >= ${t0} AND "postponedAt" < ${t1} AND (${drv}::uuid IS NULL OR "postponedByDriverId" = ${drv}::uuid)
+    ) x GROUP BY day`;
+  const m = new Map(rows.map((r) => [r.day, r]));
+  const out = Array.from({ length: days }, (_, i) => {
+    const d = addDays(from, i); const r = m.get(d);
+    return { date: d, delivered: r?.delivered ?? 0, cancelled: r?.cancelled ?? 0, postponed: r?.postponed ?? 0, total: (r?.delivered ?? 0) + (r?.cancelled ?? 0) + (r?.postponed ?? 0) };
+  });
+  return { days, from, to: today, daily: out };
 }

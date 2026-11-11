@@ -12,7 +12,7 @@ import {
   lockOrder, lockPhones, lockVariants, nextOrderNumber, orderSettings, requireReason, staleError, uniqueViolation, type Tx, type UserActor, NO_PAGE_NAME, noPageId,
 } from './core';
 import { enqueueMeta, skipMeta } from './meta';
-import { addToHandover, lockDelivery, removeFromHandover } from '../delivery/core';
+import { addToHandover, isGiven, lockDelivery, removeFromHandover } from '../delivery/core';
 
 /**
  * Захиалга (Модуль 3, шийдвэр #43–#54).
@@ -279,7 +279,7 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
         // Тэр өдрийн падаан өгөгдсөн бол оруулахгүй (ахлах жолооч өөр өдөр/жолооч сонгоно)
         if (o.status === 'ASSIGNED' && o.driverId) {
           const h = await tx.handover.findUnique({ where: { driverId_date: { driverId: o.driverId, date: dateOnly(d) } }, select: { status: true } });
-          if (h?.status === 'HANDED_OVER') throw conflict(`${o.driverName}-ийн ${d}-ны падаан аль хэдийн өгөгдсөн — өөр өдөр сонгоно уу`, 'handed_over');
+          if (h && isGiven(h.status)) throw conflict(`${o.driverName}-ийн ${d}-ны падаан аль хэдийн өгөгдсөн — өөр өдөр сонгоно уу`, 'handed_over');
         }
         data.deliveryDate = dateOnly(d); changes.deliveryDate = { from: ymdOf(o.deliveryDate), to: d };
       }
@@ -321,7 +321,7 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
     const u = await tx.order.update({ where: { id }, data: { ...data, version: { increment: 1 } } });
     if (changes.deliveryDate && o.status === 'ASSIGNED' && o.driverId) {
       const h = await tx.handover.findUnique({ where: { driverId_date: { driverId: o.driverId, date: u.deliveryDate } }, select: { id: true, status: true } });
-      if (h && h.status !== 'HANDED_OVER') await addToHandover(tx, h.id, id);
+      if (h && !isGiven(h.status)) await addToHandover(tx, h.id, id);
     }
     const discountNow = lines.some((l) => l.unitPrice < l.listPrice && existing.get(l.variantId)?.unitPrice !== l.unitPrice) || !!t.feeReason;
     await writeAudit(actor, 'order.updated', 'Order', String(id), { number: o.number, changes, ...(t.feeReason ? { feeReason: t.feeReason } : {}) } as unknown as Prisma.InputJsonValue, tx,

@@ -14,19 +14,19 @@ import { money, ubDateTime } from '@/lib/format';
 
 interface BDriver { id: string; name: string; phone: string; orders: number; trusted: boolean; approved: boolean; approvalNote: string | null; approvalBy: string | null; handover: { id: number; number: string; status: string } | null; stateLabel: string }
 interface Board { date: string; canOperate: boolean; canApprove: boolean; drivers: BDriver[] }
-interface Item { variantId: number; code: string; name: string; label: string; qty: number; amount: number; thumb: string | null; image: string | null; shelfCode: string | null; checked: boolean; checkedBy: string | null }
+interface Item { variantId: number; code: string; name: string; label: string; qty: number; amount: number; thumb: string | null; image: string | null; shelfCode: string | null; checked: boolean; checkedBy: string | null; driverChecked: boolean }
 interface HOrder { orderId: number; position: number; number: string; phone: string; total: number; createdAt: string | null; status: string | null; note: string | null; isNew: boolean; removedAt: string | null; removeReason: string | null; lines: { name: string; label: string; code: string; qty: number; unitPrice: number }[] }
 interface Detail {
-  id: number; number: string; date: string; driverId: string; driverName: string; status: 'DRAFT' | 'PREPARED' | 'HANDED_OVER'; statusLabel: string; version: number;
+  id: number; number: string; date: string; driverId: string; driverName: string; status: 'DRAFT' | 'PREPARED' | 'HANDED_OVER' | 'RECEIVED'; statusLabel: string; receivedAt: string | null; receivedBy: string | null; version: number;
   createdByName: string; createdAt: string; preparedBy: string | null; preparedAt: string | null; handedOverBy: string | null; handedOverAt: string | null; canOperate: boolean;
-  totals: { orders: number; pieces: number; amount: number; checked: number; kinds: number }; items: Item[]; orders: HOrder[];
+  totals: { orders: number; pieces: number; amount: number; checked: number; driverChecked: number; kinds: number }; items: Item[]; orders: HOrder[];
 }
 interface Eligible { id: number; number: string; phone: string; items: number; total: number; note: string | null }
 interface Day { handover: Detail | null; eligible: Eligible[]; approval: { approved: boolean; source: string; note: string | null; byName: string | null } }
 
 const ubToday = (add = 0) => new Date(Date.now() + 8 * 3600_000 + add * 86_400_000).toISOString().slice(0, 10);
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа гарлаа');
-const ST_TONE: Record<string, string> = { DRAFT: 'bg-surface2 text-muted', PREPARED: 'bg-info-soft text-info', HANDED_OVER: 'bg-warn-soft text-warn' };
+const ST_TONE: Record<string, string> = { DRAFT: 'bg-surface2 text-muted', PREPARED: 'bg-info-soft text-info', HANDED_OVER: 'bg-warn-soft text-warn', RECEIVED: 'bg-ok-soft text-ok-ink' };
 const STATE_TONE: Record<string, string> = { 'Бэлдээгүй': 'text-bad-ink', 'Бэлдэж байна': 'text-warn', 'Бэлдсэн': 'text-info', 'Өгсөн': 'text-ok-ink', '—': 'text-subtle' };
 
 /**
@@ -96,9 +96,10 @@ export function HandoverClient() {
                 {h.status === 'PREPARED' ? <>
                   <Button loading={busy} onClick={() => run(() => api(`/api/handover/${h.id}/revert`, { method: 'POST', json: {} }), 'Ноорог болголоо (Check арилсан)')}>Буцаах</Button>
                   <Button variant="primary" loading={busy} disabled={h.totals.checked < h.totals.kinds} title={h.totals.checked < h.totals.kinds ? 'Бүх барааг Check хийнэ үү' : undefined}
-                    className="!bg-ok !text-white" onClick={() => run(() => api(`/api/handover/${h.id}/confirm`, { method: 'POST', json: {} }), `${h.driverName}-д бараа өгөгдлөө — захиалгууд «Хүргэлтэд гарсан»`)}>✓ Барааг бүрэн өгсөн</Button>
+                    className="!bg-ok !text-white" onClick={() => run(() => api(`/api/handover/${h.id}/confirm`, { method: 'POST', json: {} }), `${h.driverName}-д өгсөн — жолооч утсаараа хүлээн авна`)}>✓ Барааг бүрэн өгсөн</Button>
                 </> : null}
-                {h.status === 'HANDED_OVER' ? <Button loading={busy} onClick={() => { if (confirm('Бараа жолоочоос агуулахад буцаж, захиалгууд «Жолоочид оноосон» болно. Үргэлжлүүлэх үү?')) run(() => api(`/api/handover/${h.id}/revert`, { method: 'POST', json: {} }), 'Буцаагдлаа — бараа агуулахад'); }}>Буцаах</Button> : null}
+                {h.status === 'HANDED_OVER' ? <Button loading={busy} onClick={() => { if (confirm('Жолооч хараахан хүлээн аваагүй — падаан ноорог болно (бараа хөдлөөгүй). Үргэлжлүүлэх үү?')) run(() => api(`/api/handover/${h.id}/revert`, { method: 'POST', json: {} }), 'Ноорог болголоо'); }}>Буцаах</Button> : null}
+                {h.status === 'RECEIVED' ? <Button loading={busy} onClick={() => { if (confirm('Бараа жолоочоос агуулахад буцаж, захиалгууд «Жолоочид оноосон» болно. Үргэлжлүүлэх үү?')) run(() => api(`/api/handover/${h.id}/revert`, { method: 'POST', json: {} }), 'Буцаагдлаа — бараа агуулахад'); }}>Буцаах</Button> : null}
               </>
             ) : null}
             {h ? <a href={`/print/handover/${h.id}`} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center gap-1.5 rounded-[11px] border border-line bg-surface px-4 font-semibold"><Icon name="file" size={16} />Хэвлэх</a> : null}
@@ -188,7 +189,7 @@ function HandoverView({ h, short, canOperate, onCheck, busy }: { h: Detail; shor
   const items = useMemo(() => h.items.filter((i) => (!onlyUnchecked || !i.checked) && (!q.trim() || `${i.code} ${i.name} ${i.label}`.toLowerCase().includes(q.trim().toLowerCase()))), [h.items, q, onlyUnchecked]);
   const removed = h.orders.filter((o) => o.removedAt);
   const added = h.orders.filter((o) => !o.removedAt && o.isNew);
-  const locked = h.status === 'HANDED_OVER' || !canOperate;
+  const locked = h.status === 'HANDED_OVER' || h.status === 'RECEIVED' || !canOperate;
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 rounded-xl border border-line bg-surface px-3 py-2.5 text-[13px]">
@@ -196,8 +197,15 @@ function HandoverView({ h, short, canOperate, onCheck, busy }: { h: Detail; shor
         <span>{h.totals.orders} захиалга · {h.totals.pieces} ширхэг · <b>{money(h.totals.amount)}</b></span>
         <span className="text-subtle">Үүсгэсэн: {h.createdByName} {ubDateTime(h.createdAt)}</span>
         {h.handedOverAt ? <span className="text-ok-ink">Өгсөн: {h.handedOverBy} {ubDateTime(h.handedOverAt)}</span> : null}
+        {h.receivedAt ? <span className="text-ok-ink">Жолооч хүлээн авсан: {h.receivedBy} {ubDateTime(h.receivedAt)}</span> : null}
       </div>
-      {short.length && h.status !== 'HANDED_OVER' ? (
+      {h.status === 'HANDED_OVER' ? (
+        <div className="rounded-xl border border-warn/40 bg-warn-soft p-3 text-warn">
+          <p className="font-bold">⏳ Жолооч утсаараа барааг чагтлаад «Барааг бүрэн хүлээн авсан» дарахыг хүлээж байна ({h.totals.driverChecked}/{h.totals.kinds})</p>
+          <p className="text-[12.5px]">Хүлээн авах хүртэл бараа агуулахын үлдэгдэлд, захиалгууд «Жолоочид оноосон». Дутуу байвал «Буцаах» дарж засна.</p>
+        </div>
+      ) : null}
+      {short.length && h.status !== 'RECEIVED' ? (
         <div className="rounded-xl border border-warn/40 bg-warn-soft p-3 text-warn">
           <p className="font-bold">⚠ Үндсэн агуулахад дутуу — «Дүүргэлт»-ээр татаж ирнэ үү</p>
           {short.map((s) => <p key={s.code} className="text-[12.5px]">{s.code} {s.name}: хэрэгтэй {s.need}, байгаа {s.have}</p>)}
@@ -239,7 +247,7 @@ function HandoverView({ h, short, canOperate, onCheck, busy }: { h: Detail; shor
                 </td>
                 <td className="px-3 py-2 text-center text-[18px] font-extrabold">{i.qty}</td>
                 <td className="px-3 py-2 text-center">
-                  <span className={clsx('inline-grid h-9 w-9 place-items-center rounded-lg border-2', i.checked ? 'border-ok bg-ok text-white' : 'border-line bg-surface')} title={i.checkedBy ? `Check: ${i.checkedBy}` : undefined}>{i.checked ? <Icon name="check" size={20} strokeWidth={3} /> : null}</span>
+                  <span className={clsx('inline-grid h-9 w-9 place-items-center rounded-lg border-2', i.checked ? 'border-ok bg-ok text-white' : 'border-line bg-surface')} title={i.checkedBy ? `Check: ${i.checkedBy}` : undefined}>{i.checked ? <Icon name="check" size={20} strokeWidth={3} /> : null}</span>{h.status === 'HANDED_OVER' || h.status === 'RECEIVED' ? <span className={clsx('ml-1 inline-flex h-9 items-center rounded-lg px-2 text-[11.5px] font-bold', i.driverChecked ? 'bg-ok-soft text-ok-ink' : 'bg-warn-soft text-warn')} title="Жолоочийн чагт">{i.driverChecked ? 'Жол. ✓' : 'Жол. —'}</span> : null}
                 </td>
                 <td className="px-3 py-2 text-center text-[12px] text-subtle" title="Жолоочийн хүлээн авалт — Модуль 5">○</td>
               </tr>

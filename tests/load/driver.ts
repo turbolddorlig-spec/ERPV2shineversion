@@ -10,7 +10,7 @@ import { hashPassword } from '../../lib/password';
 import { createOrder } from '../../lib/services/orders/orders';
 import { createReceipt } from '../../lib/services/stock/docs';
 import { assignOrders } from '../../lib/services/delivery/assign';
-import { confirmHandover, createHandover, handoverDetail, prepareHandover, setCheck, setTrusted } from '../../lib/services/delivery/handover';
+import { confirmHandover, createHandover, handoverDetail, prepareHandover, receiveHandover, setCheck, setDriverCheck, setTrusted } from '../../lib/services/delivery/handover';
 
 const BASE = process.env.E2E_BASE ?? 'http://localhost:3100';
 const USERS = Number(process.env.LOAD_USERS ?? 150);
@@ -62,7 +62,7 @@ async function setup() {
     const ids: number[] = [];
     for (let k = 0; k < PER; k++) {
       const lines = [{ variantId: pick(vars).id, qty: 1 + (k % 2) }];
-      const o = await createOrder(op, { phone: '6' + String(Date.now() + i * 10 + k).slice(-7), province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 3, addressDetail: 'Ачааллын тест', pageId: page.id, deliveryDate: today, lines, idemKey: randomUUID() });
+      const o = await createOrder(op, { phone: '5' + String(Date.now() + i * 10 + k).slice(-7), province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 3, addressDetail: 'Ачааллын тест', pageId: page.id, deliveryDate: today, lines, idemKey: randomUUID() });
       ids.push(o.order.id);
     }
     await assignOrders(lead, { ids, driverId: u.id });
@@ -70,6 +70,9 @@ async function setup() {
     await prepareHandover(wh, h.id);
     for (const it of (await handoverDetail(wh, h.id)).items) await setCheck(wh, h.id, { variantId: it.variantId, checked: true });
     await confirmHandover(wh, h.id);
+    const dA = { id: u.id, name: u.name, roles: u.roles, ip: '127.0.0.1' };
+    await setDriverCheck(dA, h.id, { variantId: 'all', checked: true });
+    await receiveHandover(dA, h.id);
     phones.push(phone);
   }
   return phones;

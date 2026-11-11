@@ -8,6 +8,7 @@ import { Icon } from '@/components/icons';
 import { api, ApiError } from '@/components/ui/api';
 import { Thumb } from '@/components/products/ProductsClient';
 import { OperatorNote, StatusChip, type OItem } from '@/components/orders/OrdersClient';
+import { PerformanceTab, ChartTab } from '@/components/delivery/LeadStats';
 import { money, ubDateTime } from '@/lib/format';
 import { RURAL, UB_DISTRICTS } from '@/lib/geo';
 
@@ -29,7 +30,7 @@ const EMPTY: F = { q: '', assign: 'unassigned', deliveryDate: '', created: '', d
  * «Ахлах жолооч» — хуучин ERP-ийн бүтэц: KPI, шүүлтүүр (Хайх / Цэвэрлэх), олноор хуваарилах мөр, дүүргээр бүлэглэх,
  * мөр бүрт жолооч сонгох (ачааллын тэмдэгтэй), огноо солих. «Жолоочдын захиалга» — баруун талын самбар.
  */
-export function DriverLeadClient() {
+function AssignView() {
   const [draft, setDraft] = useState<F>(EMPTY);
   const [f, setF] = useState<F>(EMPTY);
   const [page, setPage] = useState(1);
@@ -76,7 +77,7 @@ export function DriverLeadClient() {
 
   const items = data?.items ?? [];
   const canAssign = !!data?.canAssign;
-  const editable = (o: LItem) => canAssign && (o.status === 'NEW' || o.status === 'ASSIGNED') && o.handover?.status !== 'HANDED_OVER';
+  const editable = (o: LItem) => canAssign && (o.status === 'NEW' || o.status === 'ASSIGNED') && o.handover?.status !== 'HANDED_OVER' && o.handover?.status !== 'RECEIVED';
   const groups = useMemo(() => {
     if (!grouped) return [{ key: '', items }];
     const m = new Map<string, LItem[]>();
@@ -276,5 +277,24 @@ function ByDayDrawer({ open, onClose }: { open: boolean; onClose: () => void }) 
         ))}
       </div>
     </Modal>
+  );
+}
+
+/** Ахлах жолооч: «Бүх захиалга» (хуваарилах) · «Жолоочийн гүйцэтгэл» · «График» (хуучин шиг) */
+export function DriverLeadClient() {
+  const [tab, setTab] = useState<'orders' | 'performance' | 'chart'>('orders');
+  const [drivers, setDrivers] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => { if (tab !== 'orders' && !drivers.length) api<{ items: { id: string; name: string }[] }>('/api/driver-lead/drivers').then((r) => setDrivers(r.items)).catch(() => undefined); }, [tab, drivers.length]);
+  return (
+    <div className="flex flex-col gap-3">
+      {tab !== 'orders' ? <h1 className="text-[24px] font-extrabold tracking-tight">Ахлах жолооч</h1> : null}
+      <div className="flex gap-1.5 overflow-x-auto" role="tablist" data-overflow-ok>
+        {([['orders', 'Бүх захиалга'], ['performance', 'Жолоочийн гүйцэтгэл'], ['chart', 'График']] as const).map(([k, l]) => (
+          <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
+            className={clsx('h-10 shrink-0 rounded-full border px-4 text-[13.5px] font-bold', tab === k ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface text-muted')}>{l}</button>
+        ))}
+      </div>
+      {tab === 'orders' ? <AssignView /> : tab === 'performance' ? <PerformanceTab drivers={drivers} /> : <ChartTab drivers={drivers} />}
+    </div>
   );
 }

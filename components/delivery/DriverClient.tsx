@@ -20,7 +20,7 @@ interface DOrder {
   total: number; originalTotal: number | null; deliveryFee: number; prepaid: boolean; postponeCount: number; routeNo: number | null; deliveryDate: string; version: number;
   deliveryPayment: string | null; paymentLabel: string | null; collectAmount: number | null; deliveryNote: string | null;
   issueStatus: string | null; issueLabel: string | null; issueNote: string | null; issueResolveNote: string | null;
-  cancelNote: string | null; fromPrevDay: boolean; postponedByName: string | null; driverName: string | null;
+  cancelNote: string | null; fromPrevDay: boolean; goodsHidden?: boolean; postponedByName: string | null; driverName: string | null;
   lines: Line[];
   can: { deliver: boolean; cancel: boolean; postpone: boolean; postponeLocked: boolean; issue: boolean; undoDelivery: boolean; redeliver: boolean; undoPostpone: boolean };
 }
@@ -42,19 +42,31 @@ const ST: Record<string, { l: string; c: string }> = {
 };
 
 export function DriverClient() {
-  const [main, setMain] = useState<'orders' | 'pickup' | 'goods'>('orders');
+  const [main, setMain] = useState<'orders' | 'handover' | 'pickup' | 'goods'>('orders');
+  const [pending, setPending] = useState(0);
+  useEffect(() => {
+    const f = () => api<{ pending: number }>('/api/driver/handover').then((r) => setPending(r.pending)).catch(() => undefined);
+    void f(); const t = setInterval(f, 30_000); return () => clearInterval(t);
+  }, [main]);
   return (
     <div className="mx-auto flex w-full max-w-[720px] flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
         <h1 className="text-[22px] font-extrabold tracking-tight">Миний хүргэлт</h1>
       </div>
-      <div className="grid grid-cols-3 gap-1 rounded-[14px] bg-surface2 p-1" role="tablist">
-        {([['orders', 'Захиалга'], ['pickup', 'Авах'], ['goods', 'Миний бараа']] as const).map(([k, l]) => (
+      <div className="grid grid-cols-4 gap-1 rounded-[14px] bg-surface2 p-1" role="tablist">
+        {([['orders', 'Захиалга'], ['handover', 'Падаан'], ['pickup', 'Авах'], ['goods', 'Миний бараа']] as const).map(([k, l]) => (
           <button key={k} role="tab" aria-selected={main === k} onClick={() => setMain(k)}
-            className={clsx('h-11 rounded-[11px] text-[14px] font-bold', main === k ? 'bg-surface text-ink shadow-card' : 'text-muted')}>{l}</button>
+            className={clsx('relative h-11 rounded-[11px] text-[13.5px] font-bold', main === k ? 'bg-surface text-ink shadow-card' : 'text-muted')}>
+            {l}{k === 'handover' && pending ? <span className="absolute -right-0.5 -top-1 min-w-[18px] rounded-full bg-accent px-1 text-[11px] leading-[18px] text-on-accent">{pending}</span> : null}
+          </button>
         ))}
       </div>
-      {main === 'orders' ? <OrdersTab /> : main === 'pickup' ? <PickupTab onTaken={() => setMain('orders')} /> : <GoodsTab />}
+      {pending && main !== 'handover' ? (
+        <button onClick={() => setMain('handover')} className="rounded-[14px] border-2 border-accent bg-accent-soft px-4 py-3 text-left text-[14.5px] font-bold text-accent-ink">
+          📦 Агуулах бараа өгсөн — «Падаан» табаас барааг чагтлаад «Барааг бүрэн хүлээн авсан» дарна уу →
+        </button>
+      ) : null}
+      {main === 'orders' ? <OrdersTab /> : main === 'handover' ? <HandoverTab onReceived={() => { setPending(0); setMain('orders'); }} /> : main === 'pickup' ? <PickupTab onTaken={() => setMain('orders')} /> : <GoodsTab />}
     </div>
   );
 }
@@ -127,6 +139,30 @@ function OrderCard({ o, onAct, onDirect, onRoute }: { o: DOrder; onAct: (k: 'del
     try { await api(`/api/driver/orders/${o.id}/route`, { method: 'POST', json: { routeNo: v === '' ? null : Number(v) } }); onRoute(); } catch (e) { setErr(msg(e)); }
   }
   const refused = o.lines.some((l) => l.refusedQty > 0);
+  if (o.goodsHidden) {
+    // Падаанаа хүлээн авахаас өмнө (хуучин шиг): зөвхөн дугаар, утас, хаяг, санамж
+    return (
+      <li className="flex flex-col gap-2.5 rounded-[16px] border border-line bg-surface p-3.5 shadow-card">
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1 text-[13px] font-bold text-subtle">#
+            <input inputMode="numeric" defaultValue={o.routeNo ?? ''} aria-label="Дараалал" onBlur={(e) => { if (e.target.value !== String(o.routeNo ?? '')) void saveRoute(e.target.value); }}
+              className="h-8 w-12 rounded-md border border-line bg-surface px-1.5 text-center text-[14px] font-bold text-ink" />
+          </label>
+          <span className="text-[16px] font-extrabold">№{o.number}</span>
+          <span className="rounded-md bg-surface2 px-2 py-0.5 text-[11.5px] font-extrabold text-muted">БЭЛТГЭСЭН</span>
+          <span className="text-[12.5px] text-subtle">{o.deliveryDate}</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <a href={`tel:${o.phone}`} className="inline-flex h-11 items-center gap-2 rounded-[11px] bg-ok-soft px-3.5 text-[16px] font-extrabold text-ok-ink"><Icon name="phone" size={16} />{o.phone}</a>
+          {o.extraPhone ? <a href={`tel:${o.extraPhone}`} className="inline-flex h-11 items-center gap-2 rounded-[11px] bg-surface2 px-3.5 text-[15px] font-bold"><Icon name="phone" size={15} />{o.extraPhone}</a> : null}
+        </div>
+        <p className="select-text text-[14px] leading-snug [overflow-wrap:anywhere]">📍 {o.fullAddress}</p>
+        {o.note ? <OperatorNote text={o.note} className="!block text-[13px]" /> : null}
+        <p className="rounded-[10px] bg-surface2 px-3 py-2 text-center text-[13px] text-muted">Барааг авснаас хойш бүх мэдээлэл харагдана</p>
+        {err ? <Notice>{err}</Notice> : null}
+      </li>
+    );
+  }
   return (
     <li className={clsx('flex flex-col gap-2.5 rounded-[16px] border bg-surface p-3.5 shadow-card', o.issueStatus === 'PENDING' ? 'border-warn' : 'border-line')}>
       <div className="flex flex-wrap items-center gap-2">
@@ -166,7 +202,6 @@ function OrderCard({ o, onAct, onDirect, onRoute }: { o: DOrder; onAct: (k: 'del
       {err ? <Notice>{err}</Notice> : null}
       <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
         {o.can.deliver ? <Button variant="primary" size="lg" className="col-span-2 sm:col-span-1" onClick={() => onAct('deliver')}><Icon name="check" size={17} />Хүргэсэн</Button> : null}
-        {o.status === 'ASSIGNED' ? <span className="col-span-2 rounded-[11px] bg-surface2 px-3 py-2 text-center text-[13px] text-muted">Агуулахаас бараагаа (падаан) аваагүй байна</span> : null}
         {o.can.postpone ? <Button size="lg" onClick={() => onAct('postpone')}>Маргааш</Button> : null}
         {o.can.postponeLocked ? <Button size="lg" disabled title="2 удаа хойшилсон — ахлах жолооч / оператор шийднэ"><Icon name="lock" size={15} />Цоожтой</Button> : null}
         {o.can.cancel ? <Button variant="danger" size="lg" onClick={() => onAct('cancel')}>Цуцлах</Button> : null}
@@ -296,6 +331,87 @@ function IssueModal({ o, onClose, onDone }: { o: DOrder; onClose: () => void; on
         {err ? <Notice>{err}</Notice> : null}
       </div>
     </Modal>
+  );
+}
+
+// ───────────────────────── Падаан хүлээн авах ─────────────────────────
+
+interface HItem { variantId: number; code: string; name: string; label: string; qty: number; amount: number; thumb: string | null; shelfCode: string | null; checked: boolean; driverChecked: boolean }
+interface HDetail {
+  id: number; number: string; date: string; status: 'DRAFT' | 'PREPARED' | 'HANDED_OVER' | 'RECEIVED'; handedOverAt: string | null; handedOverBy: string | null; receivedAt: string | null;
+  totals: { orders: number; pieces: number; amount: number; kinds: number; driverChecked: number }; items: HItem[];
+}
+
+/** Хуучин ERP-ийн «Падаан хүлээн авах»: бараа нэгтгэсэн, тавиурын дарааллаар; агуулах Check хийсэн барааг жолооч чагтлаад «Барааг бүрэн хүлээн авсан» */
+function HandoverTab({ onReceived }: { onReceived: () => void }) {
+  const [d, setD] = useState<{ handover: HDetail | null } | null>(null);
+  const [q, setQ] = useState('');
+  const [only, setOnly] = useState(false);
+  const [busy, setBusy] = useState<number | 'all' | 'receive' | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const load = useCallback(async () => { try { setD(await api('/api/driver/handover')); setErr(null); } catch (e) { setErr(msg(e)); } }, []);
+  useEffect(() => { void load(); const t = setInterval(() => void load(), 15_000); return () => clearInterval(t); }, [load]);
+  const h = d?.handover ?? null;
+  async function check(variantId: number | 'all', checked: boolean) {
+    if (!h) return;
+    setBusy(variantId); setErr(null);
+    try { const r = await api<{ handover: HDetail }>(`/api/driver/handover/${h.id}`, { method: 'POST', json: { action: 'check', variantId, checked } }); setD({ handover: r.handover }); }
+    catch (e) { setErr(msg(e)); } finally { setBusy(null); }
+  }
+  async function receive() {
+    if (!h) return;
+    setBusy('receive'); setErr(null);
+    try { await api(`/api/driver/handover/${h.id}`, { method: 'POST', json: { action: 'receive' } }); await load(); onReceived(); }
+    catch (e) { setErr(msg(e)); setBusy(null); }
+  }
+  if (!d) return <p className="py-10 text-center text-muted">Ачаалж байна…</p>;
+  if (!h) return <p className="rounded-[14px] border border-dashed border-line px-4 py-10 text-center text-muted">Энэ өдөр падаан байхгүй байна</p>;
+  const items = h.items.filter((i) => (!only || !i.driverChecked) && (!q.trim() || `${i.code} ${i.name} ${i.label}`.toLowerCase().includes(q.trim().toLowerCase())));
+  const all = h.totals.driverChecked === h.totals.kinds && h.totals.kinds > 0;
+  const open = h.status === 'HANDED_OVER';
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <div className="rounded-[12px] border border-line bg-surface px-3 py-2"><div className="text-[11.5px] font-semibold text-subtle">Падаан</div><div className="text-[15px] font-extrabold">{h.number}</div><div className="text-[11.5px] text-subtle">{h.date}</div></div>
+        <div className="rounded-[12px] border border-line bg-surface px-3 py-2"><div className="text-[11.5px] font-semibold text-subtle">Захиалга</div><div className="text-[18px] font-extrabold">{h.totals.orders}</div><div className="text-[11.5px] text-subtle">{h.totals.pieces} ширхэг</div></div>
+        <div className="col-span-2 rounded-[12px] border border-line bg-surface px-3 py-2 sm:col-span-1"><div className="text-[11.5px] font-semibold text-subtle">Падааны нийт дүн</div><div className="whitespace-nowrap text-[17px] font-extrabold">{money(h.totals.amount)}</div></div>
+      </div>
+      {h.status === 'DRAFT' ? <Notice tone="info">⏳ Агуулах бэлтгэж байна...</Notice> : null}
+      {h.status === 'PREPARED' ? <Notice tone="info">📦 Агуулах бараа өгч байна...</Notice> : null}
+      {h.status === 'RECEIVED' ? <Notice tone="ok">✓ Барааг бүрэн хүлээн авсан{h.receivedAt ? ` · ${ubDateTime(h.receivedAt)}` : ''}</Notice> : null}
+      {open ? (
+        <>
+          <div className="h-2.5 overflow-hidden rounded-full bg-surface2"><div className="h-full rounded-full bg-ok" style={{ width: `${h.totals.kinds ? (h.totals.driverChecked / h.totals.kinds) * 100 : 0}%` }} /></div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Бараа хайх..." className="h-10 min-w-0 flex-1 rounded-[10px] border border-line bg-surface px-3 text-[14px]" />
+            <label className="flex items-center gap-1.5 text-[13px] font-semibold"><input type="checkbox" className="h-5 w-5 accent-[var(--accent)]" checked={only} onChange={(e) => setOnly(e.target.checked)} />Шалгаагүй</label>
+            <Button size="sm" loading={busy === 'all'} onClick={() => check('all', !all)}>{all ? 'Бүгдийг болих' : 'Бүгд'}</Button>
+          </div>
+          <p className="text-[13px] font-semibold text-muted">Чагталсан {h.totals.driverChecked}/{h.totals.kinds} төрөл</p>
+        </>
+      ) : null}
+      {err ? <Notice>{err}</Notice> : null}
+      <ul className="flex flex-col gap-1.5">
+        {items.map((i) => (
+          <li key={i.variantId}>
+            <label className={clsx('flex items-center gap-3 rounded-[14px] border bg-surface p-2.5', i.driverChecked ? 'border-ok/50 bg-ok-soft/40' : 'border-line', open && 'cursor-pointer')}>
+              <input type="checkbox" className="h-7 w-7 shrink-0 accent-[var(--accent)]" aria-label={`${i.name} хүлээн авсан`} checked={i.driverChecked} disabled={!open || !i.checked || busy !== null}
+                onChange={(e) => check(i.variantId, e.target.checked)} />
+              <Thumb src={i.thumb} alt={i.name} size={46} zoom={i.code} />
+              <span className="min-w-0 flex-1 text-[13.5px] leading-tight [overflow-wrap:anywhere]"><b>{i.name}</b>{i.label ? ` · ${i.label}` : ''}<span className="block text-[12px] text-subtle">{i.code}{i.shelfCode ? ` · ${i.shelfCode}` : ''}</span></span>
+              <span className="text-right"><b className="block text-[20px] leading-none">{i.qty}</b><span className="text-[11px] text-subtle">ш</span></span>
+            </label>
+          </li>
+        ))}
+        {open && !items.length ? <li className="py-6 text-center text-muted">{only ? 'Бүх бараа шалгагдсан' : 'Хайлтад тохирох бараа олдсонгүй'}</li> : null}
+      </ul>
+      {open ? (
+        <div className="sticky bottom-3 z-10 flex flex-col gap-1.5">
+          {!all ? <p className="rounded-[10px] bg-surface/90 px-3 py-1.5 text-center text-[12.5px] text-muted">Дутуу бараа байвал агуулахад хэлнэ (тэд «Буцаах» дарж засна)</p> : null}
+          <Button variant="primary" size="lg" className="w-full shadow-pop" disabled={!all} loading={busy === 'receive'} onClick={receive}>✓ Барааг бүрэн хүлээн авсан</Button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

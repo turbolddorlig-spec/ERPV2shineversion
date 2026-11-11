@@ -76,8 +76,8 @@ export function ReturnsClient() {
             <>
               <div className="flex flex-wrap items-baseline justify-between gap-2"><h2 className="text-[18px] font-extrabold [overflow-wrap:anywhere]">{d.driver.name}</h2><span className="text-[13px] text-muted">Гарт {d.totals.balance} · буцаах {d.totals.returnable}</span></div>
               {!rows.length ? <Notice tone="info">Буцаах бараа алга (хүргэлтэд явж буй бараа л байна)</Notice> : (
-                <div className="overflow-hidden rounded-[14px] border border-line bg-surface">
-                  <table className="w-full text-[13.5px]">
+                <div className="overflow-x-auto rounded-[14px] border border-line bg-surface">
+                  <table className="w-full min-w-[560px] text-[13.5px]">
                     <thead className="bg-surface2 text-left text-[12px] text-muted"><tr><th className="px-3 py-2">Бараа</th><th className="px-2 py-2">Тавиур</th><th className="px-2 py-2 text-right">Буцаах</th><th className="px-3 py-2 text-right">Ирсэн</th></tr></thead>
                     <tbody className="divide-y divide-line">
                       {rows.map((i) => {

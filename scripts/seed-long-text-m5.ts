@@ -18,7 +18,11 @@ import * as G from '../lib/services/delivery/goods';
     if (h.status === 'DRAFT') await H.prepareHandover(wh, h.id);
     const d = await H.handoverDetail(wh, h.id);
     for (const i of d.items) if (!i.checked) await H.setCheck(wh, h.id, { variantId: i.variantId, checked: true });
-    if (d.status !== 'HANDED_OVER') await H.confirmHandover(wh, h.id);
+    if (d.status === 'PREPARED') await H.confirmHandover(wh, h.id);
+    if ((await db.handover.findUniqueOrThrow({ where: { id: h.id } })).status === 'HANDED_OVER') {
+      await H.setDriverCheck(drv, h.id, { variantId: 'all', checked: true });
+      await H.receiveHandover(drv, h.id);
+    }
   }
   const out = await db.order.findMany({ where: { driverId: drv.id, status: 'OUT_FOR_DELIVERY', id: { not: long.id }, issueStatus: null }, orderBy: { id: 'asc' }, take: 2 });
   if (out[0]) await DR.reportIssue(drv, out[0].id, { type: 'UNCLEAR_ADDRESS', note: `Урт тайлбар: хаяг олдохгүй, утас авахгүй, хашааны хаалга түгжээтэй, хөршөөс асуухад мэдэхгүй гэсэн ${LONG}` });

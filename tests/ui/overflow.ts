@@ -120,6 +120,9 @@ async function main() {
     // Модуль 5: жолоочийн апп (жолоочоор), буцаалт, асуудал, хяналт
     { name: 'Жолооч: захиалга', path: '/driver', as: DRIVER },
     { name: 'Жолооч: хүргэсэн цонх', path: '/driver', as: DRIVER, act: async (p) => { await p.getByRole('button', { name: 'Хүргэсэн', exact: true }).first().click().catch(() => {}); await p.waitForTimeout(600); } },
+    { name: 'Жолооч: падаан', path: '/driver', as: DRIVER, act: async (p) => { await p.getByRole('tab', { name: /Падаан/ }).click(); await p.waitForTimeout(1000); } },
+    { name: 'Ахлах жолооч: гүйцэтгэл', path: '/driver-lead', act: async (p) => { await p.getByRole('tab', { name: 'Жолоочийн гүйцэтгэл' }).click(); await p.waitForTimeout(1200); } },
+    { name: 'Ахлах жолооч: график', path: '/driver-lead', act: async (p) => { await p.getByRole('tab', { name: 'График' }).click(); await p.waitForTimeout(1200); } },
     { name: 'Жолооч: авах', path: '/driver', as: DRIVER, act: async (p) => { await p.getByRole('tab', { name: 'Авах' }).click(); await p.waitForTimeout(1000); } },
     { name: 'Жолооч: миний бараа', path: '/driver', as: DRIVER, act: async (p) => { await p.getByRole('tab', { name: 'Миний бараа' }).click(); await p.waitForTimeout(1000); } },
     { name: 'Буцаалт хүлээн авах', path: '/handover/returns', act: async (p) => { await p.locator('section button').first().click().catch(() => {}); await p.waitForTimeout(1000); } },

@@ -407,9 +407,10 @@ async function main() {
     const balBefore = (await balOf(vv.variantId)).byWarehouse['1'] ?? 0;
     const cf = await Promise.all([1, 2].map(() => req(`/api/handover/${hid}/confirm`, { cookie: wh4.cookie, method: 'POST', body: {} })));
     check('зэрэг 2 «Барааг бүрэн өгсөн» → нэг л удаа', cf.every((x) => x.status === 200) && cf.map((x) => JSON.parse(x.text).handover.duplicate).sort().join() === 'false,true', cf.map((x) => x.text.slice(0, 40)).join(' | '));
-    check('үндсэн агуулахаас 2 ширхэг хасагдав (жолоочид)', ((await balOf(vv.variantId)).byWarehouse['1'] ?? 0) === balBefore - 2);
+    // #77: агуулах өгсөн ч жолооч утсаараа хүлээн авах хүртэл бараа агуулахад, захиалга «Жолоочид оноосон»
+    check('агуулах өгсөн — бараа хөдлөөгүй (жолооч хүлээн авна)', ((await balOf(vv.variantId)).byWarehouse['1'] ?? 0) === balBefore);
     const st = JSON.parse((await req(`/api/orders/${o1.id}`, { cookie: op4.cookie })).text).order.status;
-    check('захиалга «Хүргэлтэд гарсан»', st === 'OUT_FOR_DELIVERY', st);
+    check('захиалга «Жолоочид оноосон» хэвээр', st === 'ASSIGNED', st);
     const pr = await req(`/print/handover/${hid}`, { cookie: wh4.cookie });
     check('падаан хэвлэх хуудас 200', pr.status === 200 && pr.text.includes('Падаан'), String(pr.status));
     const rec4 = JSON.parse((await req('/api/stock/reconcile?fresh=1', { cookie: adm.cookie })).text);
@@ -423,6 +424,23 @@ async function main() {
     const d5 = await loginAs(drvPhone, newPw);
     check('шинэ жолооч нэвтрэв', !!d5.cookie, String(d5.status));
     const other = await loginAs('80000029');
+    const before5 = JSON.parse((await req('/api/driver/orders?tab=all', { cookie: d5.cookie })).text);
+    check('хүлээн авахаас өмнө карт зөвхөн хаягтай (бараа, дүн, товчгүй)', before5.items?.length === 2 && before5.items.every((x: { goodsHidden: boolean; lines: unknown[]; total: number; can: Record<string, boolean> }) => x.goodsHidden && !x.lines.length && x.total === 0 && !Object.values(x.can).some(Boolean)), JSON.stringify(before5).slice(0, 160));
+    const ph = JSON.parse((await req('/api/driver/handover', { cookie: d5.cookie })).text);
+    check('жолоочийн «Падаан» табд хүлээн авах падаан', ph.pending === 1 && ph.handover?.status === 'HANDED_OVER' && ph.handover.items.length === 1, JSON.stringify(ph).slice(0, 120));
+    const earlyRcv = await req(`/api/driver/handover/${hid}`, { cookie: d5.cookie, method: 'POST', body: { action: 'receive' } });
+    check('чагтлаагүй бол хүлээн авахгүй → 409 not_checked', earlyRcv.status === 409 && earlyRcv.text.includes('not_checked'), earlyRcv.text.slice(0, 80));
+    const othRcv = await req(`/api/driver/handover/${hid}`, { cookie: other.cookie, method: 'POST', body: { action: 'check', variantId: 'all', checked: true } });
+    check('өөр жолооч падааныг чагтлахгүй → 404', othRcv.status === 404, String(othRcv.status));
+    await req(`/api/driver/handover/${hid}`, { cookie: d5.cookie, method: 'POST', body: { action: 'check', variantId: 'all', checked: true } });
+    const rcv = await Promise.all([1, 2].map(() => req(`/api/driver/handover/${hid}`, { cookie: d5.cookie, method: 'POST', body: { action: 'receive' } })));
+    check('зэрэг 2 «Барааг бүрэн хүлээн авсан» → нэг л удаа', rcv.every((x) => x.status === 200) && rcv.map((x) => JSON.parse(x.text).handover.duplicate).sort().join() === 'false,true', rcv.map((x) => x.text.slice(0, 40)).join(' | '));
+    check('хүлээн авахад үндсэн агуулахаас 2 ширхэг жолоочид', ((await balOf(vv.variantId)).byWarehouse['1'] ?? 0) === balBefore - 2);
+    const st5 = JSON.parse((await req(`/api/orders/${o1.id}`, { cookie: op4.cookie })).text).order.status;
+    check('захиалга «Хүргэлтэд гарсан»', st5 === 'OUT_FOR_DELIVERY', st5);
+    const ls5 = await req('/api/driver-lead/stats?kind=chart', { cookie: lead4.cookie });
+    const ls5op = await req('/api/driver-lead/stats', { cookie: op4.cookie });
+    check('ахлах жолоочийн график 14 хоног, оператор хандахгүй', ls5.status === 200 && JSON.parse(ls5.text).daily.length === 14 && ls5op.status === 403, `${ls5.status} ${ls5op.status}`);
     const lst = JSON.parse((await req('/api/driver/orders?tab=delivery', { cookie: d5.cookie })).text);
     check('жолоочийн «Хүргэлт» табд 2 захиалга', lst.items?.length === 2 && lst.items.every((x: { can: { deliver: boolean } }) => x.can.deliver), JSON.stringify(lst).slice(0, 120));
     const opDel = await req(`/api/driver/orders/${o1.id}/deliver`, { cookie: op4.cookie, method: 'POST', body: { payment: 'CASH' } });

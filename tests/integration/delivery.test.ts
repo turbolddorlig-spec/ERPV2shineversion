@@ -63,6 +63,12 @@ async function checkAll(id: number) {
   const d = await H.handoverDetail(wh, id);
   for (const i of d.items) await H.setCheck(wh, id, { variantId: i.variantId, checked: true });
 }
+/** Агуулах «Барааг бүрэн өгсөн» → жолооч бүгдийг чагтлаад «Барааг бүрэн хүлээн авсан» (#77) */
+async function giveTo(id: number, driver: UserActor) {
+  await H.confirmHandover(wh, id);
+  await H.setDriverCheck(driver, id, { variantId: 'all', checked: true });
+  await H.receiveHandover(driver, id);
+}
 
 beforeEach(async () => {
   await resetDb(db as never);
@@ -151,6 +157,19 @@ describe('падаан', () => {
     const avBefore = (await P.searchVariants(op, 'G1')).find((x) => x.variantId === v1)!.available;
     const rs = await Promise.all([H.confirmHandover(wh, h.id), H.confirmHandover(wh, h.id)]);
     expect(rs.map((r) => r.duplicate).sort()).toEqual([false, true]);
+    // #77: агуулах өгсөн ч жолооч хүлээн авах хүртэл бараа агуулахад, захиалга «Жолоочид оноосон»
+    expect([rs[0].status, await bal(main, v1), await bal(main, v2)]).toEqual(['HANDED_OVER', b1, b2]);
+    expect((await db.order.findMany({ where: { id: { in: ids } } })).every((o) => o.status === 'ASSIGNED')).toBe(true);
+    await err(H.receiveHandover(wh, h.id), 403);
+    await err(H.receiveHandover(drv2, h.id), 404);
+    await err(H.receiveHandover(drv, h.id), 409, 'not_checked');
+    await H.setDriverCheck(drv, h.id, { variantId: v1, checked: true });
+    await err(H.receiveHandover(drv, h.id), 409, 'not_checked');
+    expect((await H.myHandover(drv)).handover?.totals.driverChecked).toBe(1);
+    await H.setDriverCheck(drv, h.id, { variantId: 'all', checked: true });
+    const rr = await Promise.all([H.receiveHandover(drv, h.id), H.receiveHandover(drv, h.id)]);
+    expect(rr.map((r) => r.duplicate).sort()).toEqual([false, true]);
+    expect(rr[0].status).toBe('RECEIVED');
     expect([await bal(main, v1), await bal(main, v2)]).toEqual([b1 - 4, b2 - 2]);
     const dl = await drvLoc(drv);
     expect([await bal(dl, v1), await bal(dl, v2)]).toEqual([4, 2]);
@@ -221,7 +240,13 @@ describe('падаан', () => {
     await err(H.deleteHandover(wh, h.id), 409, 'not_draft');
     await checkAll(h.id);
     await H.confirmHandover(wh, h.id);
+    // Жолооч хүлээн авахаас өмнө «Буцаах» — бараа хөдлөөгүй тул зөвхөн ноорог болно
     const main = await locOf(mainWh);
+    const b0 = await bal(main, v1);
+    expect((await H.revertHandover(wh, h.id)).status).toBe('DRAFT');
+    expect(await bal(main, v1)).toBe(b0);
+    await H.prepareHandover(wh, h.id); await checkAll(h.id);
+    await giveTo(h.id, drv);
     const before = await bal(main, v1);
     const r = await H.revertHandover(wh, h.id);
     expect(r.status).toBe('DRAFT');
@@ -244,7 +269,7 @@ describe('жолоочид явж буй бараа ил харагдана; ц�
     for (let i = 0; i < n; i++) ids.push((await O.createOrder(op, ub({ deliveryDate: today, lines }))).order.id);
     await L.assignOrders(lead, { ids, driverId: drv.id });
     const h = await H.createHandover(wh, { driverId: drv.id, date: today, orderIds: ids });
-    await H.prepareHandover(wh, h.id); await checkAll(h.id); await H.confirmHandover(wh, h.id);
+    await H.prepareHandover(wh, h.id); await checkAll(h.id); await giveTo(h.id, drv);
     return { ids, h };
   }
 
