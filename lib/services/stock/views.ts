@@ -258,7 +258,7 @@ export async function todayWork(actor: UserActor, opts: { fresh?: boolean } = {}
   const cached = stockCache.today as { at: number; data: TodayCounts } | null;
   if (!opts.fresh && cached && Date.now() - cached.at < 15_000) return { ...cached.data, approver };
   const primary = await db.warehouse.findFirst({ where: { isPrimary: true, isActive: true }, include: { location: true } });
-  const [refill, incoming, discrepancy, loanRequests, countsToApprove, openCounts] = await Promise.all([
+  const [refill, incoming, discrepancy, loanRequests, countsToApprove, openCounts, returns] = await Promise.all([
     primary?.location ? db.$queryRaw<{ n: number }[]>`
       SELECT count(*)::int AS n FROM (SELECT "variantId", sum(qty) AS demand FROM "StockReservation" GROUP BY "variantId") d
       WHERE d.demand > COALESCE((SELECT b.qty FROM "StockBalance" b WHERE b."locationId" = ${primary.location.id} AND b."variantId" = d."variantId"), 0)`.then((r) => r[0]?.n ?? 0) : 0,
@@ -267,8 +267,14 @@ export async function todayWork(actor: UserActor, opts: { fresh?: boolean } = {}
     db.staffLoan.count({ where: { status: 'REQUESTED' } }),
     db.stockCount.count({ where: { status: 'SUBMITTED' } }),
     db.stockCount.count({ where: { status: 'OPEN' } }),
+    // Модуль 5: буцаах бараатай жолооч (гарт − хүргэлтэд явж буй > 0)
+    db.$queryRaw<{ n: number }[]>`
+      WITH bal AS (SELECT l."userId", sum(b.qty) AS bal FROM "StockLocation" l JOIN "StockBalance" b ON b."locationId" = l.id AND b.qty > 0 WHERE l.kind = 'DRIVER' GROUP BY l."userId"),
+      held AS (SELECT o."driverId", sum(ol.qty) AS held FROM "Order" o JOIN "OrderLine" ol ON ol."orderId" = o.id WHERE o.status = 'OUT_FOR_DELIVERY' AND o."driverId" IN (SELECT "userId" FROM bal) GROUP BY 1)
+      SELECT count(*)::int AS n FROM (SELECT bal.bal, COALESCE(held.held, 0) AS held FROM bal LEFT JOIN held ON held."driverId" = bal."userId") x
+      WHERE x.bal > x.held`.then((r) => r[0]?.n ?? 0),
   ]);
-  const data = { refill, incoming, discrepancy, loanRequests, countsToApprove, openCounts, returns: 0 };
+  const data = { refill, incoming, discrepancy, loanRequests, countsToApprove, openCounts, returns };
   stockCache.today = { at: Date.now(), data };
   return { ...data, approver };
 }
@@ -278,7 +284,7 @@ export async function warehouseBadge(actor: UserActor): Promise<number> {
   if (!canView(actor.roles, 'warehouse')) return 0;
   const t = await todayWork(actor);
   if (!canOperateStock(actor.roles)) return 0;
-  return t.refill + t.incoming + t.loanRequests + (t.approver ? t.countsToApprove + t.discrepancy : 0);
+  return t.refill + t.incoming + t.loanRequests + t.returns + (t.approver ? t.countsToApprove + t.discrepancy : 0);
 }
 export function bustTodayCache() { stockCache.today = null; }
 

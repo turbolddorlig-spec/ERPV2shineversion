@@ -91,7 +91,9 @@ async function leadKpi() {
     UNION ALL SELECT 'assignedToday', count(*)::int FROM "Order" WHERE status = 'ASSIGNED' AND "deliveryDate" = ${today}::date
     UNION ALL SELECT 'assignedTomorrow', count(*)::int FROM "Order" WHERE status = 'ASSIGNED' AND "deliveryDate" = ${tomorrow}::date
     UNION ALL SELECT 'outForDelivery', count(*)::int FROM "Order" WHERE status = 'OUT_FOR_DELIVERY'
-    UNION ALL SELECT 'deliveredToday', count(*)::int FROM "Order" WHERE status = 'DELIVERED' AND "deliveredAt" >= ${ubDayStart(ubDay())}`;
+    UNION ALL SELECT 'deliveredToday', count(*)::int FROM "Order" WHERE status = 'DELIVERED' AND "deliveredAt" >= ${ubDayStart(ubDay())}
+    UNION ALL SELECT 'postponedToday', count(*)::int FROM "Order" WHERE "postponedByDriverId" IS NOT NULL AND "postponedAt" >= ${ubDayStart(ubDay())}
+    UNION ALL SELECT 'issues', count(*)::int FROM "Order" WHERE "issueStatus" = 'PENDING'`;
   const data = Object.fromEntries(r.map((x) => [x.k, x.n]));
   kpiCache = { at: Date.now(), data };
   return data;

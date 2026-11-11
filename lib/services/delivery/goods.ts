@@ -91,16 +91,22 @@ async function recentDocs(driverId: string, take = 20) {
 export async function returnsBoard(actor: UserActor) {
   if (!canView(actor.roles, 'warehouse') && !canView(actor.roles, 'handover')) throw forbidden();
   const rows = await db.$queryRaw<{ driverId: string; name: string; balance: number; held: number }[]>`
-    SELECT l."userId" AS "driverId", u.name, COALESCE(sum(b.qty), 0)::int AS balance,
-      COALESCE((SELECT sum(ol.qty) FROM "OrderLine" ol JOIN "Order" o ON o.id = ol."orderId" WHERE o.status = 'OUT_FOR_DELIVERY' AND o."driverId" = l."userId"), 0)::int AS held
-    FROM "StockLocation" l JOIN "User" u ON u.id = l."userId" JOIN "StockBalance" b ON b."locationId" = l.id AND b.qty > 0
-    WHERE l.kind = 'DRIVER' GROUP BY l."userId", u.name ORDER BY u.name`;
+    WITH bal AS (
+      SELECT l."userId", sum(b.qty)::int AS balance FROM "StockLocation" l JOIN "StockBalance" b ON b."locationId" = l.id AND b.qty > 0
+      WHERE l.kind = 'DRIVER' GROUP BY l."userId"),
+    held AS (
+      SELECT o."driverId", sum(ol.qty)::int AS held FROM "Order" o JOIN "OrderLine" ol ON ol."orderId" = o.id
+      WHERE o.status = 'OUT_FOR_DELIVERY' AND o."driverId" IN (SELECT "userId" FROM bal) GROUP BY 1)
+    SELECT bal."userId" AS "driverId", u.name, bal.balance, COALESCE(held.held, 0)::int AS held
+    FROM bal JOIN "User" u ON u.id = bal."userId" LEFT JOIN held ON held."driverId" = bal."userId" ORDER BY u.name`;
   const last = await db.$queryRaw<{ driverId: string; at: Date }[]>`SELECT "driverId", max("createdAt") AS at FROM "DriverDoc" WHERE kind = 'RETURN' GROUP BY 1`;
   const lm = new Map(last.map((x) => [x.driverId, x.at]));
   return {
     canReceive: canReceiveReturns(actor.roles),
     items: rows.map((r) => ({ driverId: r.driverId, name: r.name, balance: r.balance, held: Math.min(r.held, r.balance), returnable: Math.max(0, r.balance - r.held), lastReturnAt: lm.get(r.driverId) ?? null }))
-      .filter((r) => r.balance > 0),
+      .filter((r) => r.balance > 0)
+      // Буцаах бараатай жолооч эхэнд (их → бага), дараа нь нэрээр
+      .sort((a, b) => b.returnable - a.returnable || a.name.localeCompare(b.name)),
   };
 }
 
@@ -110,18 +116,16 @@ export async function driverReturnable(actor: UserActor, driverIdIn: unknown) {
   const driverId = cleanUuid(driverIdIn);
   const u = await driverUser(driverId);
   const since = ubDayStart(ubDay(new Date(), -7));
-  const [goods, sources, docs] = await Promise.all([
+  // 3 тусдаа индекстэй асуулга (OR нэг асуулгад 1 сая захиалгыг бүхэлд нь уншдаг байсан)
+  const sel = { id: true, number: true, status: true, cancelledAt: true, postponedAt: true, deliveredAt: true } as const;
+  const [goods, cancelled, postponed, partial, docs] = await Promise.all([
     goodsView(driverId),
-    db.order.findMany({
-      where: { OR: [
-        { driverId, status: 'CANCELLED', outForDeliveryAt: { not: null }, cancelledAt: { gte: since } },
-        { postponedByDriverId: driverId, postponedAt: { gte: since }, outForDeliveryAt: { not: null } },
-        { driverId, status: 'DELIVERED', deliveredAt: { gte: since }, lines: { some: { refusedQty: { gt: 0 } } } },
-      ] },
-      orderBy: { id: 'desc' }, take: 100, select: { id: true, number: true, status: true, cancelledAt: true, postponedAt: true, deliveredAt: true, postponedByDriverId: true },
-    }),
+    db.order.findMany({ where: { driverId, cancelledAt: { gte: since }, status: 'CANCELLED', outForDeliveryAt: { not: null } }, orderBy: { cancelledAt: 'desc' }, take: 40, select: sel }),
+    db.order.findMany({ where: { postponedByDriverId: driverId, postponedAt: { gte: since }, outForDeliveryAt: { not: null } }, orderBy: { postponedAt: 'desc' }, take: 40, select: sel }),
+    db.order.findMany({ where: { driverId, deliveredAt: { gte: since }, status: 'DELIVERED', originalTotal: { not: null }, lines: { some: { refusedQty: { gt: 0 } } } }, orderBy: { deliveredAt: 'desc' }, take: 40, select: sel }),
     recentDocs(driverId, 10),
   ]);
+  const sources = [...cancelled, ...postponed, ...partial].sort((a, b) => b.id - a.id);
   return {
     driver: { id: u.id, name: u.name }, canReceive: canReceiveReturns(actor.roles), ...goods, docs,
     sources: sources.map((o) => ({ id: o.id, number: o.number, why: o.status === 'DELIVERED' ? 'Болиулсан бараа' : o.status === 'CANCELLED' && o.cancelledAt ? 'Цуцалсан' : 'Маргааш', at: o.cancelledAt ?? o.deliveredAt ?? o.postponedAt })),
@@ -262,9 +266,13 @@ export async function driverControl(actor: UserActor, dateIn?: string) {
     db.$queryRaw<{ id: string; extraSales: number }[]>`
       SELECT "driverId" AS id, COALESCE(sum(total), 0)::int AS "extraSales" FROM "DriverDoc" WHERE kind = 'EXTRA_SALE' AND "createdAt" >= ${t0} AND "createdAt" < ${t1} GROUP BY 1`,
     db.$queryRaw<{ id: string; balance: number; held: number }[]>`
-      SELECT l."userId" AS id, COALESCE(sum(b.qty), 0)::int AS balance,
-        COALESCE((SELECT sum(ol.qty) FROM "OrderLine" ol JOIN "Order" o ON o.id = ol."orderId" WHERE o.status = 'OUT_FOR_DELIVERY' AND o."driverId" = l."userId"), 0)::int AS held
-      FROM "StockLocation" l JOIN "StockBalance" b ON b."locationId" = l.id WHERE l.kind = 'DRIVER' GROUP BY l."userId"`,
+      WITH bal AS (
+        SELECT l."userId", sum(b.qty)::int AS balance FROM "StockLocation" l JOIN "StockBalance" b ON b."locationId" = l.id AND b.qty > 0
+        WHERE l.kind = 'DRIVER' GROUP BY l."userId"),
+      held AS (
+        SELECT o."driverId", sum(ol.qty)::int AS held FROM "Order" o JOIN "OrderLine" ol ON ol."orderId" = o.id
+        WHERE o.status = 'OUT_FOR_DELIVERY' AND o."driverId" IN (SELECT "userId" FROM bal) GROUP BY 1)
+      SELECT bal."userId" AS id, bal.balance, COALESCE(held.held, 0)::int AS held FROM bal LEFT JOIN held ON held."driverId" = bal."userId"`,
     db.$queryRaw<{ id: string; at: Date }[]>`SELECT "driverId" AS id, max("createdAt") AS at FROM "DriverDoc" WHERE kind = 'RETURN' GROUP BY 1`,
   ]);
   const by = <T extends { id: string }>(rows: T[]) => new Map(rows.map((r) => [r.id, r]));

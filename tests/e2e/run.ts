@@ -160,7 +160,7 @@ async function main() {
       else check(`${roles.join('+')} ${api} өртөг нуугдана`, !/"costPrice"/.test(r.text), r.text.slice(0, 80));
     }
     const s = await req('/api/products/search?q=пүүз', { cookie: l.cookie });
-    const canSearch = accessTo(roles, 'products') !== 'none' || accessTo(roles, 'orders') !== 'none';
+    const canSearch = accessTo(roles, 'products') !== 'none' || accessTo(roles, 'orders') !== 'none' || accessTo(roles, 'driver') !== 'none'; // Модуль 5: жолооч нэмэлт бараа хайна
     check(`${roles.join('+')} бараа хайх`, canSearch ? s.status === 200 && !/cost/i.test(s.text) : s.status === 403, String(s.status));
   }
   const mk = await loginAs('80000140'); // Маркетинг
@@ -349,13 +349,13 @@ async function main() {
   check('дуудлагад буруу дугаар → 400', cl.status === 400, String(cl.status));
 
   // ───────── Модуль 4: Падаан ─────────
-  const m4Pages = ['/driver-lead', '/handover', '/handover/history'];
+  const m4Pages = ['/driver-lead', '/handover', '/handover/history', '/driver', '/issues', '/driver-control', '/handover/returns'];
   for (const [roles, phone] of ROLE_PHONE) {
     const l = await loginAs(phone);
     if (!l.cookie) continue;
     for (const path of m4Pages) {
       const r = await req(path, { cookie: l.cookie });
-      const key = path === '/driver-lead' ? 'driver-lead' : 'handover';
+      const key = path === '/driver-lead' ? 'driver-lead' : path === '/driver' ? 'driver' : path === '/issues' ? 'issues' : path === '/driver-control' ? 'driver-control' : 'handover';
       check(`${roles.join('+')} ${path}`, accessTo(roles, key) !== 'none' ? r.status === 200 : r.status === 307, `${r.status} ${r.location}`);
     }
     const as = await req('/api/driver-lead/assign', { cookie: l.cookie, method: 'POST', body: { ids: [1], driverId: '00000000-0000-0000-0000-000000000000' } });
@@ -414,6 +414,49 @@ async function main() {
     check('падаан хэвлэх хуудас 200', pr.status === 200 && pr.text.includes('Падаан'), String(pr.status));
     const rec4 = JSON.parse((await req('/api/stock/reconcile?fresh=1', { cookie: adm.cookie })).text);
     check('Модуль 4-ийн дараа тулгалт: журнал = үлдэгдэл', rec4.ok === true, JSON.stringify(rec4).slice(0, 120));
+
+    // ───────── Модуль 5: Жолооч ─────────
+    const ndj = JSON.parse(nd.text) as { temporaryPassword: string | null };
+    const tmp = await loginAs(drvPhone, ndj.temporaryPassword ?? '');
+    const newPw = `E2eDrv${Date.now() % 100000}x`;
+    await req('/api/auth/change-password', { cookie: tmp.cookie, method: 'POST', body: { currentPassword: ndj.temporaryPassword, newPassword: newPw } });
+    const d5 = await loginAs(drvPhone, newPw);
+    check('шинэ жолооч нэвтрэв', !!d5.cookie, String(d5.status));
+    const other = await loginAs('80000029');
+    const lst = JSON.parse((await req('/api/driver/orders?tab=delivery', { cookie: d5.cookie })).text);
+    check('жолоочийн «Хүргэлт» табд 2 захиалга', lst.items?.length === 2 && lst.items.every((x: { can: { deliver: boolean } }) => x.can.deliver), JSON.stringify(lst).slice(0, 120));
+    const opDel = await req(`/api/driver/orders/${o1.id}/deliver`, { cookie: op4.cookie, method: 'POST', body: { payment: 'CASH' } });
+    check('оператор жолоочийн API → 403', opDel.status === 403, String(opDel.status));
+    const oth = await req(`/api/driver/orders/${o1.id}/deliver`, { cookie: other.cookie, method: 'POST', body: { payment: 'CASH' } });
+    check('өөр жолоочийн захиалгыг хүргэхгүй → 404', oth.status === 404, String(oth.status));
+    const dl = await Promise.all([1, 2].map(() => req(`/api/driver/orders/${o1.id}/deliver`, { cookie: d5.cookie, method: 'POST', body: { payment: 'CASH' } })));
+    check('зэрэг 2 «Хүргэсэн» → нэг л удаа', dl.every((x) => x.status === 200) && dl.map((x) => JSON.parse(x.text).duplicate).sort().join() === 'false,true', dl.map((x) => x.text.slice(0, 50)).join(' | '));
+    const pp = await req(`/api/driver/orders/${o2.id}/postpone`, { cookie: d5.cookie, method: 'POST', body: {} });
+    const o2s = JSON.parse((await req(`/api/orders/${o2.id}`, { cookie: op4.cookie })).text).order;
+    check('«Маргааш» → ижил дугаар «Шинэ», жолоочгүй', pp.status === 200 && o2s.status === 'NEW' && o2s.number === o2.number && !o2s.driverId && o2s.postponeCount === 1, `${pp.status} ${o2s.status} ${o2s.number}`);
+    const rb = JSON.parse((await req('/api/returns', { cookie: wh4.cookie })).text);
+    check('агуулахын буцаалтын самбарт жолооч 1ш буцаах', rb.items?.find((x: { driverId: string }) => x.driverId === free.id)?.returnable === 1, JSON.stringify(rb).slice(0, 120));
+    const tooMany = await req('/api/returns', { cookie: wh4.cookie, method: 'POST', body: { driverId: free.id, lines: [{ variantId: vv.variantId, qty: 2 }], idemKey: `e2e-m5-rt-x-${Date.now()}` } });
+    check('буцаахаас илүүг хүлээн авахгүй → 409', tooMany.status === 409, tooMany.text.slice(0, 80));
+    const drvRet = await req('/api/returns', { cookie: d5.cookie, method: 'POST', body: { driverId: free.id, lines: [{ variantId: vv.variantId, qty: 1 }], idemKey: `e2e-m5-rt-d-${Date.now()}` } });
+    check('жолооч өөрөө буцаалт хүлээн авахгүй → 403', drvRet.status === 403, String(drvRet.status));
+    const rk = `e2e-m5-rt-${Date.now()}`;
+    const balW = (await balOf(vv.variantId)).byWarehouse['1'] ?? 0;
+    const rt = await Promise.all([1, 2].map(() => req('/api/returns', { cookie: wh4.cookie, method: 'POST', body: { driverId: free.id, lines: [{ variantId: vv.variantId, qty: 1 }], idemKey: rk } })));
+    check('буцаалт (зэрэг 2 дарахад) нэг удаа, агуулахад +1', rt.every((x) => x.status === 200) && ((await balOf(vv.variantId)).byWarehouse['1'] ?? 0) === balW + 1, rt.map((x) => x.status).join(','));
+    const iss = await req(`/api/issues/${o2.id}`, { cookie: op4.cookie, method: 'POST', body: { action: 'fix', note: 'Тест шийдвэр' } });
+    check('оператор асуудал шийдэхгүй → 403', iss.status === 403, String(iss.status));
+    const ex = await req('/api/driver/goods', { cookie: d5.cookie, method: 'POST', body: { kind: 'take', idemKey: `e2e-m5-ex-${Date.now()}`, lines: [{ variantId: vv.variantId, qty: 1 }] } });
+    const sl = await req('/api/driver/goods', { cookie: d5.cookie, method: 'POST', body: { kind: 'sale', payment: 'CASH', idemKey: `e2e-m5-sl-${Date.now()}`, lines: [{ variantId: vv.variantId, qty: 1 }] } });
+    check('нэмэлт бараа авч, системийн үнээр зарав', ex.status === 200 && sl.status === 200 && JSON.parse(sl.text).doc.total > 0, `${ex.text.slice(0, 60)} ${sl.text.slice(0, 60)}`);
+    const g5 = JSON.parse((await req('/api/driver/goods', { cookie: d5.cookie })).text);
+    check('жолоочид бараа үлдээгүй', g5.totals?.balance === 0, JSON.stringify(g5.totals));
+    const ctl = await req('/api/driver-control', { cookie: lead4.cookie });
+    const ctlOp = await req('/api/driver-control', { cookie: op4.cookie });
+    const me5 = JSON.parse(ctl.text).items?.find((x: { id: string }) => x.id === free.id);
+    check('жолоочийн хяналт: хүргэсэн 1, маргааш 1, нэмэлт зарсан', ctl.status === 200 && me5?.delivered === 1 && me5?.postponed === 1 && me5?.extraSales > 0 && ctlOp.status === 403, JSON.stringify(me5).slice(0, 160));
+    const rec5 = JSON.parse((await req('/api/stock/reconcile?fresh=1', { cookie: adm.cookie })).text);
+    check('Модуль 5-ын дараа тулгалт: журнал = үлдэгдэл', rec5.ok === true, JSON.stringify(rec5).slice(0, 120));
     }
   }
 

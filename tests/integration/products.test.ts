@@ -205,7 +205,9 @@ describe('хайлт (Модуль 3-т)', () => {
     const r = await P.searchVariants(op, 'пүүз');
     expect(r.map((x) => [x.variantCode, x.price])).toEqual([['0887-38', 195000], ['0887-45', 205000]]);
     expect(JSON.stringify(r)).not.toMatch(/cost|100000/);
-    await err(P.searchVariants(await actor(['DRIVER']), 'пүүз'), 403);
+    // Модуль 5 (#74): жолооч нэмэлт бараа хайна; нягтлан (бараа, захиалга, жолоочийн хуудасгүй) хайхгүй
+    expect((await P.searchVariants(await actor(['DRIVER']), 'пүүз')).length).toBe(2);
+    await err(P.searchVariants(await actor(['ACCOUNTING']), 'пүүз'), 403);
   });
   it('ганц өнгө, ганц хэмжээтэй бараа энгийн бараа шиг нэг мөр (#34)', async () => {
     const mk = await actor(['MARKETING']);

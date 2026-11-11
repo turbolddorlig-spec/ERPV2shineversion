@@ -50,7 +50,7 @@ async function main() {
       s AS (
         SELECT g.*, CASE
           WHEN ts > now() - interval '1 day' THEN (ARRAY['NEW','NEW','NEW','ASSIGNED','PENDING_PAYMENT','CANCELLED'])[1 + h % 6]
-          WHEN ts > now() - interval '3 day' THEN (ARRAY['ASSIGNED','OUT_FOR_DELIVERY','DELIVERED','DELIVERED','CANCELLED','PENDING_PAYMENT'])[1 + h % 6]
+          WHEN ts > now() - interval '3 day' THEN (ARRAY['ASSIGNED','ASSIGNED','DELIVERED','DELIVERED','CANCELLED','PENDING_PAYMENT'])[1 + h % 6]
           ELSE (ARRAY['DELIVERED','DELIVERED','DELIVERED','DELIVERED','DELIVERED','DELIVERED','CANCELLED','CANCELLED'])[1 + h % 8] END AS st,
           (h % 10 = 0) AS rural
         FROM g)

@@ -74,6 +74,7 @@ export function HandoverClient() {
         </div>
         <div className="flex gap-2">
           {board?.canApprove ? <button type="button" onClick={() => setApprovalsOpen(true)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2"><Icon name="calc" size={15} />Нягтлан OKEY</button> : null}
+          <Link href="/handover/returns" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2"><Icon name="refresh" size={15} />Буцаалт хүлээн авах</Link>
           <Link href="/handover/history" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2"><Icon name="history" size={15} />Падааны түүх</Link>
         </div>
       </div>

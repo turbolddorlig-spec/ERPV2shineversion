@@ -13,6 +13,7 @@ const BASE = process.env.UI_BASE ?? 'http://localhost:3000';
 const PHONE = process.env.UI_PHONE ?? '80000001';
 const PW = process.env.UI_PASSWORD ?? 'Test1234';
 const MARK = 'Зайгүймаашуртүг';
+const DRIVER = process.env.UI_DRIVER ?? '80000099';
 
 type Issue = { kind: string; text: string; w: number; box: number };
 
@@ -71,6 +72,16 @@ async function main() {
   const m = /zs=([^;]+)/.exec(login.headers.get('set-cookie') ?? '');
   if (!m) throw new Error('login амжилтгүй');
   const url = new URL(BASE);
+  const cookies = new Map<string, string>();
+  const cookieOf = async (phone: string) => {
+    if (!cookies.has(phone)) {
+      const r = await fetch(BASE + '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ phone, password: PW }) });
+      const c = /zs=([^;]+)/.exec(r.headers.get('set-cookie') ?? '');
+      if (!c) throw new Error(`login ${phone} амжилтгүй`);
+      cookies.set(phone, c[1]!);
+    }
+    return cookies.get(phone)!;
+  };
   const ids = await (async () => {
     const j = await (await fetch(BASE + '/api/orders?q=95550000', { headers: { cookie: `zs=${m[1]}` } })).json() as { items: { id: number }[] };
     const h = await (await fetch(BASE + '/api/handover?history=1', { headers: { cookie: `zs=${m[1]}` } })).json() as { items?: { id: number }[] };
@@ -78,7 +89,7 @@ async function main() {
   })();
   if (!ids.order) throw new Error('Урт өгөгдөл олдсонгүй: эхлээд scripts/seed-long-text.ts ажиллуул');
 
-  type Step = { name: string; path: string; act?: (p: Page) => Promise<void> };
+  type Step = { name: string; path: string; act?: (p: Page) => Promise<void>; as?: string };
   const steps: Step[] = [
     { name: 'Захиалга жагсаалт (хайлт)', path: '/orders?q=95550000' },
     { name: 'Захиалга жагсаалт', path: '/orders' },
@@ -106,6 +117,15 @@ async function main() {
     { name: 'Хөдөлгөөн', path: '/warehouse/moves' },
     { name: 'Тайлан', path: '/reports' },
     { name: 'Хэрэглэгчид', path: '/users' },
+    // Модуль 5: жолоочийн апп (жолоочоор), буцаалт, асуудал, хяналт
+    { name: 'Жолооч: захиалга', path: '/driver', as: DRIVER },
+    { name: 'Жолооч: хүргэсэн цонх', path: '/driver', as: DRIVER, act: async (p) => { await p.getByRole('button', { name: 'Хүргэсэн', exact: true }).first().click().catch(() => {}); await p.waitForTimeout(600); } },
+    { name: 'Жолооч: авах', path: '/driver', as: DRIVER, act: async (p) => { await p.getByRole('tab', { name: 'Авах' }).click(); await p.waitForTimeout(1000); } },
+    { name: 'Жолооч: миний бараа', path: '/driver', as: DRIVER, act: async (p) => { await p.getByRole('tab', { name: 'Миний бараа' }).click(); await p.waitForTimeout(1000); } },
+    { name: 'Буцаалт хүлээн авах', path: '/handover/returns', act: async (p) => { await p.locator('section button').first().click().catch(() => {}); await p.waitForTimeout(1000); } },
+    { name: 'Асуудал', path: '/issues' },
+    { name: 'Асуудал (шийдсэн)', path: '/issues', act: async (p) => { await p.getByText('Шийдсэн', { exact: true }).click(); await p.waitForTimeout(800); } },
+    { name: 'Жолоочийн хяналт', path: '/driver-control' },
   ];
   let bad = 0;
   for (const width of [1440, 390]) {
@@ -114,6 +134,8 @@ async function main() {
     const page = await ctx.newPage();
     for (const s of steps) {
       try {
+        await ctx.clearCookies();
+        await ctx.addCookies([{ name: 'zs', value: s.as ? await cookieOf(s.as) : m[1]!, domain: url.hostname, path: '/' }]);
         await page.goto(BASE + s.path, { waitUntil: 'networkidle', timeout: 30000 });
         await page.waitForTimeout(600);
         if (s.act) await s.act(page);

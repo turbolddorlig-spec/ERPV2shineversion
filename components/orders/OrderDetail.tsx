@@ -24,7 +24,7 @@ interface Detail extends OItem {
   can: { edit: boolean; markPaid: boolean };
 }
 const ACTION: Record<string, string> = {
-  'order.created': 'Үүсгэсэн', 'order.updated': 'Засварласан', 'order.cancelled': 'Цуцалсан', 'order.paid': 'Мөнгө орсон', 'order.paid_undone': '«Мөнгө орсон» буцаасан', 'order.deadline_extended': 'Төлбөрийн хугацаа сунгасан', 'order.assigned': 'Жолоочид оноосон',
+  'order.created': 'Үүсгэсэн', 'order.updated': 'Засварласан', 'order.cancelled': 'Цуцалсан', 'order.paid': 'Мөнгө орсон', 'order.paid_undone': '«Мөнгө орсон» буцаасан', 'order.deadline_extended': 'Төлбөрийн хугацаа сунгасан', 'order.assigned': 'Жолоочид оноосон', 'order.picked_up': 'Жолооч өөрөө авсан', 'order.delivered': 'Хүргэсэн', 'order.redelivered': 'Хүргэсэн болгосон', 'order.delivery_undone': 'Хүргэсний дараа буцаасан', 'order.driver_cancelled': 'Жолооч цуцалсан', 'order.postponed': 'Маргааш (жолооч)', 'order.postpone_undone': '«Маргааш»-ийг буцаасан', 'order.issue_reported': 'Опп-руу явуулсан (асуудал)', 'order.issue_fixed': 'Асуудал зассан', 'order.issue_cancelled': 'Асуудлаар цуцалсан',
 };
 const FIELD: Record<string, string> = { phone: 'Утас', extraPhone: 'Нэмэлт утас', province: 'Аймаг/хот', district: 'Дүүрэг', khoroo: 'Хороо', addressDetail: 'Хаяг', note: 'Тэмдэглэл', pageId: 'Пэйж', deliveryDate: 'Хүргэх өдөр', total: 'Дүн', deliveryFee: 'Хүргэлт', lines: 'Бараа' };
 const CANCEL = [{ v: 'CUSTOMER_CANCELLED', l: 'Үйлчлүүлэгч болисон' }, { v: 'DUPLICATE', l: 'Давхар захиалга' }, { v: 'OUT_OF_STOCK', l: 'Бараа дутуу' }, { v: 'NO_ANSWER', l: 'Утас авахгүй' }, { v: 'OTHER', l: 'Бусад' }];

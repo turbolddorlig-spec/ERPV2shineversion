@@ -112,9 +112,7 @@ export function WarehouseClient({ canOperate, canApprove }: { canOperate: boolea
           <Link href="/warehouse/transfers/new" className="inline-flex h-11 items-center gap-2 rounded-[11px] border border-line bg-surface px-4 text-[14px] font-semibold"><Icon name="swap" size={16} />Шилжүүлэг</Link>
           <Link href="/warehouse/issue" className="inline-flex h-11 items-center gap-2 rounded-[11px] border border-line bg-surface px-4 text-[14px] font-semibold"><Icon name="down" size={16} />Зарлага</Link>
           <Link href="/warehouse/counts" className="inline-flex h-11 items-center gap-2 rounded-[11px] border border-line bg-surface px-4 text-[14px] font-semibold"><Icon name="check" size={16} />Тооллого</Link>
-          <span className="inline-flex h-11 cursor-not-allowed items-center gap-2 rounded-[11px] border border-dashed border-line px-4 text-[14px] font-semibold text-subtle" title="Жолоочид бараа өгөх (Модуль 4)-өөс эхэлж ажиллана">
-            <Icon name="refresh" size={16} />Буцаалт авах
-          </span>
+          <Link href="/handover/returns" className="inline-flex h-11 items-center gap-2 rounded-[11px] border border-line bg-surface px-4 text-[14px] font-semibold"><Icon name="refresh" size={16} />Буцаалт авах</Link>
         </div>
       ) : null}
 
@@ -132,7 +130,7 @@ export function WarehouseClient({ canOperate, canApprove }: { canOperate: boolea
           <WorkCard n={today?.refill ?? 0} label="Дүүргэх бараа" hint="Үндсэн тавиурт дутуу" href="/warehouse/refill" tone="bad" />
           <WorkCard n={today?.incoming ?? 0} label="Ирэх шилжүүлэг" hint="Хүлээн авах" href="/warehouse/transfers?status=SENT" />
           <WorkCard n={today?.loanRequests ?? 0} label="Зээлийн хүсэлт" hint="Олгох" href="/loans?status=REQUESTED" />
-          <WorkCard n={0} label="Буцаалт хүлээн авах" hint="Модуль 4–5-аас" href="#" disabled />
+          <WorkCard n={today?.returns ?? 0} label="Буцаалт хүлээн авах" hint="Жолоочоос (бараатай жолооч)" href="/handover/returns" />
           {today?.approver || canApprove ? (
             <>
               <WorkCard n={today?.countsToApprove ?? 0} label="Батлах тооллого" href="/warehouse/counts?status=SUBMITTED" />

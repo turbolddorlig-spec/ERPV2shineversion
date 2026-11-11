@@ -104,7 +104,7 @@ export const canManageCatalogLists = (roles: Role[]) => has(roles, [...SA_A, 'MA
 /** Барааны засварыг "Шалгасан" гэж тэмдэглэх */
 export const canReviewProductEdits = (roles: Role[]) => has(roles, [...SA_A, 'MARKETING_LEAD']);
 /** Захиалга авахдаа бараа хайх (Модуль 3) — бараа хуудас харахгүй операторт ч хэрэгтэй */
-export const canSearchProducts = (roles: Role[]) => canView(roles, 'products') || canView(roles, 'orders');
+export const canSearchProducts = (roles: Role[]) => canView(roles, 'products') || canView(roles, 'orders') || canView(roles, 'driver');
 
 // ── Модуль 2: агуулах, үлдэгдэл (шийдвэр #38–#40) ──
 /** Орлого, шилжүүлэг, зарлага, тооллого оруулах, зээл олгох/хүлээн авах, тавиур */

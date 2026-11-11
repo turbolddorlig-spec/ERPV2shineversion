@@ -28,13 +28,16 @@ export interface OItem {
 interface ListResp { items: OItem[]; hasMore: boolean; matched: number | null; matchedCapped: boolean; counts: Record<string, number>; can: { edit: boolean; markPaid: boolean; supervise: boolean; review: boolean } }
 
 
-export function StatusChip({ o }: { o: Pick<OItem, 'displayStatus' | 'statusLabel' | 'deliveryDate' | 'isToday' | 'prepaid' | 'postponeCount' | 'noKhoroo'> }) {
+export function StatusChip({ o }: { o: Pick<OItem, 'displayStatus' | 'statusLabel' | 'deliveryDate' | 'isToday' | 'prepaid' | 'postponeCount' | 'noKhoroo'> & { issueStatus?: string | null; deliveryPayment?: string | null; originalTotal?: number | null; total?: number } }) {
   return (
     <span className="flex flex-wrap items-center gap-1">
       <Badge tone={STATUS_TONE[o.displayStatus]}>{o.statusLabel}{o.displayStatus === 'SCHEDULED' ? ` · ${o.deliveryDate.slice(5).replace('-', '/')}` : ''}</Badge>
       {o.isToday && ['NEW', 'ASSIGNED'].includes(o.displayStatus) ? <Badge tone="bad">🔴 Өнөөдөр</Badge> : null}
       {o.prepaid ? <Badge tone="ok">Мөнгө орсон</Badge> : null}
-      {o.postponeCount ? <Badge tone="warn">Хойшилсон</Badge> : null}
+      {o.postponeCount ? <Badge tone="warn">Хойшилсон{o.postponeCount > 1 ? ` ×${o.postponeCount}` : ''}</Badge> : null}
+      {o.issueStatus === 'PENDING' ? <Badge tone="bad">Асуудалтай</Badge> : null}
+      {o.displayStatus === 'DELIVERED' && o.deliveryPayment === 'UNPAID' ? <Badge tone="bad">Төлөөгүй</Badge> : null}
+      {o.displayStatus === 'DELIVERED' && o.originalTotal && o.total !== undefined && o.originalTotal !== o.total ? <Badge tone="warn">Хэсэгчилсэн</Badge> : null}
       {o.noKhoroo ? <Badge tone="neutral">Хороо?</Badge> : null}
     </span>
   );

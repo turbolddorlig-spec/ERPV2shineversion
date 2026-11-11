@@ -96,8 +96,8 @@ export function DriverLeadClient() {
         <button type="button" onClick={() => setByDayOpen(true)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2"><Icon name="box" size={15} />Жолоочдын захиалга</button>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-        {([['unassigned', 'Хуваарилаагүй', 'text-warn'], ['assignedToday', 'Өнөөдөр оноосон', 'text-info'], ['assignedTomorrow', 'Маргааш оноосон', 'text-info'], ['outForDelivery', 'Хүргэлтэд гарсан', 'text-accent-ink'], ['deliveredToday', 'Өнөөдөр хүргэсэн', 'text-ok-ink']] as const).map(([k, l, c]) => (
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-7">
+        {([['unassigned', 'Хуваарилаагүй', 'text-warn'], ['assignedToday', 'Өнөөдөр оноосон', 'text-info'], ['assignedTomorrow', 'Маргааш оноосон', 'text-info'], ['outForDelivery', 'Хүргэлтэд гарсан', 'text-accent-ink'], ['deliveredToday', 'Өнөөдөр хүргэсэн', 'text-ok-ink'], ['postponedToday', 'Өнөөдөр «Маргааш»', 'text-warn'], ['issues', 'Асуудалтай', 'text-bad-ink']] as const).map(([k, l, c]) => (
           <div key={k} className="rounded-xl border border-line bg-surface px-3 py-2.5"><p className="text-[11.5px] text-muted">{l}</p><p className={clsx('text-[22px] font-extrabold', c)}>{kpi[k] ?? '…'}</p></div>
         ))}
       </div>
