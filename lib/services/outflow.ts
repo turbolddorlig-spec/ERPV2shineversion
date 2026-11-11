@@ -143,7 +143,8 @@ function profitOf(cfg: OutflowConfig, p: { price: number; costPrice: number | nu
   const qty = a?.qty ?? 0, revenue = a?.revenue ?? 0;
   const unitCost = p.costPrice ?? Math.round((p.price * cfg.costPct) / 100);
   const cost = qty * unitCost;
-  const oppDelivery = Math.round((a?.orderShare ?? 0) * (cfg.oppCost + cfg.deliveryCost));
+  // Эзний шийдвэр (#113): опп + хүргэлтийн зардал зарагдсан ширхэг бүрээс бүтнээр (1,200₮ + 5,000₮)
+  const oppDelivery = qty * (cfg.oppCost + cfg.deliveryCost);
   const profit = revenue - cost - oppDelivery - boost;
   const perUnit = qty > 0 ? Math.round(profit / qty) : boost > 0 ? -boost : null;
   let status: ProfitStatus | null = null;

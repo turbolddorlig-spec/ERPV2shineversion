@@ -329,6 +329,10 @@ function ProfitDialog({ id, onClose }: { id: number; onClose: () => void }) {
             <div className="rounded-xl bg-surface2 p-3"><div className="text-muted">Опп + хүргэлт</div><b>{money(d.cfg.oppCost + d.cfg.deliveryCost)}</b></div>
             <div className="rounded-xl bg-surface2 p-3"><div className="text-muted">Бүүст/өдөр ({d.boost.zones} × ${d.boost.dollar})</div><b>{money(d.boost.dailyBoost)}</b></div>
           </div>
+          {d.boost.dailyBoost > 0 && d.days[1] ? (() => { const q = d.days[1]!.qty; const day = q * d.marginBeforeBoost - d.boost.dailyBoost; return (
+            <p className={clsx('rounded-xl p-3 text-[14px] font-semibold', day < 0 ? 'bg-bad-soft text-bad-ink' : 'bg-ok-soft text-ok-ink')}>
+              Одоогийн бүүст ({d.boost.zones} × ${d.boost.dollar} = {money(d.boost.dailyBoost)}/өдөр) бүтэн өдөр асаалттай, өчигдрийн шиг {q} ширхэг гарвал: өдрийн {day < 0 ? 'алдагдал' : 'ашиг'} <b>{money(day)}</b>{q ? `, ширхэгийн ${money(Math.round(day / q))}` : ''}.
+            </p>); })() : null}
           <p className="text-[13.5px]">Бүүстээс өмнөх ширхэгийн ашиг <b>{money(d.marginBeforeBoost)}</b>.{d.breakEven ? <> Энэ бүүстээр өдөрт <b>{d.breakEven}+</b> ширхэг гарвал алдагдалгүй{d.lowProfitAt ? <>, <b>{d.lowProfitAt}+</b> гарвал {money(d.cfg.lowProfit)}-аас дээш ашигтай</> : ''}.</> : d.boost.zones ? ' Бүүстгүйгээр ч ашиггүй — үнэ/өртгөө шалгана уу.' : ' Бүүст унтарсан.'}</p>
           <div className="overflow-x-auto rounded-xl border border-line">
             <table className="w-full min-w-[640px] text-[13px]">
