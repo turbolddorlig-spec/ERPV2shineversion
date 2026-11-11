@@ -281,6 +281,14 @@ enum MoveType {
   /// Модуль 4: агуулах → жолооч (падаан «Барааг бүрэн өгсөн»), буцаах
   HANDOVER
   HANDOVER_BACK
+  /// Модуль 5: жолооч → үйлчлүүлэгч (хүргэсэн), буцаан авсан (хүргэсний дараа цуцалсан)
+  DELIVERY
+  DELIVERY_BACK
+  /// Модуль 5: жолоочоос агуулахад буцаалт хүлээн авсан
+  DRIVER_RETURN
+  /// Модуль 5: нэмэлт бараа — агуулах → жолооч, жолооч зарсан
+  EXTRA_OUT
+  EXTRA_SALE
 }
 
 /// Журнал: нэг мөр = нэг хувилбарын нэг хөдөлгөөн (хаанаас → хаашаа). fromId/toId хоосон = гаднаас / гадагш.
@@ -544,61 +552,155 @@ enum CancelReason {
   NO_ANSWER
   PAYMENT_TIMEOUT
   OTHER
+  /// Модуль 5: жолооч цуцалсан (шалтгаан тайлбарт)
+  DRIVER_CANCELLED
+  /// Модуль 5: «Опп-руу явуулах» асуудлаар цуцлагдсан
+  ISSUE
+}
+
+/// Модуль 5: «Хүргэсэн» үед үйлчлүүлэгчийн төлбөр (хуучин шиг)
+enum DeliveryPayment {
+  CASH
+  BANK
+  UNPAID
+  PREPAID
+}
+
+/// Модуль 5: жолоочийн «Опп-руу явуулах» (хуучин шиг)
+enum IssueType {
+  WRONG_PRODUCT
+  WRONG_NUMBER
+  UNCLEAR_ADDRESS
+}
+
+enum IssueStatus {
+  PENDING
+  FIXED
+  CANCELLED
+}
+
+/// Асуудлаар цуцлахад хэний алдаа (торгууль — Модуль 7)
+enum IssueFault {
+  OPERATOR
+  DRIVER
+  MARKETING
+  WAREHOUSE
+}
+
+/// Модуль 5: жолоочийн барааны баримт — буцаалт хүлээн авсан, нэмэлт бараа авсан, нэмэлт бараа зарсан
+enum DriverDocKind {
+  RETURN
+  EXTRA_TAKE
+  EXTRA_SALE
+}
+
+model DriverDoc {
+  id         Int              @id @default(autoincrement())
+  kind       DriverDocKind
+  driverId   String           @db.Uuid
+  driverName String
+  byId       String           @db.Uuid
+  byName     String
+  note       String?
+  /// Нэмэлт бараа зарсан: төлбөр, нийт (системийн үнээр)
+  payment    DeliveryPayment?
+  total      Int              @default(0)
+  idemKey    String           @unique
+  createdAt  DateTime         @default(now())
+  lines      DriverDocLine[]
+
+  @@index([driverId, createdAt])
+  @@index([kind, createdAt])
+}
+
+model DriverDocLine {
+  id        Int       @id @default(autoincrement())
+  docId     Int
+  doc       DriverDoc @relation(fields: [docId], references: [id])
+  variantId Int
+  qty       Int
+  /// Буцаалт: хүлээгдэж байсан тоо (дутуу = expected − qty)
+  expected  Int       @default(0)
+  unitPrice Int       @default(0)
+
+  @@index([docId])
+  @@index([variantId])
 }
 
 model Order {
-  id                Int           @id @default(autoincrement())
+  id                  Int              @id @default(autoincrement())
   /// 8 оронтой хүний унших дугаар — хэзээ ч солигдохгүй (#43)
-  number            String        @unique
-  status            OrderStatus
-  phone             String
-  extraPhone        String?
-  province          String
-  district          String?
+  number              String           @unique
+  status              OrderStatus
+  phone               String
+  extraPhone          String?
+  province            String
+  district            String?
   /// Хороо (дугаар); null = «Хороо тодорхойгүй» (#43)
-  khoroo            Int?
-  addressDetail     String
-  note              String?
-  pageId            Int
-  operatorId        String        @db.Uuid
-  operatorName      String
+  khoroo              Int?
+  addressDetail       String
+  note                String?
+  pageId              Int
+  operatorId          String           @db.Uuid
+  operatorName        String
   /// Хүргэх өдөр (#44): анхдагч маргааш
-  deliveryDate      DateTime      @db.Date
-  prepaid           Boolean       @default(false)
+  deliveryDate        DateTime         @db.Date
+  prepaid             Boolean          @default(false)
   /// Баталгаажсан мөч: УБ «Шинэ» үүсэхэд эсвэл «Мөнгө орсон»-д. Тайлан, цагийн мэдээ, Meta үүгээр
-  confirmedAt       DateTime?
+  confirmedAt         DateTime?
   /// Төлбөр хүлээж буй захиалгын хугацаа (дуусахад автомат цуцлагдана)
-  paymentDeadline   DateTime?
+  paymentDeadline     DateTime?
   /// Барааны нийт (жагсаалтын үнээр), хөнгөлөлт, хүргэлт, төлөх дүн — сервер тооцно
-  subtotal          Int
-  discount          Int           @default(0)
-  deliveryFee       Int           @default(0)
-  total             Int
+  subtotal            Int
+  discount            Int              @default(0)
+  deliveryFee         Int              @default(0)
+  total               Int
   /// Хүргэлтийн төлбөрийг оператор өөрчилсөн (Супер админ шалгана)
-  deliveryFeeEdited Boolean       @default(false)
+  deliveryFeeEdited   Boolean          @default(false)
   /// Хар жагсаалттай утсаар авахдаа бичсэн шалтгаан
-  blacklistNote     String?
+  blacklistNote       String?
   /// Жолооч «Маргааш» дарсан тоо (Модуль 5)
-  postponeCount     Int           @default(0)
+  postponeCount       Int              @default(0)
   /// Падаанд орсон (Модуль 4) — захиалга засахгүй (хуучин шиг)
-  handoverId        Int?
+  handoverId          Int?
   /// Хуваарилсан жолооч (Модуль 4, ахлах жолооч). Хүргэх өдөр = deliveryDate
-  driverId          String?       @db.Uuid
-  driverName        String?
-  assignedAt        DateTime?
+  driverId            String?          @db.Uuid
+  driverName          String?
+  assignedAt          DateTime?
   /// Агуулах «Барааг бүрэн өгсөн» дарсан мөч (бараа жолоочид шилжсэн)
-  outForDeliveryAt  DateTime?
-  cancelReason      CancelReason?
-  cancelNote        String?
-  cancelledAt       DateTime?
-  cancelledByName   String?
-  deliveredAt       DateTime?
+  outForDeliveryAt    DateTime?
+  cancelReason        CancelReason?
+  cancelNote          String?
+  cancelledAt         DateTime?
+  cancelledByName     String?
+  deliveredAt         DateTime?
+  /// Модуль 5: «Хүргэсэн» — төлбөр, тайлбар, жолоочийн авсан дүн, хэсэгчилсэн хүргэлтийн өмнөх дүн
+  deliveryPayment     DeliveryPayment?
+  deliveryNote        String?
+  collectAmount       Int?
+  originalTotal       Int?
+  deliveredByName     String?
+  /// Модуль 5: «Маргааш» дарсан жолооч, мөч (захиалга «Шинэ» болж жолоочгүй болно; бараа тэр жолоочид)
+  postponedAt         DateTime?
+  postponedByDriverId String?          @db.Uuid
+  postponedByName     String?
+  /// Жолоочийн өөрийн дарааллын дугаар («#», хуучин шиг)
+  routeNo             Int?
+  /// Модуль 5: «Опп-руу явуулах»
+  issueType           IssueType?
+  issueNote           String?
+  issueAt             DateTime?
+  issueStatus         IssueStatus?
+  issueFault          IssueFault?
+  issueResolvedAt     DateTime?
+  issueResolvedByName String?
+  issueResolveNote    String?
   /// Давхар дарах / сүлжээ тасрахаас хамгаалах (#47)
-  idemKey           String        @unique
-  version           Int           @default(1)
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
-  lines             OrderLine[]
+  idemKey             String           @unique
+  version             Int              @default(1)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  lines               OrderLine[]
 
   @@index([status, deliveryDate])
   @@index([driverId, deliveryDate])
@@ -610,6 +712,10 @@ model Order {
   @@index([pageId, confirmedAt])
   @@index([operatorId, confirmedAt])
   @@index([status, paymentDeadline])
+  @@index([driverId, deliveredAt])
+  @@index([driverId, cancelledAt])
+  @@index([postponedByDriverId, postponedAt])
+  @@index([issueStatus, issueAt])
 }
 
 /// Захиалгын мөр — барааны хуулбар (#28)
@@ -628,6 +734,8 @@ model OrderLine {
   qty              Int
   discountReason   String?
   deliveryIncluded Boolean @default(true)
+  /// Модуль 5: үйлчлүүлэгч болиулсан тоо («Хүргэсэн» дээр чагтаа авсан) — жолоочид үлдэж агуулахад буцна
+  refusedQty       Int     @default(0)
 
   @@unique([orderId, variantId])
   @@index([variantId])

@@ -32,6 +32,8 @@ export const CANCEL_LABEL: Record<CancelReason, string> = {
   NO_ANSWER: 'Утас авахгүй',
   PAYMENT_TIMEOUT: 'Төлбөрийн хугацаа дууссан',
   OTHER: 'Бусад',
+  DRIVER_CANCELLED: 'Жолооч цуцалсан',
+  ISSUE: 'Асуудлаар цуцлагдсан',
 };
 
 export function displayStatus(o: { status: OrderStatus; deliveryDate: Date }, tomorrow = ubDay(new Date(), 1)): DisplayStatus {

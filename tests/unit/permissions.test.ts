@@ -17,6 +17,8 @@ const MATRIX: Record<PageKey, string> = {
   handover:       'E E - - - - V E - - - -',
   'driver-lead':  'E E - - E - - - - - - -',
   driver:         '- - - - - E - - - - - -',
+  // Модуль 5 (#74): Жолоочийн хяналт — SA, A, ахлах жолооч; нягтлан, агуулах харна
+  'driver-control': 'E E - - E - V V - - - -',
   issues:         'E E E E - - - - - - V -',
   accounting:     'E E - - - - E - - - - -',
   penalties:      'E E E - - - E - - - E -',

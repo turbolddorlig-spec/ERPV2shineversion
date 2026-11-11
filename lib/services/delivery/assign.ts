@@ -122,6 +122,14 @@ export async function assignOrders(actor: UserActor, input: { ids?: unknown; dri
   if (ids.length > 500) throw badRequest('Нэг дор 500 хүртэл захиалга');
   const driver = await db.user.findUnique({ where: { id: String(input.driverId ?? '') }, select: { id: true, name: true, isActive: true, roles: true } });
   if (!driver || !driver.isActive || !driver.roles.includes('DRIVER')) throw badRequest('Жолооч олдсонгүй');
+  return assignCore(actor, ids, driver);
+}
+
+/**
+ * Хуваарилах дүрэм (ахлах жолооч ба жолоочийн «Авах» (Pickup, Модуль 5) хоёулаа үүгээр):
+ * pickup = жолооч өөрөө — зөвхөн хуваарилаагүй «Шинэ» захиалгыг авна (өөр жолоочийнхыг булаахгүй).
+ */
+export async function assignCore(actor: UserActor, ids: number[], driver: { id: string; name: string }, opts: { pickup?: boolean } = {}) {
   const res = await inTx(async (tx) => {
     await lockDelivery(tx);
     await lockOrders(tx, ids);
@@ -134,12 +142,13 @@ export async function assignOrders(actor: UserActor, input: { ids?: unknown; dri
       const reason = o.status === 'PENDING_PAYMENT' ? 'Төлбөр хүлээж буй'
         : o.status === 'NEW' && d0 > tomorrow ? 'Он сар өдөртэй захиалга хуваарилах боломжгүй'
         : !['NEW', 'ASSIGNED'].includes(o.status) ? 'Хүргэлтэд гарсан / дууссан / цуцлагдсан'
-        : o.status === 'ASSIGNED' && o.driverId === driver.id ? 'Аль хэдийн энэ жолоочид' : null;
+        : o.status === 'ASSIGNED' && o.driverId === driver.id ? 'Аль хэдийн энэ жолоочид'
+        : opts.pickup && (o.status !== 'NEW' || o.driverId) ? 'Өөр жолоочид хуваарилагдсан' : null;
       if (reason) { skipped.push({ id: o.id, number: o.number, reason }); continue; }
       if (o.handoverId) await removeFromHandover(tx, o.id, `Өөр жолоочид (${driver.name}) шилжсэн`);
       const placed = await placeForDriver(tx, o.id, driver, d0 < today ? today : d0);
-      await tx.order.update({ where: { id: o.id }, data: { status: 'ASSIGNED', driverId: driver.id, driverName: driver.name, assignedAt: new Date(), version: { increment: 1 } } });
-      await writeAudit(actor, 'order.assigned', 'Order', String(o.id), {
+      await tx.order.update({ where: { id: o.id }, data: { status: 'ASSIGNED', driverId: driver.id, driverName: driver.name, assignedAt: new Date(), outForDeliveryAt: null, version: { increment: 1 } } });
+      await writeAudit(actor, opts.pickup ? 'order.picked_up' : 'order.assigned', 'Order', String(o.id), {
         number: o.number, from: o.driverName ?? null, to: driver.name, date: placed.date, ...(placed.movedNextDay ? { note: 'Тэр өдрийн падаан өгөгдсөн тул маргааш' } : {}),
       }, tx, ['order', 'delivery']);
       done.push({ id: o.id, number: o.number, date: placed.date, movedNextDay: placed.movedNextDay });

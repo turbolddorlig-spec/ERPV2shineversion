@@ -349,7 +349,7 @@ export async function cancelOrder(actor: UserActor | typeof SYSTEM_ACTOR & { rol
     if (o.status === 'CANCELLED') return { order: o, duplicate: true };
     // Автомат цуцлалт: түгжсэний дараа дахин шалгана (энэ хооронд «Мөнгө орсон» болсон байж болно)
     if (opts.system && !(o.status === 'PENDING_PAYMENT' && o.paymentDeadline && o.paymentDeadline < new Date())) return { order: o, duplicate: true };
-    if (!ACTIVE.includes(o.status)) throw conflict('Хүргэлтэд гарсан захиалгыг жолооч буцаалтаар цуцална (Модуль 5)', 'order_locked');
+    if (!ACTIVE.includes(o.status)) throw conflict('Хүргэлтэд гарсан захиалгыг жолооч цуцална (бараа нь жолоочид байгаа)', 'order_locked');
     if (input.version !== undefined && Number(input.version) !== o.version) throw staleError();
     const u = await tx.order.update({ where: { id }, data: { status: 'CANCELLED', cancelReason: reason, cancelNote: note, cancelledAt: new Date(), cancelledByName: actor.name, version: { increment: 1 } } });
     await tx.stockReservation.deleteMany({ where: { orderId: id } });

@@ -28,10 +28,16 @@ export function serializeOrder(o: OrderWithLines, pageName?: string | null) {
     driverId: o.driverId, driverName: o.driverName, outForDeliveryAt: o.outForDeliveryAt,
     cancelReason: o.cancelReason, cancelLabel: o.cancelReason ? CANCEL_LABEL[o.cancelReason] : null, cancelNote: o.cancelNote, cancelledAt: o.cancelledAt, cancelledByName: o.cancelledByName,
     version: o.version,
+    // Модуль 5: хүргэлт, хойшлуулалт, асуудал
+    deliveredAt: o.deliveredAt, deliveredByName: o.deliveredByName, deliveryPayment: o.deliveryPayment, deliveryNote: o.deliveryNote,
+    collectAmount: o.collectAmount, originalTotal: o.originalTotal, routeNo: o.routeNo,
+    postponedAt: o.postponedAt, postponedByName: o.postponedByName,
+    issueType: o.issueType, issueNote: o.issueNote, issueAt: o.issueAt, issueStatus: o.issueStatus, issueFault: o.issueFault,
+    issueResolvedAt: o.issueResolvedAt, issueResolvedByName: o.issueResolvedByName, issueResolveNote: o.issueResolveNote,
     lines: o.lines.map((l) => ({
       id: l.id, variantId: l.variantId, productId: l.productId, code: l.code, name: l.name, label: l.label,
       thumb: l.imageKey ? mediaUrl(l.imageKey, 'sm') : null, image: l.imageKey ? mediaUrl(l.imageKey, 'lg') : null,
-      listPrice: l.listPrice, unitPrice: l.unitPrice, qty: l.qty, discountReason: l.discountReason, deliveryIncluded: l.deliveryIncluded,
+      listPrice: l.listPrice, unitPrice: l.unitPrice, qty: l.qty, discountReason: l.discountReason, deliveryIncluded: l.deliveryIncluded, refusedQty: l.refusedQty,
     })),
   };
 }

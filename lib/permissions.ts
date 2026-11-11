@@ -2,7 +2,7 @@ import type { Role } from '@prisma/client';
 
 export type PageKey =
   | 'dashboard' | 'orders' | 'bank-import' | 'products' | 'goods-outflow'
-  | 'warehouse' | 'handover' | 'driver-lead' | 'driver' | 'issues'
+  | 'warehouse' | 'handover' | 'driver-lead' | 'driver' | 'driver-control' | 'issues'
   | 'accounting' | 'penalties' | 'salary' | 'my-penalties' | 'supplier'
   | 'users' | 'settings' | 'product-history' | 'loans' | 'reports';
 
@@ -45,7 +45,8 @@ export const PAGES: PageDef[] = [
   { key: 'handover', label: 'Жолоочид бараа өгөх', short: 'Падаан', href: '/handover', group: 'Агуулах', icon: 'swap', module: 4, edit: [...SA_A, 'WAREHOUSE'], view: ['ACCOUNTING'] },
   { key: 'driver-lead', label: 'Жолооч удирдлага', short: 'Хуваарь', href: '/driver-lead', group: 'Хүргэлт', icon: 'users', module: 4, edit: [...SA_A, 'DRIVER_LEAD'] },
   { key: 'driver', label: 'Миний хүргэлт', short: 'Хүргэлт', href: '/driver', group: 'Хүргэлт', icon: 'truck', module: 5, edit: ['DRIVER'] },
-  { key: 'issues', label: 'Асуудал', short: 'Асуудал', href: '/issues', group: 'Хүргэлт', icon: 'alert', module: 7, edit: [...SA_A, 'OPERATOR_LEAD', 'OPERATOR'], view: ['PENALTY_OFFICER'] },
+  { key: 'driver-control', label: 'Жолоочийн хяналт', short: 'Хяналт', href: '/driver-control', group: 'Хүргэлт', icon: 'chart', module: 5, edit: [...SA_A, 'DRIVER_LEAD'], view: ['ACCOUNTING', 'WAREHOUSE'] },
+  { key: 'issues', label: 'Асуудал', short: 'Асуудал', href: '/issues', group: 'Хүргэлт', icon: 'alert', module: 5, edit: [...SA_A, 'OPERATOR_LEAD', 'OPERATOR'], view: ['PENALTY_OFFICER'] },
   { key: 'accounting', label: 'Хүргэлт нягтлан', short: 'Тооцоо', href: '/accounting', group: 'Санхүү', icon: 'calc', module: 6, edit: [...SA_A, 'ACCOUNTING'] },
   { key: 'penalties', label: 'Алдаа удирдлага', short: 'Алдаа', href: '/penalties', group: 'Санхүү', icon: 'shield', module: 7, edit: [...SA_A, 'OPERATOR_LEAD', 'ACCOUNTING', 'PENALTY_OFFICER'] },
   { key: 'salary', label: 'Ажилтны цалин', short: 'Цалин', href: '/salary', group: 'Санхүү', icon: 'wallet', module: 7, edit: [...SA_A, 'ACCOUNTING'] },
@@ -135,3 +136,10 @@ export const canAssignDrivers = (roles: Role[]) => canEdit(roles, 'driver-lead')
 export const canOperateHandover = (roles: Role[]) => canEdit(roles, 'handover');
 /** Нягтлангийн OKEY / ХОРИГ (хуучин ERP шиг) */
 export const canApproveDrivers = (roles: Role[]) => has(roles, [...SA_A, 'ACCOUNTING']);
+// ───── Модуль 5: жолооч ─────
+/** Жолоочийн апп: хүргэсэн, цуцлах, маргааш, асуудал, өөрөө авах, нэмэлт бараа */
+export const canDrive = (roles: Role[]) => canEdit(roles, 'driver');
+/** «Опп-руу явуулах» асуудлыг шийдэх (зассан / цуцлах) — ахлах оператор, админ */
+export const canResolveIssues = (roles: Role[]) => has(roles, [...SA_A, 'OPERATOR_LEAD']);
+/** Жолоочоос буцаалт хүлээн авах — агуулах, админ */
+export const canReceiveReturns = (roles: Role[]) => canOperateStock(roles);
