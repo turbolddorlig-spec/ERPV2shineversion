@@ -585,6 +585,8 @@ async function main() {
     check('өдрийн тооцоо', day.status === 200 && JSON.parse(day.text).status === 'OPEN', day.text.slice(0, 100));
     const ovr = await req('/api/supplier', { cookie: (await loginAs('80000002')).cookie, method: 'POST', body: { action: 'override', shopId: sid, date: '2026-01-01', productId: 1 } });
     check('Админ гараар суутгал засахгүй (403)', ovr.status === 403, `${ovr.status} ${ovr.text.slice(0, 80)}`);
+    const dfA = await req('/api/supplier', { cookie: (await loginAs('80000002')).cookie, method: 'POST', body: { action: 'defaults', operatorCost: 1 } });
+    check('Админ анхдагч суутгал өөрчлөхгүй (403)', dfA.status === 403, String(dfA.status));
     const opS = await req('/api/supplier', { cookie: op8.cookie });
     check('оператор нийлүүлэгчийн хуудас харахгүй (403)', opS.status === 403, String(opS.status));
     const me = await req('/api/supplier?me=1', { cookie: sup8.cookie });

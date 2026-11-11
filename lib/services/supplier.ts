@@ -25,6 +25,7 @@ const MAX_RANGE = 93;
 
 const money = (n: number) => `${n.toLocaleString('en-US')}₮`;
 const isSA = (a: UserActor) => a.roles.includes('SUPER_ADMIN');
+const assertSA = (a: UserActor) => { if (!isSA(a)) throw forbidden('Суутгалын дүнг зөвхөн Супер админ өөрчилнө'); };
 const assertAdmin = (a: UserActor) => { if (!canEdit(a.roles, 'supplier')) throw forbidden('Нийлүүлэгчийн тооцоог Супер админ, Админ хөтөлнө'); };
 const cleanInt = (v: unknown, label: string, max = 100_000_000) => {
   const n = v === '' || v === null || v === undefined ? 0 : Number(v);
@@ -391,7 +392,7 @@ export async function overview(actor: UserActor) {
   return {
     stats: { activeShops: shops.filter((s) => s.isActive).length, monthSales, monthNet, todaySales, todayNet, balance },
     orderDays: await orderStats(db, shops.filter((s) => s.isActive).map((s) => s.id)),
-    shops: rows, isSuperAdmin: isSA(actor), today,
+    shops: rows, isSuperAdmin: isSA(actor), today, defaults: await getDefaults(db),
   };
 }
 
@@ -412,7 +413,7 @@ export async function shopDetail(actor: UserActor, shopIdIn?: unknown) {
   const ad = new Map(await appliedDateMap(db, adjAll));
   return {
     shop: { id: shop.id, name: shop.name, contactName: shop.contactName, contactPhone: shop.contactPhone, isActive: shop.isActive, version: shop.version },
-    admin, isSuperAdmin: isSA(actor), today: ubDay(),
+    admin, isSuperAdmin: isSA(actor), today: ubDay(), defaults: admin ? await getDefaults(db) : null,
     products: assignments.map((a) => {
       const d = ded.get(a.productId);
       return { id: a.id, productId: a.productId, code: info.get(a.productId)?.code ?? '', name: info.get(a.productId)?.name ?? '', fromDate: ymdOf(a.fromDate), toDate: a.toDate ? ymdOf(a.toDate) : null,
@@ -506,6 +507,11 @@ export async function assignProduct(actor: UserActor, b: { shopId?: unknown; pro
         throw badRequest(`Энэ бараа ${ymdOf(last.toDate)}-ны өмнө өөр дэлгүүрт хамаарч байсан тул эхлэх огноо ${ymdOf(last.toDate)}-аас хойш байна`);
       }
       const a = await tx.supplierProduct.create({ data: { shopId, productId, fromDate: dateOnly(fromDate), createdByName: actor.name } });
+      // Анхдагч суутгал автоматаар (#100) — өмнө тохируулсан бол хэвээр
+      if (!(await tx.supplierDeduction.findUnique({ where: { shopId_productId: { shopId, productId } } }))) {
+        const def = await getDefaults(tx);
+        await tx.supplierDeduction.create({ data: { shopId, productId, ...def, updatedByName: `${actor.name} (анхдагч)` } });
+      }
       await writeAudit(actor, 'supplier.product_assigned', 'SupplierShop', String(shopId), { product: `${product.code} ${product.name}`, fromDate }, tx);
       return { id: a.id };
     });
@@ -533,7 +539,7 @@ export async function unassignProduct(actor: UserActor, idIn: unknown) {
 }
 
 export async function saveDeduction(actor: UserActor, b: Record<string, unknown>) {
-  assertAdmin(actor);
+  assertSA(actor);
   const shopId = shopIdOf(b.shopId);
   const productId = Number(b.productId);
   const has = await db.supplierProduct.findFirst({ where: { shopId, productId } });
@@ -548,6 +554,43 @@ export async function saveDeduction(actor: UserActor, b: Record<string, unknown>
     await writeAudit(actor, 'supplier.deduction_saved', 'SupplierShop', String(shopId), { productId, before: old ? { operatorCost: old.operatorCost, deliveryCost: old.deliveryCost, marketingCost: old.marketingCost, otherCost: old.otherCost } : null, after: data }, tx);
   });
   return { ok: true };
+}
+
+// ───────────── Анхдагч суутгал (#100): бүх дэлгүүрт нэг, бараа нэмэхэд автоматаар ─────────────
+const KEY_DEFAULT = 'supplier.defaultDeduction';
+export type DefaultDeduction = { operatorCost: number; deliveryCost: number; marketingCost: number; otherCost: number; otherNote: string };
+export async function getDefaults(tx: Tx | typeof db): Promise<DefaultDeduction> {
+  const r = await tx.appSetting.findUnique({ where: { key: KEY_DEFAULT } });
+  const v = (r?.value ?? {}) as Partial<DefaultDeduction>;
+  return { operatorCost: v.operatorCost ?? 0, deliveryCost: v.deliveryCost ?? 0, marketingCost: v.marketingCost ?? 0, otherCost: v.otherCost ?? 0, otherNote: v.otherNote ?? '' };
+}
+
+/** Анхдагч суутгал — зөвхөн Супер админ. applyAll: одоо оноогдсон бүх барааны суутгалыг ч шинэчилнэ (шилжүүлсэн өдөр өөрчлөгдөхгүй) */
+export async function setDefaults(actor: UserActor, b: Record<string, unknown>) {
+  assertSA(actor);
+  const v: DefaultDeduction = {
+    operatorCost: cleanInt(b.operatorCost, 'Опп зардал', 10_000_000), deliveryCost: cleanInt(b.deliveryCost, 'Хүргэлт', 10_000_000),
+    marketingCost: cleanInt(b.marketingCost, 'Маркетинг', 10_000_000), otherCost: cleanInt(b.otherCost, 'Бусад', 10_000_000), otherNote: cleanText(b.otherNote, 200),
+  };
+  const applyAll = b.applyAll === true;
+  return db.$transaction(async (tx) => {
+    const before = await getDefaults(tx);
+    const json = v as unknown as Prisma.InputJsonValue;
+    await tx.appSetting.upsert({ where: { key: KEY_DEFAULT }, create: { key: KEY_DEFAULT, value: json, updatedById: actor.id }, update: { value: json, updatedById: actor.id } });
+    let updated = 0;
+    if (applyAll) {
+      const tomorrow = dateOnly(addDays(ubDay(), 1));
+      const act = await tx.supplierProduct.findMany({ where: { OR: [{ toDate: null }, { toDate: { gte: tomorrow } }] }, select: { shopId: true, productId: true } });
+      const seen = new Set<string>();
+      for (const a of act) {
+        const k = `${a.shopId}:${a.productId}`; if (seen.has(k)) continue; seen.add(k);
+        await tx.supplierDeduction.upsert({ where: { shopId_productId: { shopId: a.shopId, productId: a.productId } }, create: { ...a, ...v, updatedByName: actor.name }, update: { ...v, updatedByName: actor.name } });
+        updated++;
+      }
+    }
+    await writeAudit(actor, 'supplier.default_deduction', 'AppSetting', KEY_DEFAULT, { before, after: v, applyAll, updated } as unknown as Prisma.InputJsonValue, tx, ['money']);
+    return { ok: true, updated };
+  });
 }
 
 /** Тухайн өдрийн суутгалыг гараар засах — ЗӨВХӨН Супер админ (#98); шилжүүлсэн өдөрт болохгүй */

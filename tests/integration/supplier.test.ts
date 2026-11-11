@@ -100,7 +100,7 @@ async function shopWith(name = 'Гутлын дэлгүүр') {
   const { id } = await SP.saveShop(adm, { name, contactName: 'Бат', contactPhone: '99112233' });
   await SP.assignProduct(adm, { shopId: id, productId: shoeP });
   await SP.assignProduct(adm, { shopId: id, productId: sockP });
-  await SP.saveDeduction(adm, { shopId: id, productId: shoeP, operatorCost: 1000, deliveryCost: 2000, marketingCost: 3000, otherCost: 0 });
+  await SP.saveDeduction(sa, { shopId: id, productId: shoeP, operatorCost: 1000, deliveryCost: 2000, marketingCost: 3000, otherCost: 0 });
   return id;
 }
 
@@ -182,7 +182,8 @@ describe('гараар суутгал (зөвхөн Супер админ), ши
     await err(SP.overrideDay(sa, { shopId: shop, date: today, productId: shoeLine.productId, operatorCost: 0, deliveryCost: 0, marketingCost: 0, otherCost: 0 }), 423);
     await err(SP.transferDay(adm, { shopId: shop, date: today }), 409, 'already_transferred');
     // тохиргоо өөрчилсөн ч шилжүүлсэн өдөр өөрчлөгдөхгүй
-    await SP.saveDeduction(adm, { shopId: shop, productId: shoeP, operatorCost: 9000, deliveryCost: 0, marketingCost: 0, otherCost: 0 });
+    await err(SP.saveDeduction(adm, { shopId: shop, productId: shoeP, operatorCost: 9000, deliveryCost: 0, marketingCost: 0, otherCost: 0 }), 403);
+    await SP.saveDeduction(sa, { shopId: shop, productId: shoeP, operatorCost: 9000, deliveryCost: 0, marketingCost: 0, otherCost: 0 });
     expect((await SP.dayView(adm, shop, today)).payable).toBe(36500);
     await err(SP.undoTransfer(adm, { shopId: shop, date: today }), 403);
     await SP.undoTransfer(sa, { shopId: shop, date: today });
@@ -236,6 +237,31 @@ describe('шилжүүлсний дараах буцаалт — автомат�
     // нийлүүлэгч бусдыг засахгүй
     await err(SP.transferDay(supUser, { shopId: shop, date: today }), 403);
     await err(SP.overview(supUser), 403);
+  });
+});
+
+describe('анхдагч суутгал (#100) — бүх дэлгүүрт нэг, бараа нэмэхэд автоматаар', () => {
+  it('зөвхөн Супер админ; шинэ бараанд автоматаар; «бүгдийг шинэчлэх»; шилжүүлсэн өдөр өөрчлөгдөхгүй', async () => {
+    await err(SP.setDefaults(adm, { operatorCost: 1000 }), 403);
+    await SP.setDefaults(sa, { operatorCost: 1000, deliveryCost: 2000, marketingCost: 1500, otherCost: 500, otherNote: 'Савлагаа' });
+    const { id: shop } = await SP.saveShop(adm, { name: 'Анхдагч дэлгүүр' });
+    await SP.assignProduct(adm, { shopId: shop, productId: shoeP });
+    const d1 = await db.supplierDeduction.findUniqueOrThrow({ where: { shopId_productId: { shopId: shop, productId: shoeP } } });
+    expect([d1.operatorCost, d1.deliveryCost, d1.marketingCost, d1.otherCost, d1.otherNote]).toEqual([1000, 2000, 1500, 500, 'Савлагаа']);
+    // Супер админ бараа тус бүрийн дүнг засна
+    await SP.saveDeduction(sa, { shopId: shop, productId: shoeP, operatorCost: 3000, deliveryCost: 0, marketingCost: 0, otherCost: 0 });
+    const [o] = await out([[{ variantId: shoe, qty: 2 }]]);
+    await DR.deliverOrder(drv, o!, { payment: 'CASH' });
+    await SP.transferDay(adm, { shopId: shop, date: today });
+    expect((await SP.dayView(adm, shop, today)).totals.deductions).toBe(6000);
+    // анхдагчийг өөрчлөөд «бүгдийг шинэчлэх» → оноогдсон бараа шинэчлэгдэнэ, шилжүүлсэн өдөр хэвээр
+    await SP.assignProduct(adm, { shopId: shop, productId: sockP });
+    const r = await SP.setDefaults(sa, { operatorCost: 500, deliveryCost: 500, marketingCost: 0, otherCost: 0, applyAll: true });
+    expect(r.updated).toBe(2);
+    expect((await db.supplierDeduction.findUniqueOrThrow({ where: { shopId_productId: { shopId: shop, productId: shoeP } } })).operatorCost).toBe(500);
+    expect((await SP.dayView(adm, shop, today)).totals.deductions).toBe(6000);
+    expect(await db.auditLog.count({ where: { action: 'supplier.default_deduction' } })).toBe(2);
+    expect((await SP.overview(adm)).defaults.operatorCost).toBe(500);
   });
 });
 

@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
   } catch (e) { return errorResponse(e); }
 }
 
-/** { action: shop | active | assign | unassign | deduction | override | transfer | undo-transfer | login | login-reset, ... } */
+/** { action: shop | active | assign | unassign | deduction | defaults | override | transfer | undo-transfer | login | login-reset, ... } */
 export async function POST(req: NextRequest) {
   try {
     const ctx = await requireApiUser(req, { page: 'supplier', need: 'edit' });
@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
       case 'assign': return json(await S.assignProduct(ctx.actor, b));
       case 'unassign': return json(await S.unassignProduct(ctx.actor, b.id));
       case 'deduction': return json(await S.saveDeduction(ctx.actor, b));
+      case 'defaults': return json(await S.setDefaults(ctx.actor, b));
       case 'override': return json(await S.overrideDay(ctx.actor, b));
       case 'transfer': return json(await S.transferDay(ctx.actor, b));
       case 'undo-transfer': return json(await S.undoTransfer(ctx.actor, b));

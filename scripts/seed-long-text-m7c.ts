@@ -7,6 +7,7 @@ import * as S from '../lib/services/supplier';
   const act = async (phone: string) => { const u = await db.user.findFirstOrThrow({ where: { phone } }); return { id: u.id, name: u.name, roles: u.roles, ip: '127.0.0.1' }; };
   const sa = await act('80000001');
   const LONG = 'Зайгүймаашуртүгбайнаадрестэндэхтэйбайраатооттойгуддаар'.repeat(2);
+  await S.setDefaults(sa, { operatorCost: 1000, deliveryCost: 2000, marketingCost: 1500, otherCost: 500, otherNote: `Савлагаа, шошго, уут ${LONG}`.slice(0, 200) });
   let shop = await db.supplierShop.findFirst({ where: { name: { startsWith: 'Урт нэртэй гадны дэлгүүр' } } });
   if (!shop) {
     const { id } = await S.saveShop(sa, { name: `Урт нэртэй гадны дэлгүүр ${LONG}`.slice(0, 120), contactName: `Холбогдох хүн ${LONG}`.slice(0, 120), contactPhone: '99112233' });

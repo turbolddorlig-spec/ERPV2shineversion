@@ -156,6 +156,7 @@ async function main() {
     { name: 'Нийлүүлэгч: бараа', path: '/supplier', act: async (p) => { await p.locator('[data-shop-open]').first().click(); await p.waitForTimeout(1200); await p.getByRole('button', { name: /^Бараа/ }).click(); await p.waitForTimeout(800); } },
     { name: 'Нийлүүлэгч: буцаалт', path: '/supplier', act: async (p) => { await p.locator('[data-shop-open]').first().click(); await p.waitForTimeout(1200); await p.getByRole('button', { name: /^Буцаалт/ }).click(); await p.waitForTimeout(800); } },
     { name: 'Нийлүүлэгч: нэвтрэх эрх', path: '/supplier', act: async (p) => { await p.locator('[data-shop-open]').first().click(); await p.waitForTimeout(1200); await p.getByRole('button', { name: 'Нэвтрэх эрх', exact: true }).click(); await p.waitForTimeout(600); } },
+    { name: 'Нийлүүлэгч: анхдагч суутгал', path: '/supplier', act: async (p) => { await p.getByRole('button', { name: 'Анхдагч суутгал' }).click(); await p.waitForTimeout(600); } },
     { name: 'Нийлүүлэгч өөрөө', path: '/supplier', as: SUPPLIER },
     { name: 'Банкны импорт', path: '/bank-import' },
     { name: 'Банкны импорт: дүн өөрчлөгдсөн', path: '/bank-import', act: async (p) => { await p.getByRole('button', { name: 'Дүн өөрчлөгдсөн' }).click(); await p.waitForTimeout(1000); } },

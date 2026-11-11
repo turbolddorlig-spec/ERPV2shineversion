@@ -19,14 +19,14 @@ const inputCls = 'h-10 min-w-0 rounded-[10px] border border-line bg-surface px-2
 
 interface OrderDay { label: string; date: string; total: number; delivered: number; cancelled: number; onRoad: number; pending: number; amount: number }
 interface ShopRow { id: number; name: string; contactName: string; contactPhone: string; isActive: boolean; hasLogin: boolean; productCount: number; openDays: number; balance: number; pendingAdj: number; monthSales: number }
-interface Overview { stats: { activeShops: number; monthSales: number; monthNet: number; todaySales: number; todayNet: number; balance: number }; orderDays: OrderDay[]; shops: ShopRow[]; isSuperAdmin: boolean }
+interface Overview { stats: { activeShops: number; monthSales: number; monthNet: number; todaySales: number; todayNet: number; balance: number }; orderDays: OrderDay[]; shops: ShopRow[]; isSuperAdmin: boolean; defaults: Ded }
 interface Ded { operatorCost: number; deliveryCost: number; marketingCost: number; otherCost: number; otherNote: string }
 interface Prod { id: number; productId: number; code: string; name: string; fromDate: string; toDate: string | null; active: boolean; createdByName: string; endedByName: string | null; deduction: Ded }
 interface Adj { id: number; kind: string; kindLabel: string; sourceDate: string | null; orderNumber: string | null; productName: string | null; qty: number; sales: number; deduction: number; amount: number; reason: string; createdAt: string; appliedDate: string | null }
 interface RangeDay { date: string; status: string; qty: number; sales: number; deductions: number; net: number; adjustments: number; payable: number; unfinished: number }
 interface Detail {
   shop: { id: number; name: string; contactName: string; contactPhone: string; isActive: boolean; version: number };
-  admin: boolean; isSuperAdmin: boolean; today: string; products: Prod[];
+  admin: boolean; isSuperAdmin: boolean; today: string; products: Prod[]; defaults: Ded | null;
   balance: { openDays: number; openNet: number; pendingAdj: number; pendingAdjCount: number; balance: number };
   openDays: RangeDay[]; transferredDays: RangeDay[]; adjustments: Adj[]; orderDays: OrderDay[];
   login: { id: string; name: string; phone: string; isActive: boolean; lastLoginAt: string | null } | null;
@@ -71,14 +71,21 @@ function AdminOverview({ onOpen }: { onOpen: (id: number) => void }) {
   const [d, setD] = useState<Overview | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [add, setAdd] = useState(false);
+  const [defs, setDefs] = useState(false);
+  const [ok, setOk] = useState<string | null>(null);
   const load = useCallback(async () => { try { setD(await api('/api/supplier')); setErr(null); } catch (e) { setErr(msg(e)); } }, []);
   useEffect(() => { void load(); }, [load]);
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0"><h1 className="text-[24px] font-extrabold tracking-tight">Нийлүүлэгч</h1><p className="text-[13.5px] text-muted">Гадны дэлгүүрийн бараа · падааны өдрөөр тооцоо · борлуулалт − суутгал = шилжүүлэх дүн</p></div>
-        <Button variant="primary" size="sm" onClick={() => setAdd(true)}>+ Дэлгүүр нэмэх</Button>
+        <div className="flex flex-wrap gap-2">
+          {d?.isSuperAdmin ? <Button size="sm" onClick={() => setDefs(true)}>Анхдагч суутгал</Button> : null}
+          <Button variant="primary" size="sm" onClick={() => setAdd(true)}>+ Дэлгүүр нэмэх</Button>
+        </div>
       </div>
+      {d ? <p className="min-w-0 break-words text-[13px] text-muted">Бараа нэмэхэд автоматаар тавигдах суутгал (1 ширхэгээс): {dedText(d.defaults)}</p> : null}
+      {ok ? <Notice tone="ok">{ok}</Notice> : null}
       {err ? <Notice>{err}</Notice> : null}
       {d ? (
         <>
@@ -108,7 +115,36 @@ function AdminOverview({ onOpen }: { onOpen: (id: number) => void }) {
         </>
       ) : null}
       {add ? <ShopDialog onClose={() => setAdd(false)} onDone={async (id) => { setAdd(false); await load(); onOpen(id); }} /> : null}
+      {defs && d ? <DefaultsDialog value={d.defaults} onClose={() => setDefs(false)} onDone={async (m) => { setDefs(false); setOk(m); await load(); }} /> : null}
     </div>
+  );
+}
+
+const dedText = (x: Ded) => `Опп ${money(x.operatorCost)} · Хүргэлт ${money(x.deliveryCost)} · Маркетинг ${money(x.marketingCost)} · Бусад ${money(x.otherCost)}${x.otherNote ? ` (${x.otherNote})` : ''} = ${money(x.operatorCost + x.deliveryCost + x.marketingCost + x.otherCost)}`;
+
+function DefaultsDialog({ value, onClose, onDone }: { value: Ded; onClose: () => void; onDone: (m: string) => void }) {
+  const [v, setV] = useState({ operatorCost: String(value.operatorCost), deliveryCost: String(value.deliveryCost), marketingCost: String(value.marketingCost), otherCost: String(value.otherCost), otherNote: value.otherNote });
+  const [all, setAll] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const f = (k: keyof typeof v, label: string) => (
+    <label className="flex min-w-0 flex-col gap-1 text-[12.5px] font-semibold text-muted">{label}<input value={v[k]} inputMode="numeric" onChange={(e) => setV({ ...v, [k]: digits(e.target.value) })} className={clsx(inputCls, 'text-right')} /></label>
+  );
+  const save = async () => {
+    if (all && !confirm('Одоо оноогдсон БҮХ барааны суутгалыг энэ дүнгээр солих уу? (Шилжүүлсэн өдрүүд өөрчлөгдөхгүй)')) return;
+    try { const r = await api<{ updated: number }>('/api/supplier', { method: 'POST', json: { action: 'defaults', ...v, applyAll: all } }); onDone(all ? `Анхдагч хадгалагдлаа · ${r.updated} барааны суутгал шинэчлэгдлээ` : 'Анхдагч суутгал хадгалагдлаа (шинэ бараанд)'); } catch (e) { setErr(msg(e)); }
+  };
+  return (
+    <Modal open onClose={onClose} title="Анхдагч суутгал (1 ширхэгээс)" subtitle="Бүх дэлгүүрт нэг · бараа нэмэхэд автоматаар тавигдана · зөвхөн Супер админ"
+      footer={<><Button onClick={onClose}>Болих</Button><Button variant="primary" onClick={() => void save()}>Хадгалах</Button></>}>
+      <div className="flex flex-col gap-3">
+        {err ? <Notice>{err}</Notice> : null}
+        <div className="grid grid-cols-2 gap-3">
+          {f('operatorCost', 'Опп зардал')}{f('deliveryCost', 'Хүргэлт')}{f('marketingCost', 'Маркетинг')}{f('otherCost', 'Бусад')}
+          <label className="col-span-2 flex flex-col gap-1 text-[12.5px] font-semibold text-muted">Бусдын тайлбар<input value={v.otherNote} onChange={(e) => setV({ ...v, otherNote: e.target.value })} className={inputCls} /></label>
+        </div>
+        <label className="flex items-start gap-2 text-[13.5px]"><input type="checkbox" className="mt-1" checked={all} onChange={(e) => setAll(e.target.checked)} /><span>Одоо байгаа бүх барааны суутгалыг ч шинэчлэх <span className="text-muted">(чагтлаагүй бол зөвхөн шинээр нэмэх бараанд)</span></span></label>
+      </div>
+    </Modal>
   );
 }
 
@@ -399,22 +435,23 @@ function ProductsTab({ d, post }: { d: Detail; post: Post }) {
           </div>
         ))}
         <p className="text-[12px] text-subtle">Нэг бараа зөвхөн нэг нийлүүлэгчид — өөр дэлгүүрт оноогдсон барааг эхлээд тэндээс хасна.</p>
+        {d.defaults ? <p className="min-w-0 break-words text-[12px] text-subtle">Нэмэхэд автоматаар тавигдах суутгал: {dedText(d.defaults)}{d.isSuperAdmin ? ' — «Нийлүүлэгч» хуудасны «Анхдагч суутгал» товчоор өөрчилнө.' : ''}</p> : null}
       </div>
       <div className="flex items-center justify-between gap-2">
         <b className="text-[14px]">Хувиарласан бараа ба 1 ширхэгийн суутгал</b>
         <label className="flex items-center gap-1.5 text-[12.5px] text-muted"><input type="checkbox" checked={showOld} onChange={(e) => setShowOld(e.target.checked)} />Хасагдсаныг харуулах</label>
       </div>
       {list.length === 0 ? <p className="rounded-2xl border border-line bg-surface p-6 text-center text-[14px] text-muted">Бараа хувиарлагдаагүй</p> : null}
-      {list.map((p) => <ProductRow key={p.id} p={p} shopId={d.shop.id} post={post} />)}
+      {list.map((p) => <ProductRow key={p.id} p={p} shopId={d.shop.id} post={post} canEdit={d.isSuperAdmin} />)}
     </div>
   );
 }
 
-function ProductRow({ p, post }: { p: Prod; shopId: number; post: Post }) {
+function ProductRow({ p, post, canEdit }: { p: Prod; shopId: number; post: Post; canEdit: boolean }) {
   const [v, setV] = useState({ operatorCost: String(p.deduction.operatorCost), deliveryCost: String(p.deduction.deliveryCost), marketingCost: String(p.deduction.marketingCost), otherCost: String(p.deduction.otherCost), otherNote: p.deduction.otherNote });
   const per = ['operatorCost', 'deliveryCost', 'marketingCost', 'otherCost'].reduce((a, k) => a + Number(v[k as keyof typeof v] || 0), 0);
   const f = (k: keyof typeof v, label: string) => (
-    <label className="flex min-w-0 flex-col gap-1 text-[12px] font-semibold text-muted">{label}<input value={v[k]} inputMode="numeric" disabled={!p.active} onChange={(e) => setV({ ...v, [k]: digits(e.target.value) })} className={clsx(inputCls, 'text-right')} /></label>
+    <label className="flex min-w-0 flex-col gap-1 text-[12px] font-semibold text-muted">{label}<input value={v[k]} inputMode="numeric" disabled={!p.active || !canEdit} onChange={(e) => setV({ ...v, [k]: digits(e.target.value) })} className={clsx(inputCls, 'text-right')} /></label>
   );
   return (
     <div className={clsx('flex min-w-0 flex-col gap-3 rounded-2xl border border-line bg-surface p-4', !p.active && 'opacity-70')}>
@@ -424,12 +461,12 @@ function ProductRow({ p, post }: { p: Prod; shopId: number; post: Post }) {
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
         {f('operatorCost', 'Опп зардал')}{f('deliveryCost', 'Хүргэлт')}{f('marketingCost', 'Маркетинг')}{f('otherCost', 'Бусад')}
-        <label className="col-span-2 flex min-w-0 flex-col gap-1 text-[12px] font-semibold text-muted sm:col-span-1">Бусдын тайлбар<input value={v.otherNote} disabled={!p.active} onChange={(e) => setV({ ...v, otherNote: e.target.value })} className={inputCls} /></label>
+        <label className="col-span-2 flex min-w-0 flex-col gap-1 text-[12px] font-semibold text-muted sm:col-span-1">Бусдын тайлбар<input value={v.otherNote} disabled={!p.active || !canEdit} onChange={(e) => setV({ ...v, otherNote: e.target.value })} className={inputCls} /></label>
       </div>
       {p.active ? (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[12.5px] text-muted">1 ширхэгээс нийт {money(per)} хасна (× авсан тоо)</span>
-          <Button size="sm" variant="primary" onClick={() => void post({ action: 'deduction', productId: p.productId, ...v }, 'Суутгал хадгалагдлаа')}>Хадгалах</Button>
+          {canEdit ? <Button size="sm" variant="primary" onClick={() => void post({ action: 'deduction', productId: p.productId, ...v }, 'Суутгал хадгалагдлаа')}>Хадгалах</Button> : <span className="text-[12px] text-subtle">Суутгалыг Супер админ өөрчилнө</span>}
         </div>
       ) : null}
     </div>
