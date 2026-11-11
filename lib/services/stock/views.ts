@@ -1,7 +1,7 @@
 import { Prisma, type MoveType } from '@prisma/client';
 import { db } from '../../db';
 import { badRequest, notFound } from '../../errors';
-import { writeAudit } from '../../audit';
+import { SYSTEM_ACTOR, writeAudit } from '../../audit';
 import { canApproveStock, canOperateStock, canView } from '../../permissions';
 import { MOVE_LABEL, cleanId, requireRole, stockCache, transitLocationId, type UserActor } from './core';
 import { variantInfo } from './info';
@@ -16,26 +16,26 @@ async function warehousesWithLoc() {
 
 /** Хувилбар бүрийн байршлын үлдэгдэл: агуулах тус бүр, замдаа, ажилтны гарт, жолоочийн гарт, захиалгад */
 export async function balancesFor(variantIds: number[]) {
-  const out = new Map<number, { byLocation: Map<number, number>; transit: number; staff: number; driver: number; warehouses: number; reserved: number; reservedPending: number }>();
+  const out = new Map<number, { byLocation: Map<number, number>; transit: number; staff: number; driver: number; drivers: { name: string; qty: number }[]; warehouses: number; reserved: number; reservedPending: number }>();
   if (!variantIds.length) return out;
   const transit = await transitLocationId();
   const [rows, res] = await Promise.all([
-    db.$queryRaw<{ variantId: number; locationId: number; kind: string; qty: number }[]>`
-      SELECT b."variantId", b."locationId", l."kind"::text AS kind, b."qty" FROM "StockBalance" b JOIN "StockLocation" l ON l.id = b."locationId"
+    db.$queryRaw<{ variantId: number; locationId: number; kind: string; name: string; qty: number }[]>`
+      SELECT b."variantId", b."locationId", l."kind"::text AS kind, l.name, b."qty" FROM "StockBalance" b JOIN "StockLocation" l ON l.id = b."locationId"
       WHERE b."variantId" IN (${Prisma.join(variantIds)}) AND b."qty" <> 0`,
     // Нөөц: нийт ба «Төлбөр хүлээж буй» захиалгынх (#43 8 — агуулахад тусдаа харагдана)
     db.$queryRaw<{ variantId: number; total: number; pending: number }[]>`
       SELECT r."variantId", sum(r.qty)::int AS total, COALESCE(sum(r.qty) FILTER (WHERE o.status = 'PENDING_PAYMENT'), 0)::int AS pending
       FROM "StockReservation" r LEFT JOIN "Order" o ON o.id = r."orderId" WHERE r."variantId" IN (${Prisma.join(variantIds)}) GROUP BY r."variantId"`,
   ]);
-  for (const id of variantIds) out.set(id, { byLocation: new Map(), transit: 0, staff: 0, driver: 0, warehouses: 0, reserved: 0, reservedPending: 0 });
+  for (const id of variantIds) out.set(id, { byLocation: new Map(), transit: 0, staff: 0, driver: 0, drivers: [], warehouses: 0, reserved: 0, reservedPending: 0 });
   for (const r of rows) {
     const o = out.get(r.variantId)!;
     o.byLocation.set(r.locationId, r.qty);
     if (r.kind === 'WAREHOUSE') o.warehouses += r.qty;
     else if (r.locationId === transit) o.transit += r.qty;
     else if (r.kind === 'STAFF') o.staff += r.qty;
-    else if (r.kind === 'DRIVER') o.driver += r.qty;
+    else if (r.kind === 'DRIVER') { o.driver += r.qty; o.drivers.push({ name: r.name.replace(/^Жолооч:\s*/, ''), qty: r.qty }); }
   }
   for (const r of res) { const o = out.get(r.variantId)!; o.reserved = r.total; o.reservedPending = r.pending; }
   return out;
@@ -56,8 +56,11 @@ export async function stockList(actor: UserActor, params: { q?: string; category
   }
   if (params.categoryId) conds.push(Prisma.sql`p."categoryId" = ${params.categoryId}`);
   const locIds = params.warehouseId ? whs.filter((w) => w.id === params.warehouseId).map((w) => w.locationId) : whs.map((w) => w.locationId);
-  if (params.inStock || params.warehouseId) {
+  if (params.warehouseId) {
     conds.push(Prisma.sql`EXISTS (SELECT 1 FROM "StockBalance" b WHERE b."variantId" = v.id AND b."locationId" IN (${Prisma.join(locIds.length ? locIds : [-1])}) AND b.qty > 0)`);
+  } else if (params.inStock) {
+    // Аль ч байршилд (агуулах, замдаа, зээлд, ЖОЛООЧИД) байгаа бараа харагдана — бүгдийг жолоочид өгсөн бараа ч алга болохгүй
+    conds.push(Prisma.sql`EXISTS (SELECT 1 FROM "StockBalance" b WHERE b."variantId" = v.id AND b.qty > 0)`);
   }
   const page = Math.max(1, Math.min(10000, Math.floor(params.page ?? 1)));
   const order = params.sort === 'shelf' ? Prisma.sql`p."shelfCode" ASC NULLS LAST, p.code, v."sortOrder", v.id` : Prisma.sql`p.code, v."sortOrder", v.id`;
@@ -77,7 +80,7 @@ export async function stockList(actor: UserActor, params: { q?: string; category
       return {
         variantId: r.id, ...info.get(r.id)!, isActive: r.isActive, productStatus: r.status,
         byWarehouse: Object.fromEntries(whs.map((w) => [w.id, b.byLocation.get(w.locationId) ?? 0])),
-        transit: b.transit, staff: b.staff, driver: b.driver, total: b.warehouses, reserved: b.reserved, reservedPending: b.reservedPending, available: b.warehouses - b.reserved,
+        transit: b.transit, staff: b.staff, driver: b.driver, drivers: b.drivers.sort((x, y) => y.qty - x.qty), total: b.warehouses, reserved: b.reserved, reservedPending: b.reservedPending, available: b.warehouses - b.reserved,
       };
     }),
   };
@@ -85,17 +88,19 @@ export async function stockList(actor: UserActor, params: { q?: string; category
 
 /** Барааны жагсаалтад (Модуль 1) харуулах үлдэгдэл: бараа бүрийн агуулах дахь нийт ба захиалах боломжтой */
 export async function productStockTotals(productIds: number[]) {
-  const m = new Map<number, { total: number; available: number; byVariant: Map<number, { total: number; available: number }> }>();
+  const m = new Map<number, { total: number; available: number; driver: number; byVariant: Map<number, { total: number; available: number; driver: number }> }>();
   if (!productIds.length) return m;
-  const rows = await db.$queryRaw<{ productId: number; variantId: number; total: number; reserved: number }[]>`
+  const rows = await db.$queryRaw<{ productId: number; variantId: number; total: number; reserved: number; driver: number }[]>`
     SELECT v."productId", v.id AS "variantId",
       COALESCE((SELECT sum(b.qty) FROM "StockBalance" b JOIN "StockLocation" l ON l.id = b."locationId" AND l.kind = 'WAREHOUSE' WHERE b."variantId" = v.id), 0)::int AS total,
-      COALESCE((SELECT sum(r.qty) FROM "StockReservation" r WHERE r."variantId" = v.id), 0)::int AS reserved
+      COALESCE((SELECT sum(r.qty) FROM "StockReservation" r WHERE r."variantId" = v.id), 0)::int AS reserved,
+      -- Жолоочийн гарт (падаанаар хүргэлтэд гарсан) — агуулахын нийт/боломжтойд ОРОХГҮЙ, тусад нь харагдана
+      COALESCE((SELECT sum(b.qty) FROM "StockBalance" b JOIN "StockLocation" l ON l.id = b."locationId" AND l.kind = 'DRIVER' WHERE b."variantId" = v.id), 0)::int AS driver
     FROM "ProductVariant" v WHERE v."productId" IN (${Prisma.join(productIds)})`;
   for (const r of rows) {
-    const p = m.get(r.productId) ?? { total: 0, available: 0, byVariant: new Map() };
-    p.total += r.total; p.available += r.total - r.reserved;
-    p.byVariant.set(r.variantId, { total: r.total, available: r.total - r.reserved });
+    const p = m.get(r.productId) ?? { total: 0, available: 0, driver: 0, byVariant: new Map() };
+    p.total += r.total; p.available += r.total - r.reserved; p.driver += r.driver;
+    p.byVariant.set(r.variantId, { total: r.total, available: r.total - r.reserved, driver: r.driver });
     m.set(r.productId, p);
   }
   return m;
@@ -301,9 +306,60 @@ export async function reconcile(actor: UserActor, opts: { fresh?: boolean } = {}
   requireRole(canView(actor.roles, 'warehouse'));
   if (opts.fresh) requireRole(canApproveStock(actor.roles));
   if (!opts.fresh && reconcileCache && Date.now() - reconcileCache.at < 5 * 60_000) return reconcileCache.data;
+  if (opts.fresh) { await autoReconcile({ force: true }); return reconcileCache!.data; }
   const data = await runReconcile();
   reconcileCache = { at: Date.now(), data };
   return data;
+}
+
+// ───────────────────────── цаг тутмын автомат тулгалт (B2/R2) ─────────────────────────
+
+export const RECONCILE_KEY = 'stockReconcile';
+export const RECONCILE_EVERY_MS = 60 * 60_000;
+/** Сүүлийн автомат шалгалт 3 цагаас хуучирвал (арын ажил зогссон) — мөн анхааруулна */
+export const RECONCILE_STALE_MS = 3 * 60 * 60_000;
+export interface ReconcileStatus {
+  at: string; ok: boolean; count: number; moves: number; ms: number; since: string | null;
+  mismatches: { locationId: number; variantId: number; ledger: number; balance: number }[];
+}
+
+/**
+ * Цаг тутам (арын ажил) журнал = үлдэгдэл тулгана. Үр дүнг AppSetting-д хадгална (олон replica-д нэг).
+ * Зөрүү ШИНЭЭР илэрвэл түүхэнд «stock.reconcile_mismatch», засагдвал «stock.reconcile_ok» бичнэ.
+ * Зөрүү байгаа бол Супер админд бүх хуудасны дээд хэсэгт улаан анхааруулга харагдана.
+ */
+export async function autoReconcile(opts: { force?: boolean } = {}): Promise<ReconcileStatus | null> {
+  const prevRow = await db.appSetting.findUnique({ where: { key: RECONCILE_KEY } });
+  const prev = (prevRow?.value ?? null) as ReconcileStatus | null;
+  if (!opts.force && prev && Date.now() - Date.parse(prev.at) < RECONCILE_EVERY_MS) return null;
+  const r = await runReconcile();
+  reconcileCache = { at: Date.now(), data: r };
+  const now = new Date().toISOString();
+  const st: ReconcileStatus = {
+    at: now, ok: r.ok, count: r.mismatches.length, moves: r.moves, ms: r.ms,
+    since: r.ok ? null : prev && !prev.ok && prev.since ? prev.since : now,
+    mismatches: r.mismatches.slice(0, 20),
+  };
+  await db.appSetting.upsert({ where: { key: RECONCILE_KEY }, create: { key: RECONCILE_KEY, value: st as unknown as Prisma.InputJsonValue }, update: { value: st as unknown as Prisma.InputJsonValue } });
+  if (!r.ok && (!prev || prev.ok)) await writeAudit(SYSTEM_ACTOR, 'stock.reconcile_mismatch', 'Stock', null, { count: st.count, sample: st.mismatches.slice(0, 5) } as unknown as Prisma.InputJsonValue, db, ['stock', 'alert']);
+  if (r.ok && prev && !prev.ok) await writeAudit(SYSTEM_ACTOR, 'stock.reconcile_ok', 'Stock', null, { since: prev.since }, db, ['stock']);
+  alertCache = null;
+  return st;
+}
+
+let alertCache: { at: number; v: ReconcileStatus | null } | null = null;
+/** Супер админд харуулах анхааруулга: зөрүү байгаа эсвэл автомат шалгалт 3+ цаг ажиллаагүй */
+export async function reconcileAlert(roles: string[]): Promise<{ kind: 'mismatch' | 'stale'; status: ReconcileStatus | null } | null> {
+  if (!roles.includes('SUPER_ADMIN')) return null;
+  if (!alertCache || Date.now() - alertCache.at > 30_000) {
+    const row = await db.appSetting.findUnique({ where: { key: RECONCILE_KEY } });
+    alertCache = { at: Date.now(), v: (row?.value ?? null) as ReconcileStatus | null };
+  }
+  const v = alertCache.v;
+  if (v && !v.ok) return { kind: 'mismatch', status: v };
+  // Анх суулгасны дараа эхний шалгалт хүртэл (v = null) анхааруулахгүй
+  if (v && Date.now() - Date.parse(v.at) > RECONCILE_STALE_MS) return { kind: 'stale', status: v };
+  return null;
 }
 
 // ───────────────────────── тавиур (#38) ─────────────────────────

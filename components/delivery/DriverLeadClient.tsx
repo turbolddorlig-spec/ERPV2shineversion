@@ -166,11 +166,11 @@ export function DriverLeadClient() {
       ) : null}
 
       <div className="overflow-x-auto rounded-xl border border-line bg-surface">
-        <table className="w-full min-w-[1120px] text-[13px]">
+        <table className="w-full min-w-[1240px] text-[13px]">
           <thead className="border-b border-line bg-surface2/70">
             <tr>
               <th className="w-9 px-2.5 py-2">{canAssign ? <input type="checkbox" aria-label="Бүгдийг сонгох" className="h-4 w-4" checked={!!items.length && items.filter(editable).every((o) => sel.has(o.id))} onChange={(e) => setSel(e.target.checked ? new Set(items.filter(editable).map((o) => o.id)) : new Set())} /> : null}</th>
-              <th className={clsx(th, 'w-[130px]')}>Дугаар</th><th className={clsx(th, 'w-[110px]')}>Үүссэн огноо</th><th className={th}>Бараа</th><th className={clsx(th, 'w-[140px]')}>Төлөв</th>
+              <th className={clsx(th, 'w-[130px]')}>Дугаар</th><th className={clsx(th, 'w-[110px]')}>Үүссэн огноо</th><th className={clsx(th, 'min-w-[220px]')}>Бараа</th><th className={clsx(th, 'w-[140px]')}>Төлөв</th>
               <th className={th}>Хаяг</th><th className={clsx(th, 'w-[190px]')}>Жолооч</th><th className={clsx(th, 'w-[120px]')}>Огноо</th>
             </tr>
           </thead>
@@ -193,10 +193,10 @@ export function DriverLeadClient() {
                     {o.lines.length > 1 ? <div className="text-[11.5px] text-subtle">Нийт: {o.lines.length} төрөл бараа · {money(o.total)}</div> : <div className="text-[11.5px] text-subtle">{money(o.total)}</div>}
                   </td>
                   <td className="px-2.5 py-2"><StatusChip o={o} /></td>
-                  <td className="max-w-[300px] select-text px-2.5 py-2">
+                  <td className="min-w-[240px] max-w-[300px] select-text px-2.5 py-2">
                     <div className="font-semibold">{o.phone}{o.extraPhone ? <span className="font-normal text-muted"> · {o.extraPhone}</span> : null}</div>
-                    <div className="line-clamp-2 text-[12.5px]">{o.fullAddress}</div>
-                    {o.note ? <OperatorNote text={o.note} /> : null}
+                    <div className="line-clamp-2 text-[12.5px]" title={o.fullAddress}>{o.fullAddress}</div>
+                    {o.note ? <OperatorNote text={o.note} className="!line-clamp-3" /> : null}
                   </td>
                   <td className="px-2.5 py-2">
                     {editable(o) ? <DriverSelect drivers={drivers} value={o.driverId ?? ''} onChange={(v) => { if (v) assign([o.id], v); }} disabled={busy} />

@@ -13,7 +13,7 @@ import { Thumb } from '@/components/products/ProductsClient';
 interface Wh { id: number; name: string; isPrimary: boolean }
 interface Row {
   variantId: number; productId: number; code: string; name: string; label: string; thumb: string | null; shelfCode: string | null; isActive: boolean;
-  byWarehouse: Record<string, number>; transit: number; staff: number; driver: number; total: number; reserved: number; reservedPending: number; available: number;
+  byWarehouse: Record<string, number>; transit: number; staff: number; driver: number; drivers: { name: string; qty: number }[]; total: number; reserved: number; reservedPending: number; available: number;
 }
 interface StockResp { items: Row[]; page: number; pageSize: number; hasMore: boolean; warehouses: Wh[]; canOperate: boolean }
 interface Today { refill: number; incoming: number; discrepancy: number; loanRequests: number; countsToApprove: number; openCounts: number; returns: number; approver: boolean }
@@ -31,6 +31,24 @@ function WorkCard({ n, label, hint, href, tone = 'accent', disabled }: { n: numb
   );
   const cls = clsx('flex min-h-[104px] flex-col gap-1.5 rounded-[16px] border p-3.5', active ? 'border-accent/40 bg-accent-soft/60 hover:bg-accent-soft' : 'border-line bg-surface', disabled && 'opacity-70');
   return disabled ? <div className={cls} aria-disabled="true">{body}</div> : <Link href={href} className={cls}>{body}</Link>;
+}
+
+/** Жолоочид явж буй бараа: тоон дээр дарахад аль жолоочид хэдэн ширхэг байгааг харуулна */
+function DriverQty({ r, mobile }: { r: { driver: number; drivers: { name: string; qty: number }[] }; mobile?: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-block text-left">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} title="Аль жолоочид байгааг харах"
+        className={clsx('font-bold text-info underline decoration-dotted underline-offset-2', mobile && 'rounded-lg bg-info-soft px-2 py-1 no-underline')}>
+        {mobile ? `Жолоочид: ${r.driver}` : r.driver}
+      </button>
+      {open ? (
+        <span className={clsx('absolute z-30 mt-1 flex w-[220px] flex-col gap-0.5 rounded-xl border border-line bg-surface p-2 text-[12.5px] shadow-pop', mobile ? 'left-0' : 'right-0')}>
+          {r.drivers.map((d) => <span key={d.name} className="flex justify-between gap-2"><span className="min-w-0 [overflow-wrap:anywhere]">{d.name}</span><b className="whitespace-nowrap">{d.qty}ш</b></span>)}
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 export function WarehouseClient({ canOperate, canApprove }: { canOperate: boolean; canApprove: boolean }) {
@@ -156,7 +174,7 @@ export function WarehouseClient({ canOperate, canApprove }: { canOperate: boolea
 
         <div className="hidden overflow-hidden rounded-[16px] border border-line bg-surface shadow-card md:block">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] border-collapse text-[13.5px]">
+            <table className="w-full min-w-[1100px] border-collapse text-[13.5px]">
               <thead>
                 <tr className="bg-surface2 text-left text-[12px] text-muted">
                   {canOperate ? <th scope="col" className="w-10 border-b border-line py-2.5 pl-4"><span className="sr-only">Сонгох</span></th> : null}
@@ -165,6 +183,7 @@ export function WarehouseClient({ canOperate, canApprove }: { canOperate: boolea
                   {whs.map((w) => <th key={w.id} scope="col" className="border-b border-line px-2 py-2.5 text-right font-bold">{w.isPrimary ? '★ ' : ''}{w.name}</th>)}
                   <th scope="col" className="border-b border-line px-2 py-2.5 text-right font-bold">Замдаа</th>
                   <th scope="col" className="border-b border-line px-2 py-2.5 text-right font-bold">Зээлд</th>
+                  <th scope="col" className="border-b border-line px-2 py-2.5 text-right font-bold" title="Падаанаар жолоочид өгсөн, хүргэлтэд явж буй бараа">Жолоочид</th>
                   <th scope="col" className="border-b border-line px-2 py-2.5 text-right font-bold">Нийт</th>
                   <th scope="col" className="border-b border-line px-2 py-2.5 text-right font-bold">Захиалгад</th>
                   <th scope="col" className="border-b border-line px-2 py-2.5 text-right font-bold">Боломжтой</th>
@@ -175,16 +194,17 @@ export function WarehouseClient({ canOperate, canApprove }: { canOperate: boolea
                 {data?.items.map((r) => (
                   <tr key={r.variantId} className={clsx('hover:bg-surface2/60', selected.has(r.variantId) && 'bg-accent-soft/50', !r.isActive && 'opacity-60')}>
                     {canOperate ? <td className="border-b border-line py-2 pl-4"><input type="checkbox" aria-label={`${r.code} сонгох`} checked={selected.has(r.variantId)} onChange={() => toggle(r.variantId)} className="h-[18px] w-[18px] accent-[var(--accent)]" /></td> : null}
-                    <td className="border-b border-line px-3 py-2">
+                    <td className="min-w-[260px] max-w-[360px] border-b border-line px-3 py-2">
                       <div className="flex items-center gap-2.5">
                         <Thumb src={r.thumb} alt={`${r.name} ${r.label}`} size={38} zoom={r.code} />
-                        <span className="flex min-w-0 select-text flex-col leading-tight"><span className="font-semibold">{r.name}{r.label ? <span className="text-muted"> · {r.label}</span> : null}</span><span className="text-[12px] text-subtle">{r.code}</span></span>
+                        <span className="flex min-w-0 select-text flex-col leading-tight"><span className="line-clamp-2 font-semibold" title={`${r.name}${r.label ? ` · ${r.label}` : ''}`}>{r.name}{r.label ? <span className="text-muted"> · {r.label}</span> : null}</span><span className="text-[12px] text-subtle">{r.code}</span></span>
                       </div>
                     </td>
                     <td className="border-b border-line px-2 py-2 font-semibold">{r.shelfCode ?? <span className="text-subtle">—</span>}</td>
                     {whs.map((w) => { const n = r.byWarehouse[w.id] ?? 0; return <td key={w.id} className={clsx('border-b border-line px-2 py-2 text-right', n ? 'font-bold' : 'text-subtle')}>{n || '·'}</td>; })}
                     <td className="border-b border-line px-2 py-2 text-right text-info">{r.transit || ''}</td>
                     <td className="border-b border-line px-2 py-2 text-right text-muted">{r.staff || ''}</td>
+                    <td className="border-b border-line px-2 py-2 text-right">{r.driver ? <DriverQty r={r} /> : ''}</td>
                     <td className="border-b border-line px-2 py-2 text-right font-extrabold">{r.total}</td>
                     <td className="border-b border-line px-2 py-2 text-right text-muted">{r.reserved || ''}{r.reservedPending ? <span className="block text-[11px] text-warn" title="Төлбөр хүлээж буй захиалгад">{r.reservedPending} төлб.</span> : null}</td>
                     <td className={clsx('border-b border-line px-2 py-2 text-right font-bold', r.available < 0 ? 'text-bad-ink' : 'text-ok-ink')}>{r.available}</td>
@@ -212,6 +232,7 @@ export function WarehouseClient({ canOperate, canApprove }: { canOperate: boolea
                 {whs.filter((w) => r.byWarehouse[w.id]).map((w) => <span key={w.id} className="rounded-lg bg-surface2 px-2 py-1 font-semibold">{w.isPrimary ? '★ ' : ''}{w.name}: {r.byWarehouse[w.id]}</span>)}
                 {r.transit ? <span className="rounded-lg bg-info-soft px-2 py-1 font-semibold text-info">Замдаа: {r.transit}</span> : null}
                 {r.staff ? <span className="rounded-lg bg-surface2 px-2 py-1 font-semibold">Зээлд: {r.staff}</span> : null}
+                {r.driver ? <DriverQty r={r} mobile /> : null}
                 {r.reserved ? <span className="rounded-lg bg-surface2 px-2 py-1 font-semibold">Захиалгад: {r.reserved}{r.reservedPending ? ` (төлбөр хүлээж буй ${r.reservedPending})` : ''}</span> : null}
                 <span className={clsx('rounded-lg px-2 py-1 font-bold', r.available < 0 ? 'bg-bad-soft text-bad-ink' : 'bg-ok-soft text-ok-ink')}>Боломжтой: {r.available}</span>
               </div>

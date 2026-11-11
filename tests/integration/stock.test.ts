@@ -290,7 +290,7 @@ describe('дүүргэлт, өнөөдрийн ажил, түүх, тулгал�
     expect(row.byWarehouse[main.id]).toBe(4);
     // Модуль 1-ийн жагсаалтад үлдэгдэл
     const pl = await P.listProducts(mk, {});
-    expect(pl.items.find((i) => i.id === shoeId)!.stock).toEqual({ total: 4, available: 4 });
+    expect(pl.items.find((i) => i.id === shoeId)!.stock).toEqual({ total: 4, available: 4, driver: 0 });
     await err(V.stockList(mk, {}), 403);
     await err(V.reconcile(wh, { fresh: true }), 403);
   });

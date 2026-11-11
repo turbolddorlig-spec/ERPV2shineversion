@@ -16,9 +16,9 @@ import { CATEGORY_DOT, money } from '@/lib/format';
 interface Item {
   id: number; code: string; name: string; price: number; costPrice?: number | null; status: 'ACTIVE' | 'DISCONTINUED' | 'ARCHIVED';
   statusLabel: string; category: { id: number; name: string; color: string } | null; season: { id: number; name: string } | null;
-  variantCount: number; hasVariants: boolean; attrs: string | null; thumb: string | null; variants: Variant[]; stock: { total: number; available: number };
+  variantCount: number; hasVariants: boolean; attrs: string | null; thumb: string | null; variants: Variant[]; stock: { total: number; available: number; driver: number };
 }
-interface Variant { id: number; code: string; color: string; size: string; label: string; isActive: boolean; price: number; priceOverride: boolean; thumb: string | null; stock: { total: number; available: number } }
+interface Variant { id: number; code: string; color: string; size: string; label: string; isActive: boolean; price: number; priceOverride: boolean; thumb: string | null; stock: { total: number; available: number; driver: number } }
 interface ListResp { items: Item[]; total: number; page: number; pageSize: number }
 interface Opt { id: number; name: string; color: string; isActive: boolean }
 
@@ -41,9 +41,11 @@ export function Thumb({ src, alt, size = 44, zoom }: { src: string | null; alt: 
 }
 
 /** Үлдэгдэл: агуулахуудын нийт; захиалгад нөөцлөгдсөн бол «боломжтой»-г хамт */
-function StockCell({ s }: { s: { total: number; available: number } }) {
-  if (!s.total && !s.available) return <span className="text-subtle">0</span>;
-  return <span className={clsx('font-bold', s.available <= 0 ? 'text-bad-ink' : 'text-ink')} title={`Агуулахад ${s.total}, захиалах боломжтой ${s.available}`}>{s.total}{s.available !== s.total ? <span className="font-normal text-muted"> ({s.available})</span> : null}</span>;
+function StockCell({ s }: { s: { total: number; available: number; driver: number } }) {
+  // Жолоочид (падаанаар хүргэлтэд гарсан) бараа агуулахын тоонд орохгүй — тусад нь ил харагдана
+  const drv = s.driver ? <span className="ml-1.5 inline-block whitespace-nowrap rounded-md bg-info-soft px-1.5 text-[11.5px] font-bold text-info" title={`Жолоочийн гарт (хүргэлтэд) ${s.driver} ширхэг`}>Жолоочид {s.driver}</span> : null;
+  if (!s.total && !s.available) return <span className="text-subtle">0{drv}</span>;
+  return <span className={clsx('font-bold', s.available <= 0 ? 'text-bad-ink' : 'text-ink')} title={`Агуулахад ${s.total}, захиалах боломжтой ${s.available}`}>{s.total}{s.available !== s.total ? <span className="font-normal text-muted"> ({s.available})</span> : null}{drv}</span>;
 }
 
 /** Барааг нээх цорын ганц товч: засах эрхтэй бол «Засах», үгүй бол «Харах» */

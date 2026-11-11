@@ -1,18 +1,22 @@
 import { db } from './db';
 import { autoCancelExpired } from './services/orders/orders';
 import { processMetaQueue } from './services/orders/meta';
+import { autoReconcile } from './services/stock/views';
 
 /**
- * Арын ажил (минут тутам): Meta Purchase илгээх / дахин оролдох, хугацаа нь дууссан «Төлбөр хүлээж буй» захиалгыг цуцлах.
+ * Арын ажил (минут тутам): Meta Purchase илгээх / дахин оролдох, хугацаа нь дууссан «Төлбөр хүлээж буй» захиалгыг цуцлах,
+ * цаг тутам үлдэгдлийн тулгалт (журнал = үлдэгдэл, B2/R2).
  * Олон апп (replica) ажилласан ч advisory lock-оор нэг л нь гүйцэтгэнэ.
  */
-export async function runJobsOnce(): Promise<{ ran: boolean; cancelled?: number; meta?: { sent: number; failed: number } }> {
+export async function runJobsOnce(): Promise<{ ran: boolean; cancelled?: number; meta?: { sent: number; failed: number }; reconciled?: boolean }> {
   const got = await db.$queryRaw<{ ok: boolean }[]>`SELECT pg_try_advisory_lock(42::int4, 1::int4) AS ok`;
   if (!got[0]?.ok) return { ran: false };
   try {
     const cancelled = await autoCancelExpired();
     const meta = await processMetaQueue();
-    return { ran: true, cancelled, meta };
+    const rec = await autoReconcile().catch((e) => { console.error('[jobs] reconcile', (e as Error).message); return null; });
+    if (rec && !rec.ok) console.error(`[jobs] ҮЛДЭГДЛИЙН ЗӨРҮҮ: ${rec.count}`);
+    return { ran: true, cancelled, meta, reconciled: !!rec };
   } finally {
     await db.$queryRaw`SELECT pg_advisory_unlock(42::int4, 1::int4)`;
   }

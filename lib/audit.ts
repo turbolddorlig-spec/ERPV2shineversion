@@ -28,6 +28,8 @@ export async function writeAudit(
 
 export const AUDIT_LABEL: Record<string, string> = {
   'auth.login': 'Нэвтэрсэн',
+  'stock.reconcile_mismatch': 'Үлдэгдлийн тулгалтад ЗӨРҮҮ илэрсэн (автомат)',
+  'stock.reconcile_ok': 'Үлдэгдлийн зөрүү арилсан (автомат)',
   'auth.login_failed': 'Буруу нууц үгээр оролдсон',
   'auth.locked': 'Түгжигдсэн (5 буруу оролдлого)',
   'auth.logout': 'Гарсан',

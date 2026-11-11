@@ -237,3 +237,67 @@ describe('падаан', () => {
     expect(hist.items).toHaveLength(0);
   });
 });
+
+describe('жолоочид явж буй бараа ил харагдана; цаг тутмын автомат тулгалт (B2)', () => {
+  async function handOver(n: number, lines: { variantId: number; qty: number }[]) {
+    const ids: number[] = [];
+    for (let i = 0; i < n; i++) ids.push((await O.createOrder(op, ub({ deliveryDate: today, lines }))).order.id);
+    await L.assignOrders(lead, { ids, driverId: drv.id });
+    const h = await H.createHandover(wh, { driverId: drv.id, date: today, orderIds: ids });
+    await H.prepareHandover(wh, h.id); await checkAll(h.id); await H.confirmHandover(wh, h.id);
+    return { ids, h };
+  }
+
+  it('нэг бараатай 2 захиалга жолоочид → агуулах ба барааны хуудсанд «Жолоочид 4»; нийт/боломжтойд орохгүй', async () => {
+    await handOver(2, [{ variantId: v1, qty: 2 }]);
+    const st = await V.stockList(sa, { ids: [v1] });
+    const row = st.items[0]!;
+    expect([row.driver, row.total, row.reserved, row.available]).toEqual([4, 16, 0, 16]);
+    expect(row.drivers).toEqual([{ name: drv.name, qty: 4 }]);
+    const pl = await P.listProducts(sa, { q: 'G1' } as never);
+    const prod = pl.items.find((x) => x.code === 'G1')!;
+    expect(prod.stock.driver).toBe(4);
+    expect(prod.variants.find((v) => v.id === v1)!.stock.driver).toBe(4);
+  });
+
+  it('бүх ширхэг жолоочид гарсан бараа «Үлдэгдэлтэй» шүүлтүүрээс алга болохгүй', async () => {
+    const p = await P.createProduct(sa, { code: 'G2', name: 'Ганц бараа', price: 5000 });
+    const v = p.variants[0]!.id;
+    await D.createReceipt(wh, { warehouseId: mainWh, lines: [{ variantId: v, qty: 2 }], idemKey: key() });
+    await handOver(1, [{ variantId: v, qty: 2 }]);
+    const st = await V.stockList(sa, { q: 'G2', inStock: true });
+    expect(st.items.map((x) => [x.variantId, x.total, x.driver])).toEqual([[v, 0, 2]]);
+  });
+
+  it('автомат тулгалт: цагт нэг; зөрүү → түүх + Супер админд анхааруулга; засагдвал арилна', async () => {
+    await handOver(2, [{ variantId: v1, qty: 2 }]);
+    const s1 = await V.autoReconcile();
+    expect(s1?.ok).toBe(true);
+    expect(await V.autoReconcile()).toBeNull(); // 1 цаг болоогүй
+    expect(await V.reconcileAlert(['SUPER_ADMIN'])).toBeNull();
+    // Зориуд зөрүү үүсгэнэ (журналаас гадуур өөрчлөлт — бодит системд боломжгүй)
+    const dl = await drvLoc(drv);
+    await db.$executeRaw`UPDATE "StockBalance" SET qty = qty + 1 WHERE "locationId" = ${dl} AND "variantId" = ${v1}`;
+    const s2 = await V.autoReconcile({ force: true });
+    expect([s2?.ok, s2?.count, s2?.mismatches[0]?.ledger, s2?.mismatches[0]?.balance]).toEqual([false, 1, 4, 5]);
+    expect(await db.auditLog.count({ where: { action: 'stock.reconcile_mismatch' } })).toBe(1);
+    const a = await V.reconcileAlert(['SUPER_ADMIN']);
+    expect([a?.kind, a?.status?.count]).toEqual(['mismatch', 1]);
+    expect(await V.reconcileAlert(['ADMIN', 'WAREHOUSE'])).toBeNull();
+    // Дахин шалгахад зөрүү хэвээр бол түүхэнд дахин бичихгүй, «since» хэвээр
+    const s3 = await V.autoReconcile({ force: true });
+    expect([s3?.since, await db.auditLog.count({ where: { action: 'stock.reconcile_mismatch' } })]).toEqual([s2?.since, 1]);
+    await db.$executeRaw`UPDATE "StockBalance" SET qty = qty - 1 WHERE "locationId" = ${dl} AND "variantId" = ${v1}`;
+    const rec = await V.reconcile(sa, { fresh: true }); // «Дахин шалгах» товч мөн хадгалсан төлөвийг шинэчилнэ
+    expect(rec.ok).toBe(true);
+    expect(await db.auditLog.count({ where: { action: 'stock.reconcile_ok' } })).toBe(1);
+    expect(await V.reconcileAlert(['SUPER_ADMIN'])).toBeNull();
+  });
+
+  it('автомат шалгалт 3+ цаг ажиллаагүй бол Супер админд анхааруулна', async () => {
+    const st = await V.autoReconcile({ force: true }); // анхааруулгын кэшийг цэвэрлэнэ
+    await db.appSetting.update({ where: { key: V.RECONCILE_KEY }, data: { value: { ...st!, at: new Date(Date.now() - 4 * 3600_000).toISOString() } } });
+    const a = await V.reconcileAlert(['SUPER_ADMIN']);
+    expect(a?.kind).toBe('stale');
+  });
+});

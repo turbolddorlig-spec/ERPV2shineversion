@@ -59,7 +59,7 @@ async function audit(page: Page): Promise<Issue[]> {
     // 4) хүснэгтийн нүд хэт шахагдаж (үг бүр шинэ мөрөнд) уншигдахгүй болсон
     for (const td of Array.from(document.querySelectorAll<HTMLElement>('td'))) {
       const len = (td.textContent ?? '').trim().length; const w = td.getBoundingClientRect().width;
-      if (td.offsetParent && len > 40 && w > 0 && w < 110) out.push({ kind: 'squeezed', text: (td.textContent ?? '').trim().slice(0, 60), w: Math.round(w), box: len });
+      if (td.offsetParent && ((len > 40 && w > 0 && w < 110) || (len > 80 && w > 0 && w < 170 && td.getBoundingClientRect().height > 120))) out.push({ kind: 'squeezed', text: (td.textContent ?? '').trim().slice(0, 60), w: Math.round(w), box: len });
     }
     return out;
   }, MARK);
@@ -102,6 +102,7 @@ async function main() {
     { name: 'Бараа дэлгэрэнгүй', path: '/products/1' },
     { name: 'Агуулах үлдэгдэл', path: '/warehouse/products/1' },
     { name: 'Агуулах', path: '/warehouse' },
+    { name: 'Агуулах (урт нэр, жолоочид)', path: '/warehouse', act: async (p) => { await p.fill('input[placeholder*="Код, нэр"]', '00001'); await p.waitForTimeout(1200); } },
     { name: 'Хөдөлгөөн', path: '/warehouse/moves' },
     { name: 'Тайлан', path: '/reports' },
     { name: 'Хэрэглэгчид', path: '/users' },

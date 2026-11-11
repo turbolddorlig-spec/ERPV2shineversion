@@ -29,7 +29,10 @@ async function logout() {
   window.location.href = '/login';
 }
 
-export function AppShell({ user, nav, children }: { user: { name: string; roleLabels: string[] }; nav: NavItem[]; children: ReactNode }) {
+export interface StockAlert { kind: 'mismatch' | 'stale'; count: number; at: string | null; since: string | null }
+const ubTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString('mn-MN', { timeZone: 'Asia/Ulaanbaatar', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
+
+export function AppShell({ user, nav, alert, children }: { user: { name: string; roleLabels: string[] }; nav: NavItem[]; alert?: StockAlert | null; children: ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [pathname]);
@@ -117,6 +120,15 @@ export function AppShell({ user, nav, children }: { user: { name: string; roleLa
 
       <div className="lg:pl-[84px]">
         <div className="mx-auto w-full max-w-[1400px] has-[.full-bleed]:max-w-none px-[max(16px,env(safe-area-inset-left))] pb-[max(24px,env(safe-area-inset-bottom))] pt-4 lg:px-7 lg:pt-6">
+          {alert ? (
+            <Link href="/warehouse" role="alert" className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] border border-bad/40 bg-bad-soft px-4 py-3 text-[13.5px] font-semibold text-bad-ink hover:brightness-95">
+              <span className="text-[16px]">⚠</span>
+              {alert.kind === 'mismatch'
+                ? <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">Үлдэгдлийн тулгалтад {alert.count} зөрүү илэрлээ (журнал ≠ үлдэгдэл){alert.since ? ` · ${ubTime(alert.since)}-аас` : ''}. Агуулах руу орж шалгана уу.</span>
+                : <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">Цаг тутмын автомат тулгалт {ubTime(alert.at)}-аас хойш ажиллаагүй байна. Агуулах → «Дахин шалгах».</span>}
+              <span className="text-[12.5px] underline">Агуулах →</span>
+            </Link>
+          ) : null}
           {children}
         </div>
       </div>

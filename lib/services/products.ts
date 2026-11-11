@@ -162,7 +162,7 @@ export async function listProducts(actor: UserActor, params: ListParams) {
   return {
     total, page, pageSize: PRODUCT_PAGE_SIZE,
     items: rows.map((r) => ({
-      stock: { total: stock.get(r.id)?.total ?? 0, available: stock.get(r.id)?.available ?? 0 },
+      stock: { total: stock.get(r.id)?.total ?? 0, available: stock.get(r.id)?.available ?? 0, driver: stock.get(r.id)?.driver ?? 0 },
       id: r.id, code: r.code, name: r.name, price: r.price, ...(showCost ? { costPrice: r.costPrice } : {}),
       status: r.status, statusLabel: STATUS_LABEL[r.status], category: r.category, season: r.season,
       // Ганц өнгө/хэмжээтэй бол энгийн бараа: доор нь хувилбарын мөр гаргахгүй, өнгө/хэмжээг өөр дээр нь харуулна (#34)
@@ -176,7 +176,7 @@ export async function listProducts(actor: UserActor, params: ListParams) {
         return {
           id: v.id, code: v.code, color: v.color, size: v.size, label: variantLabel(v), isActive: v.isActive,
           price: v.priceOverride ?? r.price, priceOverride: v.priceOverride !== null,
-          stock: stock.get(r.id)?.byVariant.get(v.id) ?? { total: 0, available: 0 },
+          stock: stock.get(r.id)?.byVariant.get(v.id) ?? { total: 0, available: 0, driver: 0 },
           thumb: img ? mediaUrl(img.fileKey, 'sm') : null,
         };
       }) : [],
