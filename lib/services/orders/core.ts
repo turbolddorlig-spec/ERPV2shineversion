@@ -170,3 +170,19 @@ export async function noPageId(tx: Tx | typeof db): Promise<number> {
   const p = await tx.page.upsert({ where: { name: NO_PAGE_NAME }, create: { name: NO_PAGE_NAME, sortOrder: 9999 }, update: {} });
   return p.id;
 }
+
+/**
+ * Мөнгө орсон «Төлбөр хүлээж буй» захиалга (#102, хуучин ERP-ийн логик, цуцалж дахин үүсгэхгүй):
+ * хуучинд өмнөх өдөр үүссэн бол цуцлаад МӨНГӨ ОРСОН өдөр шинэ захиалга үүсгэж, хуваарилах өдрийг тэр өдөр болгодог байв.
+ * Одоо: ижил захиалга (дугаар хэвээр) «Шинэ»; баталгаажсан мөч = одоо (захиалгын «өдөр» болно);
+ * хүргэх өдөр мөнгө орсон өдрөөс өмнө бол мөнгө орсон өдөр (хойших — он сар өдөртэй — хэвээр).
+ */
+export function paidOrderData(o: { deliveryDate: Date }, now = new Date()) {
+  const today = ubDay(now);
+  const from = o.deliveryDate.toISOString().slice(0, 10);
+  const moved = from < today;
+  return {
+    data: { status: 'NEW' as const, prepaid: true, confirmedAt: now, paymentDeadline: null, ...(moved ? { deliveryDate: new Date(`${today}T00:00:00Z`) } : {}), version: { increment: 1 } },
+    deliveryChange: moved ? { from, to: today } : null,
+  };
+}

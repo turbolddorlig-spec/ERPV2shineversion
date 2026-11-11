@@ -9,7 +9,7 @@ import { variantLabel } from '../../catalog/variants';
 import { cleanIdemKey } from '../stock/core';
 import {
   ACTIVE, activeBlacklist, availableFor, cleanAddress, cleanDeliveryDate, cleanOptPhone, cleanPhone, findActiveDuplicate, inTx,
-  lockOrder, lockPhones, lockVariants, nextOrderNumber, orderSettings, requireReason, staleError, uniqueViolation, type Tx, type UserActor, NO_PAGE_NAME, noPageId,
+  lockOrder, lockPhones, lockVariants, nextOrderNumber, orderSettings, paidOrderData, requireReason, staleError, uniqueViolation, type Tx, type UserActor, NO_PAGE_NAME, noPageId,
 } from './core';
 import { enqueueMeta, skipMeta } from './meta';
 import { addToHandover, isGiven, lockDelivery, removeFromHandover } from '../delivery/core';
@@ -374,9 +374,10 @@ export async function markPaid(actor: UserActor, idInput: unknown) {
     const o = await tx.order.findUniqueOrThrow({ where: { id } });
     if (o.prepaid && o.status !== 'PENDING_PAYMENT') return { order: o, duplicate: true };
     if (o.status !== 'PENDING_PAYMENT') throw conflict('Зөвхөн «Төлбөр хүлээж буй» захиалгад', 'bad_status');
-    const u = await tx.order.update({ where: { id }, data: { status: 'NEW', prepaid: true, confirmedAt: new Date(), paymentDeadline: null, version: { increment: 1 } } });
+    const pd = paidOrderData(o);
+    const u = await tx.order.update({ where: { id }, data: pd.data });
     await enqueueMeta(tx, id);
-    await writeAudit(actor, 'order.paid', 'Order', String(id), { number: o.number, total: o.total }, tx, ['order', 'money']);
+    await writeAudit(actor, 'order.paid', 'Order', String(id), { number: o.number, total: o.total, ...(pd.deliveryChange ? { deliveryDate: pd.deliveryChange } : {}) }, tx, ['order', 'money']);
     return { order: u, duplicate: false };
   });
 }

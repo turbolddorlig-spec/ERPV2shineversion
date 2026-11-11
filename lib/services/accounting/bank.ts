@@ -4,7 +4,7 @@ import { badRequest, conflict, forbidden, notFound } from '../../errors';
 import { writeAudit, SYSTEM_ACTOR, type Actor } from '../../audit';
 import { canBankImport, canView } from '../../permissions';
 import { ubDay, ubDayStart, isYmd } from '../../ubdate';
-import { inTx, lockOrder, type UserActor } from '../orders/core';
+import { inTx, lockOrder, paidOrderData, type UserActor } from '../orders/core';
 import { enqueueMeta } from '../orders/meta';
 import { bustCounts } from '../orders/queries';
 import { addDays } from '../delivery/core';
@@ -125,9 +125,10 @@ async function paidFor(tx: Tx, orderId: number, exceptId?: number) {
 async function markPaidByBank(tx: Tx, actor: Actor, orderId: number, paid: number, how: string) {
   const o = await tx.order.findUniqueOrThrow({ where: { id: orderId } });
   if (o.status !== 'PENDING_PAYMENT') return false;
-  await tx.order.update({ where: { id: orderId }, data: { status: 'NEW', prepaid: true, confirmedAt: new Date(), paymentDeadline: null, version: { increment: 1 } } });
+  const pd = paidOrderData(o);
+  await tx.order.update({ where: { id: orderId }, data: pd.data });
   await enqueueMeta(tx, orderId);
-  await writeAudit(actor, 'order.paid', 'Order', String(orderId), { number: o.number, total: o.total, paid, by: how }, tx, ['order', 'money', 'bank']);
+  await writeAudit(actor, 'order.paid', 'Order', String(orderId), { number: o.number, total: o.total, paid, by: how, ...(pd.deliveryChange ? { deliveryDate: pd.deliveryChange } : {}) }, tx, ['order', 'money', 'bank']);
   return true;
 }
 

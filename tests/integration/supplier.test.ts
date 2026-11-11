@@ -265,6 +265,33 @@ describe('анхдагч суутгал (#100) — бүх дэлгүүрт нэ�
   });
 });
 
+describe('мөнгө орсон захиалга (#102) — хуучин логик, цуцалж дахин үүсгэхгүй', () => {
+  it('өчигдөр үүссэн төлбөр хүлээж буй → мөнгө орсон: ижил дугаар «Шинэ», хүргэх өдөр = өнөөдөр, өнөөдрийн захиалгад тоологдоно; картын шүүлтүүр', async () => {
+    const shop = await shopWith();
+    const yest = U.ubDay(new Date(), -1);
+    const p = (await O.createOrder(op, { ...ub([{ variantId: shoe, qty: 1 }]), prepaidWait: true })).order;
+    expect(p.status).toBe('PENDING_PAYMENT');
+    await db.order.update({ where: { id: p.id }, data: { createdAt: new Date(U.ubDayStart(yest).getTime() + 20 * 3600_000), deliveryDate: U.dateOnly(yest) } });
+    // төлбөр хүлээж буй — тоологдохгүй
+    let ov = await SP.overview(adm);
+    expect([ov.orderDays[0]!.total, ov.orderDays[1]!.total]).toEqual([0, 0]);
+    const r = await O.markPaid(sa, p.id);
+    expect([r.order.number, r.order.status, U.ymdOf(r.order.deliveryDate), r.order.prepaid]).toEqual([p.number, 'NEW', today, true]);
+    expect(await db.order.count()).toBe(1); // цуцалж дахин үүсгээгүй
+    // «Шинэ» байгаад цуцлагдсан, он сар өдөртэй — тоологдохгүй
+    const c = (await O.createOrder(op, ub([{ variantId: shoe, qty: 1 }]))).order;
+    await O.cancelOrder(op, c.id, { reason: 'CUSTOMER_CANCELLED', note: 'Үйлчлүүлэгч болисон' });
+    await O.createOrder(op, { ...ub([{ variantId: shoe, qty: 1 }]), deliveryDate: U.ubDay(new Date(), 5) });
+    await O.createOrder(op, ub([{ variantId: mine, qty: 1 }]));
+    ov = await SP.overview(adm);
+    // өнөөдөр: мөнгө орсон (гутал) + цүнхтэй энгийн = 2; өчигдөр 0
+    expect([ov.orderDays[0]!.total, ov.orderDays[0]!.pending, ov.orderDays[1]!.total]).toEqual([2, 2, 0]);
+    expect(ov.orderDays[0]!.shops!.find((x) => x.id === shop)).toMatchObject({ total: 1, amount: 20000 });
+    const det = await SP.shopDetail(adm, shop);
+    expect([det.orderDays[0]!.total, det.orderDays[0]!.amount]).toEqual([1, 20000]);
+  });
+});
+
 describe('нэвтрэх эрх, самбар', () => {
   it('нийлүүлэгчид нэвтрэх эрх (түр нууц үг, hash); идэвхгүй болгоход нэвтрэхгүй; самбар', async () => {
     const shop = await shopWith();

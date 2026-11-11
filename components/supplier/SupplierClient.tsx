@@ -17,7 +17,7 @@ const ubToday = () => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0,
 const digits = (s: string) => s.replace(/\D/g, '').slice(0, 9);
 const inputCls = 'h-10 min-w-0 rounded-[10px] border border-line bg-surface px-2.5 text-[13.5px]';
 
-interface OrderDay { label: string; date: string; total: number; delivered: number; cancelled: number; onRoad: number; pending: number; amount: number }
+interface OrderDay { label: string; date: string; total: number; delivered: number; cancelled: number; onRoad: number; pending: number; amount: number; shops?: { id: number; name: string; total: number; amount: number }[] }
 interface ShopRow { id: number; name: string; contactName: string; contactPhone: string; isActive: boolean; hasLogin: boolean; productCount: number; openDays: number; balance: number; pendingAdj: number; monthSales: number }
 interface Overview { stats: { activeShops: number; monthSales: number; monthNet: number; todaySales: number; todayNet: number; balance: number }; orderDays: OrderDay[]; shops: ShopRow[]; isSuperAdmin: boolean; defaults: Ded }
 interface Ded { operatorCost: number; deliveryCost: number; marketingCost: number; otherCost: number; otherNote: string }
@@ -50,22 +50,35 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'ac
   );
 }
 
-function OrderDays({ days }: { days: OrderDay[] }) {
+function OrderDays({ days, all }: { days: OrderDay[]; all?: boolean }) {
   return (
     <div className="flex flex-col gap-2">
-    <p className="text-[12.5px] text-muted"><b className="text-ink">Захиалга — авсан огноогоор</b> (захиалга үүссэн өдөр; жишээ нь өчигдөр орой авч өнөөдөр хүргэх захиалга «Өчигдөр»-т). Тооцоо харин <b className="text-ink">падааны өдрөөр</b>.</p>
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-      {days.map((d) => (
-        <div key={d.date} className="flex min-w-0 flex-col gap-2 rounded-2xl border border-line bg-surface p-4">
-          <div className="flex items-baseline justify-between gap-2"><b className="text-[14px]">{d.label}</b><span className="text-[12.5px] text-subtle">{d.date.slice(5).replace('-', '/')}-нд авсан</span></div>
-          <div className="text-[24px] font-extrabold tracking-tight">{d.total} <span className="text-[13px] font-medium text-muted">захиалга · {money(d.amount)}</span></div>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[12.5px] text-muted">
-            <span>Хүргэсэн: <b className="text-ok-ink">{d.delivered}</b></span><span>Хүргэлтэд: <b className="text-ink">{d.onRoad}</b></span>
-            <span>Хүлээгдэж: <b className="text-ink">{d.pending}</b></span><span>Цуцалсан: <b className="text-bad-ink">{d.cancelled}</b></span>
+      <p className="text-[12.5px] text-muted">
+        <b className="text-ink">{all ? 'Нийт захиалга' : 'Захиалга (энэ нийлүүлэгчийн бараатай)'}</b> — Улаанбаатарын 00:00-аас; урьдчилж төлсөн нь мөнгө орсон өдөрт.
+        Төлбөр хүлээж буй, жолоочид гараагүй цуцлагдсан, он сар өдөртэй захиалга тоологдохгүй. Тооцоо харин <b className="text-ink">падааны өдрөөр</b>.
+      </p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {days.map((d) => (
+          <div key={d.date} className="flex min-w-0 flex-col gap-2 rounded-2xl border border-line bg-surface p-4">
+            <div className="flex items-baseline justify-between gap-2"><b className="text-[14px]">{d.label}</b><span className="text-[12.5px] text-subtle">{d.date.slice(5).replace('-', '/')}</span></div>
+            <div className="text-[24px] font-extrabold tracking-tight">{d.total} <span className="text-[13px] font-medium text-muted">захиалга · {money(d.amount)}</span></div>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[12.5px] text-muted">
+              <span>Хүргэсэн: <b className="text-ok-ink">{d.delivered}</b></span><span>Хүргэлтэд: <b className="text-ink">{d.onRoad}</b></span>
+              <span>Хүлээгдэж: <b className="text-ink">{d.pending}</b></span><span>Цуцалсан: <b className="text-bad-ink">{d.cancelled}</b></span>
+            </div>
+            {d.shops?.length ? (
+              <div className="flex flex-col gap-1 border-t border-line pt-2 text-[12.5px]">
+                {d.shops.map((x) => (
+                  <div key={x.id} className="flex min-w-0 items-baseline justify-between gap-2">
+                    <span className="min-w-0 break-words text-muted">{x.name}</span>
+                    <b className="shrink-0">{x.total} · {money(x.amount)}</b>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -98,7 +111,7 @@ function AdminOverview({ onOpen }: { onOpen: (id: number) => void }) {
             <Stat label="Өнөөдрийн борлуулалт" value={money(d.stats.todaySales)} />
             <Stat label="Нийт төлөх үлдэгдэл" value={money(d.stats.balance)} tone="accent" />
           </div>
-          <OrderDays days={d.orderDays} />
+          <OrderDays days={d.orderDays} all />
           <div className="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface">
             {d.shops.length === 0 ? <p className="p-6 text-center text-[14px] text-muted">Дэлгүүр бүртгэгдээгүй — «+ Дэлгүүр нэмэх»</p> : null}
             {d.shops.map((s) => (

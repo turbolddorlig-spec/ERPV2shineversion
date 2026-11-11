@@ -329,30 +329,45 @@ export async function rangeSummary(actor: UserActor, shopIdIn: unknown, fromIn: 
   };
 }
 
-/** Захиалгын товч (хуучин «Өнөөдөр / Өчигдөр / Уржигдар»): авсан огноогоор, тухайн дэлгүүрийн одоогийн бараа агуулсан */
-async function orderStats(tx: Tx | typeof db, shopIds: number[]) {
+/**
+ * «Өнөөдөр / Өчигдөр / Уржигдар» захиалга (#102): захиалгын «өдөр» = баталгаажсан мөч (энгийн — үүссэн, урьдчилж төлсөн — мөнгө орсон; хуучин шиг),
+ * Улаанбаатарын 00:00-аас. Тоолохгүй: «Төлбөр хүлээж буй», «Шинэ» байгаад (жолоочид гараагүй) цуцлагдсан, он сар өдөртэй.
+ * shopId = null → компанийн нийт (дүн = захиалгын нийт дүн) + нийлүүлэгч тус бүр; shopId → зөвхөн тэр нийлүүлэгчийн бараатай (дүн = түүний бараа).
+ */
+export interface OrderDay { label: string; date: string; total: number; delivered: number; cancelled: number; onRoad: number; pending: number; amount: number; shops?: { id: number; name: string; total: number; amount: number }[] }
+async function orderStats(tx: Tx | typeof db, shopId: number | null, shops: { id: number; name: string }[] = []): Promise<OrderDay[]> {
   const today = ubDay();
   const labels = ['Өнөөдөр', 'Өчигдөр', 'Уржигдар'];
-  const out = [];
+  const out: OrderDay[] = [];
   for (let i = 0; i < 3; i++) {
     const d = addDays(today, -i);
-    const empty = { label: labels[i]!, date: d, total: 0, delivered: 0, cancelled: 0, onRoad: 0, pending: 0, amount: 0 };
-    if (!shopIds.length) { out.push(empty); continue; }
-    const [r] = await tx.$queryRaw<{ total: number; delivered: number; cancelled: number; onRoad: number; pending: number; amount: number }[]>`
+    const t0 = ubDayStart(d); const t1 = ubDayStart(addDays(d, 1));
+    const counted = Prisma.sql`o."confirmedAt" >= ${t0} AND o."confirmedAt" < ${t1} AND o.status <> 'PENDING_PAYMENT'
+      AND NOT (o.status = 'CANCELLED' AND o."outForDeliveryAt" IS NULL) AND o."deliveryDate" <= ${dateOnly(addDays(d, 1))}::date`;
+    const amountSql = shopId === null
+      ? Prisma.sql`o.total`
+      : Prisma.sql`(SELECT sum(l.qty * l."unitPrice") FROM "OrderLine" l JOIN "SupplierProduct" a ON a."productId" = l."productId" AND a."shopId" = ${shopId} AND a."fromDate" <= ${dateOnly(d)}::date AND (a."toDate" IS NULL OR a."toDate" > ${dateOnly(d)}::date) WHERE l."orderId" = o.id)`;
+    const [r] = await tx.$queryRaw<Omit<OrderDay, 'label' | 'date'>[]>`
       SELECT count(*)::int AS total,
-             count(*) FILTER (WHERE o.status = 'DELIVERED')::int AS delivered,
-             count(*) FILTER (WHERE o.status = 'CANCELLED')::int AS cancelled,
-             count(*) FILTER (WHERE o.status IN ('ASSIGNED', 'OUT_FOR_DELIVERY'))::int AS "onRoad",
-             count(*) FILTER (WHERE o.status IN ('NEW', 'PENDING_PAYMENT'))::int AS pending,
+             count(*) FILTER (WHERE x.status = 'DELIVERED')::int AS delivered,
+             count(*) FILTER (WHERE x.status = 'CANCELLED')::int AS cancelled,
+             count(*) FILTER (WHERE x.status IN ('ASSIGNED', 'OUT_FOR_DELIVERY'))::int AS "onRoad",
+             count(*) FILTER (WHERE x.status = 'NEW')::int AS pending,
              coalesce(sum(x.amount), 0)::int AS amount
-      FROM "Order" o
-      JOIN LATERAL (
-        SELECT sum(l.qty * l."unitPrice") AS amount FROM "OrderLine" l
-        JOIN "SupplierProduct" a ON a."productId" = l."productId" AND a."toDate" IS NULL AND a."shopId" = ANY(${shopIds}::int[])
-        WHERE l."orderId" = o.id
-      ) x ON x.amount IS NOT NULL
-      WHERE o."createdAt" >= ${ubDayStart(d)} AND o."createdAt" < ${ubDayStart(addDays(d, 1))}`;
-    out.push({ ...empty, ...r });
+      FROM (SELECT o.status, ${amountSql} AS amount FROM "Order" o WHERE ${counted}) x
+      ${shopId === null ? Prisma.empty : Prisma.sql`WHERE x.amount IS NOT NULL`}`;
+    const day: OrderDay = { label: labels[i]!, date: d, ...r! };
+    if (shopId === null && shops.length) {
+      const per = await tx.$queryRaw<{ shopId: number; total: number; amount: number }[]>`
+        SELECT a."shopId", count(DISTINCT o.id)::int AS total, coalesce(sum(l.qty * l."unitPrice"), 0)::int AS amount
+        FROM "Order" o JOIN "OrderLine" l ON l."orderId" = o.id
+        JOIN "SupplierProduct" a ON a."productId" = l."productId" AND a."fromDate" <= ${dateOnly(d)}::date AND (a."toDate" IS NULL OR a."toDate" > ${dateOnly(d)}::date)
+        WHERE ${counted} AND a."shopId" = ANY(${shops.map((x) => x.id)}::int[])
+        GROUP BY 1`;
+      const m = new Map(per.map((x) => [x.shopId, x]));
+      day.shops = shops.map((x) => ({ id: x.id, name: x.name, total: m.get(x.id)?.total ?? 0, amount: m.get(x.id)?.amount ?? 0 }));
+    }
+    out.push(day);
   }
   return out;
 }
@@ -391,7 +406,7 @@ export async function overview(actor: UserActor) {
   }
   return {
     stats: { activeShops: shops.filter((s) => s.isActive).length, monthSales, monthNet, todaySales, todayNet, balance },
-    orderDays: await orderStats(db, shops.filter((s) => s.isActive).map((s) => s.id)),
+    orderDays: await orderStats(db, null, shops.filter((s) => s.isActive).map((s) => ({ id: s.id, name: s.name }))),
     shops: rows, isSuperAdmin: isSA(actor), today, defaults: await getDefaults(db),
   };
 }
@@ -424,7 +439,7 @@ export async function shopDetail(actor: UserActor, shopIdIn?: unknown) {
     openDays: b.days.filter((d) => d.status === OPEN),
     transferredDays: b.days.filter((d) => d.status === DONE),
     adjustments: adjAll.map((a) => adjView(a, ad)),
-    orderDays: await orderStats(db, [shop.id]),
+    orderDays: await orderStats(db, shop.id),
     login,
   };
 }

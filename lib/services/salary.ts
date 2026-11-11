@@ -186,7 +186,8 @@ async function computeInputs(tx: Tx | typeof db, st: Staff, p: Period) {
   let orderCount = 0;
   if (!st.external && cfg.salaryType === 'ORDER_BASED' && isOpp) {
     // Хуучин шиг: тухайн хугацаанд АВСАН (үүссэн), хүргэгдсэн эсвэл мөнгө орсон захиалга — ажилтны дугаараар
-    orderCount = await tx.order.count({ where: { operatorId: st.userId!, createdAt: { gte: ubDayStart(p.start), lt: ubDayStart(addDays(p.end, 1)) }, OR: [{ status: 'DELIVERED' }, { prepaid: true, status: { in: ['NEW', 'ASSIGNED', 'OUT_FOR_DELIVERY'] } }] } });
+    // Хуучин шиг (#102): захиалгын «өдөр» = баталгаажсан мөч (энгийн — үүссэн; урьдчилж төлсөн — мөнгө орсон)
+    orderCount = await tx.order.count({ where: { operatorId: st.userId!, confirmedAt: { gte: ubDayStart(p.start), lt: ubDayStart(addDays(p.end, 1)) }, OR: [{ status: 'DELIVERED' }, { prepaid: true, status: { in: ['NEW', 'ASSIGNED', 'OUT_FOR_DELIVERY'] } }] } });
   }
   // Торгууль: хасагдаагүй үлдэгдэл (энэ хугацаа + өмнөхөөс үлдсэн), ролын төрлөөр; «Хаяг тодорхойгүй» хасна (хуучин шиг)
   const ptype = st.external ? null : st.roles.map((r) => ROLE_PENALTY[r]).find(Boolean) ?? null;

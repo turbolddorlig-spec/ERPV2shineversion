@@ -277,7 +277,8 @@ describe('хайлт, үйлчлүүлэгчийн карт, цагийн мэд
     const day0 = U.ubDayStart(U.ubDay()).getTime();
     const at = async (phone: string, ubHour: number, over: Record<string, unknown> = {}) => {
       const { order } = await O.createOrder(op, ub({ phone, ...over }));
-      await db.order.update({ where: { id: order.id }, data: { createdAt: new Date(day0 + ubHour * 3_600_000) } });
+      // энгийн захиалгад баталгаажсан мөч = үүссэн мөч (#102: цагийн мэдээ баталгаажсан мөчөөр)
+      await db.order.update({ where: { id: order.id }, data: { createdAt: new Date(day0 + ubHour * 3_600_000), ...(order.confirmedAt ? { confirmedAt: new Date(day0 + ubHour * 3_600_000) } : {}) } });
       return order;
     };
     await at('88000001', 9.5);    // 09:30 → 11:00
