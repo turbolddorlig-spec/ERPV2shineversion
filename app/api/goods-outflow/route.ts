@@ -17,6 +17,7 @@ export async function GET(req: NextRequest) {
       case 'ids': return json(await S.filteredIds(ctx.actor, tp));
       case 'alerts': return json(await S.alertsView(ctx.actor));
       case 'pages': return json(await S.productPages(ctx.actor, g('id')));
+      case 'variants': return json(await S.productVariants(ctx.actor, g('id')));
       case 'pageboard': return json(await S.pageBoard(ctx.actor));
       case 'stats': return json(await S.stats(ctx.actor, g('from'), g('to')));
       case 'work': return json(await S.workWindow(ctx.actor, { tab: g('tab'), q: g('q'), page: Number(g('page') ?? 1) }));

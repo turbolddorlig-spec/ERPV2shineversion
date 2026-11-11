@@ -1,6 +1,6 @@
 'use client';
 import clsx from 'clsx';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
@@ -27,7 +27,7 @@ const STATUS: Record<Status, { icon: string; label: string; cls: string }> = {
 };
 interface Row {
   id: number; code: string; name: string; price: number; dollar: number; zones: number; adNumber: number | null; ownerId: string | null; ownerName: string | null;
-  doneAt: string | null; doneByName: string | null; note: string; daily: number[]; weekTotal: number; avg: number; phones: number[]; phoneWeek: number;
+  doneAt: string | null; doneByName: string | null; note: string; daily: number[]; weekTotal: number; avg: number; phones: number[]; phoneWeek: number; variantCount: number;
   stock?: { total: number; available: number; driver: number }; alert?: 'RED' | 'ORANGE' | null; profit?: { status: Status | null; perUnit: number | null } | null;
   alertInfo?: { level: 'RED' | 'ORANGE'; reasons: string[]; pages: { name: string; n: number }[]; watchedUntil: string | null; watchedBy: string | null } | null;
 }
@@ -55,6 +55,8 @@ export function OutflowClient() {
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [dlg, setDlg] = useState<null | { k: 'alert'; row: Row } | { k: 'edit'; row: Row } | { k: 'profit'; id: number } | { k: 'bulk'; ids: number[] } | { k: 'pages' | 'stats' | 'work' | 'my' | 'eval' | 'config' }>(null);
   const [menu, setMenu] = useState(false);
+  const [open, setOpen] = useState<Set<number>>(new Set());
+  const toggle = (id: number) => { const n = new Set(open); if (n.has(id)) n.delete(id); else n.add(id); setOpen(n); };
   const [hover, setHover] = useState<{ id: number; x: number; y: number } | null>(null);
   useEffect(() => { const t = setTimeout(() => setQd(q), 300); return () => clearTimeout(t); }, [q]);
   const params = useMemo(() => new URLSearchParams({ tab, q: qd, zone, owner, dollar, status, sort, dir, page: String(page) }).toString(), [tab, qd, zone, owner, dollar, status, sort, dir, page]);
@@ -139,11 +141,14 @@ export function OutflowClient() {
                 <th className="px-1.5 py-2 text-left">Хариуцагч</th><th className="px-2 py-2 text-right">⚠</th>
               </tr></thead>
               <tbody>
-                {d.rows.map((r) => (
-                  <tr key={r.id} className={clsx('border-t border-line', r.alert === 'RED' && 'shadow-[inset_3px_0_0_var(--bad)]', r.alert === 'ORANGE' && 'shadow-[inset_3px_0_0_var(--warn-ink)]')}>
+                {d.rows.map((r) => (<Fragment key={r.id}>
+                  <tr className={clsx('border-t border-line', r.alert === 'RED' && 'shadow-[inset_3px_0_0_var(--bad)]', r.alert === 'ORANGE' && 'shadow-[inset_3px_0_0_var(--warn-ink)]')}>
                     {d.isLead ? <td className="px-2"><input type="checkbox" aria-label={`${r.name} сонгох`} checked={sel.has(r.id)} onChange={(e) => { const n = new Set(sel); if (e.target.checked) n.add(r.id); else n.delete(r.id); setSel(n); }} /></td> : null}
                     <td className="w-[160px] min-w-[160px] max-w-[160px] px-2 py-1.5" onMouseEnter={(e) => setHover({ id: r.id, x: e.clientX, y: e.clientY })} onMouseLeave={() => setHover(null)}>
-                      <div title={r.name} className="line-clamp-2 [overflow-wrap:anywhere] font-semibold">{r.name}</div>
+                      <div className="flex items-start gap-1">
+                        {r.variantCount > 1 ? <button type="button" data-variants={r.id} aria-label={`${r.name} өнгө, хэмжээгээр`} aria-expanded={open.has(r.id)} onClick={() => toggle(r.id)} className="mt-0.5 h-5 w-5 shrink-0 rounded text-[12px] text-muted hover:bg-surface2">{open.has(r.id) ? '▾' : '▸'}</button> : null}
+                        <div title={r.name} className="line-clamp-2 min-w-0 [overflow-wrap:anywhere] font-semibold">{r.name}</div>
+                      </div>
                       <div className="[overflow-wrap:anywhere] text-[11.5px] text-muted">{r.code} · {money(r.price)}{r.doneAt ? ` · ✓ ${r.doneByName ?? ''}` : ''}</div>
                     </td>
                     <BoostCell row={r} field="dollar" post={post} />
@@ -159,6 +164,8 @@ export function OutflowClient() {
                     <td className="w-[110px] min-w-[110px] max-w-[110px] px-1.5 py-1"><div className="line-clamp-1 [overflow-wrap:anywhere] text-[12.5px] font-semibold">{r.ownerName ?? '—'}</div>{r.note ? <div title={r.note} className="line-clamp-1 [overflow-wrap:anywhere] text-[11.5px] text-muted">{r.note}</div> : null}</td>
                     <td className="px-1 py-1"><div className="flex items-center justify-end gap-1"><button type="button" aria-label={`${r.name} засах`} title="Засах" onClick={() => setDlg({ k: 'edit', row: r })} className="h-8 w-8 rounded-lg border border-line bg-surface text-[14px] hover:bg-surface2">✎</button><AlertChip r={r} onOpen={() => setDlg({ k: 'alert', row: r })} /></div></td>
                   </tr>
+                  {open.has(r.id) ? <VariantRows id={r.id} lead={d.isLead} sa={d.isSA} /> : null}
+                </Fragment>
                 ))}
               </tbody>
             </table>
@@ -174,6 +181,8 @@ export function OutflowClient() {
                 <div className="grid grid-cols-7 gap-1 text-center text-[12px]">
                   {r.daily.map((v, i) => <div key={i} className={clsx('rounded-md py-1 font-semibold', cellCls(v, r))}><div className="text-[10px] font-normal text-muted">{i === 0 ? 'Өнөө' : md(d.days[i]!)}</div>{v}</div>)}
                 </div>
+                {r.variantCount > 1 ? <button type="button" onClick={() => toggle(r.id)} className="self-start text-[12.5px] font-semibold text-accent">{open.has(r.id) ? '▾ Өнгө, хэмжээ нуух' : `▸ Өнгө, хэмжээгээр (${r.variantCount})`}</button> : null}
+                {open.has(r.id) ? <VariantCards id={r.id} days={d.days} /> : null}
                 <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
                   <span>${r.dollar} · бүүст {r.zones} · AD{r.adNumber ?? '—'}</span><span>Боломжтой {r.stock?.available ?? 0}</span>
                   {d.isSA ? (r.profit?.status ? <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className={clsx('font-bold underline', STATUS[r.profit.status].cls)}>{STATUS[r.profit.status].icon} {money(r.profit.perUnit)}</button>
@@ -203,6 +212,49 @@ export function OutflowClient() {
       {dlg?.k === 'my' ? <MyWorkDialog onClose={() => { setDlg(null); void load(); }} /> : null}
       {dlg?.k === 'eval' ? <EvalDialog onClose={() => setDlg(null)} /> : null}
       {dlg?.k === 'config' ? <ConfigDialog sa={!!d?.isSA} onClose={() => setDlg(null)} onDone={async () => { setDlg(null); setOk('Тохиргоо хадгалагдлаа'); await load(); }} /> : null}
+    </div>
+  );
+}
+
+interface VarData { days: string[]; variants: { id: number; code: string; label: string; daily: number[]; week: number; avg: number; phones: number[]; available: number }[] }
+function useVariants(id: number) {
+  const [v, setV] = useState<VarData | null>(null);
+  useEffect(() => { let on = true; api<VarData>(`/api/goods-outflow?view=variants&id=${id}`).then((x) => { if (on) setV(x); }).catch(() => null); return () => { on = false; }; }, [id]);
+  return v;
+}
+/** Өнгө / хэмжээ бүрийн догол мөр (хүснэгт) */
+function VariantRows({ id, lead, sa }: { id: number; lead: boolean; sa: boolean }) {
+  const v = useVariants(id);
+  if (!v) return <tr><td colSpan={30} className="px-8 py-1 text-[12px] text-muted">Ачаалж байна…</td></tr>;
+  return (
+    <>
+      {v.variants.map((x) => (
+        <tr key={x.id} data-variant-row className="border-t border-line/60 bg-surface2/50 text-[12px]">
+          {lead ? <td /> : null}
+          <td className="w-[160px] min-w-[160px] max-w-[160px] py-1 pl-7 pr-2"><div className="line-clamp-2 [overflow-wrap:anywhere] text-muted">↳ <b className="text-ink">{x.label}</b></div><div className="text-[10.5px] text-subtle">{x.code}</div></td>
+          <td /><td /><td />
+          {x.daily.map((n, i) => <td key={i} className="px-0.5 py-1 text-center"><div className={clsx('mx-auto w-9 rounded-md py-0.5', n ? 'font-semibold text-ink' : 'text-subtle')}>{n}</div>{x.phones[i] ? <div className="text-[10px] text-warn">☎{x.phones[i]}</div> : null}</td>)}
+          <td className="px-1 py-1 text-center font-bold">{x.week}</td>
+          <td className="hidden px-2 py-1 text-right min-[1360px]:table-cell">{x.avg}</td>
+          <td className={clsx('px-2 py-1 text-right', x.available < x.avg && 'font-bold text-bad-ink')}>{x.available}</td>
+          {sa ? <td /> : null}
+          <td /><td />
+        </tr>
+      ))}
+    </>
+  );
+}
+function VariantCards({ id, days }: { id: number; days: string[] }) {
+  const v = useVariants(id);
+  if (!v) return <p className="text-[12px] text-muted">Ачаалж байна…</p>;
+  return (
+    <div className="flex flex-col gap-1.5 border-l-2 border-line pl-2">
+      {v.variants.map((x) => (
+        <div key={x.id} className="flex min-w-0 flex-col gap-1">
+          <div className="flex justify-between gap-2 text-[12.5px]"><b className="min-w-0 [overflow-wrap:anywhere]">↳ {x.label}</b><span className="shrink-0 text-muted">7 хоног <b className="text-ink">{x.week}</b> · боломжтой {x.available}</span></div>
+          <div className="grid grid-cols-7 gap-1 text-center text-[11.5px]">{x.daily.map((n, i) => <div key={i} className="rounded bg-surface2 py-0.5"><div className="text-[9.5px] text-muted">{i === 0 ? 'Өнөө' : md(days[i]!)}</div>{n}</div>)}</div>
+        </div>
+      ))}
     </div>
   );
 }

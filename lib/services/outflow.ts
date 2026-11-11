@@ -301,7 +301,7 @@ export async function watchProduct(actor: UserActor, productIdIn: unknown) {
 export interface OutflowRow {
   id: number; code: string; name: string; price: number; imageKey: string | null;
   dollar: number; zones: number; adNumber: number | null; ownerId: string | null; ownerName: string | null; doneAt: Date | null; doneByName: string | null; note: string;
-  daily: number[]; weekTotal: number; avg: number; phones: number[]; phoneWeek: number;
+  daily: number[]; weekTotal: number; avg: number; phones: number[]; phoneWeek: number; variantCount: number;
   stock?: { total: number; available: number; driver: number };
   alert?: AlertLevel | null; profit?: { status: ProfitStatus | null; perUnit: number | null } | null;
   /** Мөрийн ард жижиг тэмдэг — дарахад дэлгэрэнгүй */
@@ -326,7 +326,7 @@ async function allRows(): Promise<OutflowRow[]> {
   const k = today;
   if (tableCache && tableCache.key === k && Date.now() - tableCache.at < 20_000) return tableCache.rows;
   const [products, pms, aggs, phones] = await Promise.all([
-    db.product.findMany({ where: { status: { not: 'ARCHIVED' } }, select: { id: true, code: true, name: true, price: true, images: { where: { isMain: true }, select: { fileKey: true }, take: 1 } } }),
+    db.product.findMany({ where: { status: { not: 'ARCHIVED' } }, select: { id: true, code: true, name: true, price: true, images: { where: { isMain: true }, select: { fileKey: true }, take: 1 }, _count: { select: { variants: { where: { isActive: true } } } } } }),
     db.productMarketing.findMany(),
     unitsByDay(from, today),
     phoneCounts(from, today),
@@ -351,7 +351,7 @@ async function allRows(): Promise<OutflowRow[]> {
       id: p.id, code: p.code, name: p.name, price: p.price, imageKey: img,
       dollar: m?.dollar ?? 5, zones: m?.zones ?? 0, adNumber: m?.adNumber ?? null, ownerId: m?.ownerId ?? null, ownerName: m?.ownerName ?? null,
       doneAt: m?.doneAt ?? null, doneByName: m?.doneByName ?? null, note: m?.note ?? '',
-      daily: d, weekTotal: week, avg: Math.round((week / 7) * 10) / 10, phones: ph.get(p.id) ?? Array(7).fill(0), phoneWeek: phW.get(p.id) ?? 0,
+      daily: d, weekTotal: week, avg: Math.round((week / 7) * 10) / 10, phones: ph.get(p.id) ?? Array(7).fill(0), phoneWeek: phW.get(p.id) ?? 0, variantCount: p._count.variants,
     } as OutflowRow;
   });
   tableCache = { at: Date.now(), key: k, rows };
@@ -434,6 +434,41 @@ async function yesterdayProfits(ids: number[]): Promise<Map<number, DayProfit>> 
   const am = new Map(aggs.map((a) => [a.productId, a]));
   for (const p of products) out.set(p.id, profitOf(cfg, p, am.get(p.id), boostCost(segs.get(p.id), ubDayStart(y).getTime(), ubDayStart(ubDay()).getTime(), cfg.rate), y));
   return out;
+}
+
+/** Өнгө / хэмжээ бүрийн 7 хоногийн гарц (догол мөр) — гарцын дүрмээр, ☎ ба үлдэгдэлтэй */
+export async function productVariants(actor: UserActor, productIdIn: unknown) {
+  assertView(actor);
+  const id = Number(productIdIn);
+  const today = ubDay(); const from = addDays(today, -6);
+  const days = Array.from({ length: 7 }, (_, i) => addDays(today, -i));
+  const [variants, rows, phones, stock] = await Promise.all([
+    db.productVariant.findMany({ where: { productId: id }, orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], select: { id: true, code: true, color: true, size: true, isActive: true } }),
+    db.$queryRaw<{ variantId: number; day: Date; qty: number }[]>`
+      SELECT l."variantId", (o."confirmedAt" + interval '8 hours')::date AS day, sum(l.qty)::int AS qty
+      FROM "Order" o JOIN "OrderLine" l ON l."orderId" = o.id
+      WHERE o."confirmedAt" >= ${ubDayStart(from)} AND o."confirmedAt" < ${ubDayStart(addDays(today, 1))} AND ${COUNTED} AND l."productId" = ${id}
+      GROUP BY 1, 2`,
+    db.$queryRaw<{ variantId: number; day: Date; n: number }[]>`
+      SELECT c."variantId", (c."createdAt" + interval '8 hours')::date AS day, count(DISTINCT c.phone)::int AS n
+      FROM "CallNote" c JOIN "ProductVariant" v ON v.id = c."variantId" AND v."productId" = ${id}
+      WHERE c."createdAt" >= ${ubDayStart(from)} AND c."createdAt" < ${ubDayStart(addDays(today, 1))}
+      GROUP BY 1, 2`,
+    productStockTotals([id]),
+  ]);
+  const di = new Map(days.map((d, i) => [d, i]));
+  const by = new Map<number, number[]>(); const ph = new Map<number, number[]>();
+  for (const r of rows) { const i = di.get(ymdOf(r.day)); if (i === undefined) continue; const a = by.get(r.variantId) ?? Array(7).fill(0); a[i] += r.qty; by.set(r.variantId, a); }
+  for (const r of phones) { const i = di.get(ymdOf(r.day)); if (i === undefined) continue; const a = ph.get(r.variantId) ?? Array(7).fill(0); a[i] += r.n; ph.set(r.variantId, a); }
+  const st = stock.get(id)?.byVariant;
+  return {
+    days,
+    variants: variants.map((v) => {
+      const daily = by.get(v.id) ?? Array(7).fill(0); const week = daily.reduce((s, n) => s + n, 0);
+      return { id: v.id, code: v.code, label: [v.color, v.size].filter(Boolean).join(' / ') || v.code, isActive: v.isActive, daily, week,
+        avg: Math.round((week / 7) * 10) / 10, phones: ph.get(v.id) ?? Array(7).fill(0), available: st?.get(v.id)?.available ?? 0 };
+    }).filter((v) => v.isActive || v.week > 0).sort((a, b) => b.week - a.week),
+  };
 }
 
 /** Нэр дээр: пэйж бүрийн сүүлийн 3 хоногийн гарц + үлдэгдэл */

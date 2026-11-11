@@ -92,6 +92,24 @@ describe('7 хоногийн гарц — тоолох дүрэм (#104)', () =>
   });
 });
 
+describe('өнгө / хэмжээгээр (догол мөр)', () => {
+  it('үндсэн мөр нийлбэр, хувилбар бүрийн гарц ба үлдэгдэл', async () => {
+    const p2 = await P.createProduct(sa, { code: 'C2', name: 'Олон өнгөтэй', price: 10000, colors: ['Хар', 'Цагаан'] });
+    const [a, b] = p2.variants.map((x) => x.id) as [number, number];
+    const wh = await db.warehouse.findFirstOrThrow();
+    await D.createReceipt(sa, { warehouseId: wh.id, lines: [{ variantId: a, qty: 10 }, { variantId: b, qty: 10 }], idemKey: randomUUID() });
+    for (const [vid, q] of [[a, 2], [b, 1]] as const) {
+      const { order } = await O.createOrder(op, { phone: String(99390000 + vid), province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 13, addressDetail: 'Тест 5-р байр', pageId: page1, lines: [{ variantId: vid, qty: q }], idemKey: randomUUID(), deliveryDate: U.ubDay(new Date(), 1) });
+      expect(order.id).toBeGreaterThan(0);
+    }
+    OF.bustTable();
+    const row = (await OF.outflowTable(mk, { q: 'Олон өнгөтэй' })).rows[0]!;
+    expect([row.daily[0], row.variantCount]).toEqual([3, 2]);
+    const v = await OF.productVariants(mk, p2.id);
+    expect(v.variants.map((x) => [x.label, x.daily[0], x.available])).toEqual([['Хар', 2, 8], ['Цагаан', 1, 9]]);
+  });
+});
+
 describe('бүүстийн ашиг ба анхааруулга (#105–#110)', () => {
   it('ширхэгийн ашиг: 5 → 6,200₮ (🟢), 7 → 💎, 2 → 🟠 (< 1,500₮), 1 → 🔴; шинэ бүүст өчигдөр алдагдалтай → 🔴; задаргаа зөвхөн СА', async () => {
     await boostAt(1, U.ubDayStart(yest)); // өчигдөр 00:00-аас 1 бүүст, $5 = 18,000₮/өдөр
