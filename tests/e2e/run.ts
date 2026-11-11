@@ -483,6 +483,39 @@ async function main() {
     check('жолоочийн хяналт: хүргэсэн 1, маргааш 1', ctl.status === 200 && me5?.delivered === 1 && me5?.postponed === 1 && ctlOp.status === 403, JSON.stringify(me5).slice(0, 160));
     const rec5 = JSON.parse((await req('/api/stock/reconcile?fresh=1', { cookie: adm.cookie })).text);
     check('Модуль 5-ын дараа тулгалт: журнал = үлдэгдэл', rec5.ok === true, JSON.stringify(rec5).slice(0, 120));
+
+    // ───── Модуль 6: нягтлан (падааны өдрөөр), тооцоо нийлэх, түгжээ, банк ─────
+    const acc6 = await loginAs('80000129');
+    const ol6 = await loginAs('80000004');
+    const today6 = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+    const inc = JSON.parse((await req(`/api/driver/income?date=${today6}`, { cookie: d5.cookie })).text);
+    check('жолоочийн «Орлого»: хүргэсэн 1, маргааш 1 (падааны өдөр)', inc.day?.delivered === 1 && inc.day?.postponed === 1 && typeof inc.day?.toReceive === 'number', JSON.stringify(inc.day ?? inc).slice(0, 160));
+    const brd = JSON.parse((await req(`/api/accounting?date=${today6}`, { cookie: acc6.cookie })).text);
+    const row6 = brd.items?.find((x: { driverId: string }) => x.driverId === free.id);
+    check('нягтлан ба жолооч ижил тоо', row6 && row6.toReceive === inc.day.toReceive && row6.salary === inc.day.salary && row6.perf === inc.day.perf, `${row6?.toReceive} ${inc.day?.toReceive}`);
+    const perms6 = await Promise.all([req('/api/accounting', { cookie: op4.cookie }), req('/api/accounting', { cookie: d5.cookie }), req('/api/driver/income', { cookie: acc6.cookie }), req('/api/accounting/salary-rules', { cookie: acc6.cookie, method: 'POST', body: {} })]);
+    check('эрх: оператор/жолооч нягтлан 403, нягтлан жолоочийн орлого 403, нягтлан цалингийн дүрэм солихгүй 403', perms6.every((x) => x.status === 403), perms6.map((x) => x.status).join(','));
+    const bad6 = await req('/api/driver/income', { cookie: d5.cookie, method: 'POST', body: { action: 'submit', date: today6, cash: 1, bank: 0, debt: 0 } });
+    check('Бэлэн+Данс+Өр ≠ Авах дүн → 400', bad6.status === 400 || inc.day.toReceive === 1, bad6.text.slice(0, 100));
+    const debtPart = inc.day.toReceive > 1000 ? 1000 : 0;
+    const sub6 = await req('/api/driver/income', { cookie: d5.cookie, method: 'POST', body: { action: 'submit', date: today6, cash: inc.day.toReceive - inc.day.bank - debtPart, bank: inc.day.bank, debt: debtPart } });
+    check('жолооч тооцоо илгээв', sub6.status === 200, sub6.text.slice(0, 120));
+    const brd2 = JSON.parse((await req(`/api/accounting?date=${today6}`, { cookie: acc6.cookie })).text);
+    const sid6 = brd2.items?.find((x: { driverId: string }) => x.driverId === free.id)?.settlement?.id;
+    const ap6 = await Promise.all([1, 2].map(() => req(`/api/accounting/settlements/${sid6}/approve`, { cookie: acc6.cookie, method: 'POST', body: {} })));
+    check('нягтлан баталгаажуулав (зэрэг 2 дарахад нэг удаа)', ap6.every((x) => x.status === 200), ap6.map((x) => x.status).join(','));
+    const led6 = JSON.parse((await req('/api/driver/company-debts', { cookie: d5.cookie })).text);
+    check('«Өр» хэсэг компанийн өрийн бүртгэлд яг 1 удаа', led6.pending?.filter((x: { kind: string }) => x.kind === 'SETTLEMENT_DEBT').length === (debtPart ? 1 : 0), JSON.stringify(led6.summary));
+    const wd6 = await req('/api/driver/income', { cookie: d5.cookie, method: 'POST', body: { action: 'withdraw', date: today6 } });
+    check('баталгаажсан тооцоог буцаахгүй → 409', wd6.status === 409, wd6.text.slice(0, 80));
+    const bkOp = await req('/api/bank/import', { cookie: op4.cookie, method: 'POST', body: { text: 'a,b,c\n2026-01-01,x,1' } });
+    const bkList = await req('/api/bank', { cookie: op4.cookie });
+    const bk = await req('/api/bank/import', { cookie: ol6.cookie, method: 'POST', body: { text: `Огноо,Утга,Дүн\n${today6},99000001 e2e,5000\n${today6},зарлага,-5000` } });
+    check('банк: оператор харна (импортлохгүй 403), ахлах оператор импортлоно, зарлага алгасна', bkOp.status === 403 && bkList.status === 200 && bk.status === 200 && JSON.parse(bk.text).debitsSkipped === 1, `${bkOp.status} ${bkList.status} ${bk.text.slice(0, 100)}`);
+    const exp6 = await req('/api/bank/export', { cookie: ol6.cookie });
+    check('банк: CSV экспорт', exp6.status === 200 && exp6.text.includes('Огноо,Утга,Дүн'), String(exp6.status));
+    const rec6 = JSON.parse((await req('/api/stock/reconcile?fresh=1', { cookie: adm.cookie })).text);
+    check('Модуль 6-ын дараа тулгалт: журнал = үлдэгдэл', rec6.ok === true, JSON.stringify(rec6).slice(0, 120));
     }
   }
 

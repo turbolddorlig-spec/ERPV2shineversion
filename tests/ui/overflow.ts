@@ -130,6 +130,17 @@ async function main() {
     { name: 'Асуудал', path: '/issues' },
     { name: 'Асуудал (шийдсэн)', path: '/issues', act: async (p) => { await p.getByText('Шийдсэн', { exact: true }).click(); await p.waitForTimeout(800); } },
     { name: 'Жолоочийн хяналт', path: '/driver-control' },
+    // Модуль 6
+    { name: 'Нягтлан', path: '/accounting' },
+    { name: 'Нягтлан: жолоочийн дэлгэрэнгүй', path: '/accounting', act: async (p) => { await p.locator('tbody button.underline').first().click(); await p.waitForTimeout(1500); } },
+    { name: 'Нягтлан: төлбөр тооцооны бүртгэл', path: '/accounting', act: async (p) => { await p.getByRole('button', { name: 'Төлбөр тооцооны бүртгэл' }).click(); await p.waitForTimeout(1000); await p.locator('dialog[open] button.w-full').first().click(); await p.waitForTimeout(1000); } },
+    { name: 'Нягтлан: OKEY', path: '/accounting', act: async (p) => { await p.getByRole('button', { name: 'OKEY', exact: true }).click(); await p.waitForTimeout(1200); } },
+    { name: 'Нягтлан: гүйцэтгэл солих', path: '/accounting', act: async (p) => { await p.getByRole('button', { name: 'Гүйцэтгэл солих' }).click(); await p.waitForTimeout(1200); } },
+    { name: 'Нягтлан: цалингийн дүрэм', path: '/accounting', act: async (p) => { await p.getByRole('button', { name: 'Цалингийн дүрэм' }).click(); await p.waitForTimeout(1200); } },
+    { name: 'Банкны импорт', path: '/bank-import' },
+    { name: 'Банкны импорт: дүн өөрчлөгдсөн', path: '/bank-import', act: async (p) => { await p.getByRole('button', { name: 'Дүн өөрчлөгдсөн' }).click(); await p.waitForTimeout(1000); } },
+    { name: 'Жолооч: орлого', path: '/driver', as: DRIVER, act: async (p) => { await p.getByRole('tab', { name: 'Орлого' }).click(); await p.waitForTimeout(1500); } },
+    { name: 'Жолооч: төлбөр тооцоо', path: '/driver', as: DRIVER, act: async (p) => { await p.getByRole('tab', { name: 'Төлбөр тооцоо' }).click(); await p.waitForTimeout(1200); } },
   ];
   let bad = 0;
   for (const width of [1440, 390]) {

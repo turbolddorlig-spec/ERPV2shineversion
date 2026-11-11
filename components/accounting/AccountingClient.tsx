@@ -187,11 +187,11 @@ export function AccountingClient() {
                     <td className="px-2.5 py-2 text-right font-bold text-ok-ink">{r.delivered}{r.partialCount ? <span className="block text-[11px] font-semibold text-warn">хэсэгчилсэн {r.partialCount}</span> : null}</td>
                     <td className={clsx('px-2.5 py-2 text-right', r.out + r.notReceived ? 'font-bold text-info' : 'text-subtle')}>{r.out + r.notReceived || ''}</td>
                     <td className="px-2.5 py-2 text-right text-bad-ink">{r.cancelled + r.excluded || ''}{r.postponed ? <span className="block text-[11px] text-warn">маргааш {r.postponed}</span> : null}{r.excluded ? <span className="block text-[11px] text-subtle">тооцохгүй {r.excluded}</span> : null}</td>
-                    <td className="px-2.5 py-2 text-right">
-                      <span className="font-bold">{pct(r.perf)}</span>
+                    <td className="px-2.5 py-2 text-right"><div className="min-w-[130px]">
+                      <span className="whitespace-nowrap font-bold">{pct(r.perf)}</span>
                       {r.perfOverride !== null ? <span className="block text-[11px] text-warn" title={r.settlement?.perfNote ?? ''}>Гараар засагдсан {pct(r.perfCalc)} → {pct(r.perfOverride)}</span> : null}
                       {!r.locked ? <button onClick={() => setPerfFor(r)} className="block w-full text-right text-[11.5px] font-semibold text-accent-ink">✏️ Засах</button> : null}
-                    </td>
+                    </div></td>
                     <td className="px-2.5 py-2 text-right whitespace-nowrap">{money(r.rate)}<span className="block text-[11px] text-subtle">{TIER_L[r.tier]}</span></td>
                     <td className="px-2.5 py-2 text-right whitespace-nowrap">{money(r.deliveredAmount)}{r.prepaidAmount ? <span className="block text-[11px] text-subtle">орон нутаг {money(r.prepaidAmount)}</span> : null}</td>
                     <td className="px-2.5 py-2 text-right whitespace-nowrap">{money(r.salary)}</td>
