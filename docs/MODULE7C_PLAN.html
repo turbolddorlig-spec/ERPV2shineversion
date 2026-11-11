@@ -1,0 +1,91 @@
+<title>Модуль 7в Төлөвлөгөө</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap">
+<style>
+/* Layout: report column; verdict → numbers → 13 sections of MASTER §13 → screenshots → owner actions */
+:root{--bg:#F5F4F0;--surface:#FFFFFF;--surface2:#EFEDE7;--line:#E1DED6;--ink:#16181D;--muted:#4D525C;--subtle:#5F646E;--accent:#C2410C;--accent-soft:#FFF1E8;--ok:#166534;--ok-bg:#E6F4EA;--warn:#92400E;--warn-bg:#FEF3C7;--font:"Onest",Inter,system-ui,sans-serif}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0E1014;--surface:#171A20;--surface2:#1D2028;--line:#2A2E38;--ink:#ECEDEF;--muted:#B0B4BD;--subtle:#9A9FA9;--accent:#FF8A4C;--accent-soft:rgba(255,122,61,.14);--ok:#86EFAC;--ok-bg:rgba(74,222,128,.13);--warn:#FCD34D;--warn-bg:rgba(251,191,36,.14);color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0E1014;--surface:#171A20;--surface2:#1D2028;--line:#2A2E38;--ink:#ECEDEF;--muted:#B0B4BD;--subtle:#9A9FA9;--accent:#FF8A4C;--accent-soft:rgba(255,122,61,.14);--ok:#86EFAC;--ok-bg:rgba(74,222,128,.13);--warn:#FCD34D;--warn-bg:rgba(251,191,36,.14);color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.6;font-variant-numeric:tabular-nums;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1000px;margin:0 auto;padding-block:36px 64px;display:flex;flex-direction:column;gap:34px}
+h1{font-size:clamp(28px,4vw,38px);font-weight:800;letter-spacing:-.03em;line-height:1.1;margin:0}
+h2{font-size:20px;font-weight:800;letter-spacing:-.02em;margin:0}
+p{margin:0;max-width:76ch}
+.eyebrow{font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--subtle)}
+.brand{font-weight:800}.brand span{color:var(--accent)}
+section{display:flex;flex-direction:column;gap:12px}
+.verdict{background:var(--ok-bg);color:var(--ok);border-radius:16px;padding:16px 18px;font-weight:700}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:2px}
+.stat b{font-size:26px;font-weight:800;letter-spacing:-.02em}
+.stat span{font-size:13px;color:var(--muted)}
+ul,ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;max-width:82ch}
+li{color:var(--muted)} li strong{color:var(--ink)}
+code{font-size:12.5px;background:var(--surface2);padding:1px 5px;border-radius:5px}
+.tablebox{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:13.5px}
+th{text-align:left;font-size:12px;font-weight:700;color:var(--muted);background:var(--surface2);padding:9px 12px;border-bottom:1px solid var(--line)}
+td{padding:9px 12px;border-bottom:1px solid var(--line);color:var(--muted);vertical-align:top}
+td:first-child{color:var(--ink);font-weight:600}
+td.n{text-align:right;font-weight:700;color:var(--ink)}
+tr:last-child td{border-bottom:0}
+.shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+figure{margin:0;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px;display:flex;flex-direction:column;gap:8px;min-width:0}
+figure img{width:100%;height:auto;max-height:520px;object-fit:contain;object-position:top;border-radius:8px;background:var(--surface2)}
+figcaption{font-size:13px;color:var(--muted);font-weight:600}
+.note{background:var(--warn-bg);color:var(--warn);border-radius:14px;padding:14px 16px;font-size:14px}
+.todo{background:var(--accent-soft);border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;gap:8px}
+footer{font-size:13px;color:var(--subtle)}
+</style>
+<div class="wrap">
+<header style="display:flex;flex-direction:column;gap:10px">
+<span class="eyebrow"><span class="brand">zahialga<span>•</span></span> · ERP V2 · Модуль 7в · Төлөвлөгөө (батлуулахаар)</span>
+<h1>Нийлүүлэгч (гадны дэлгүүр)</h1>
+<p style="color:var(--muted)">2026.11.11 · Хуучин ERP-ийн «Гадны дэлгүүр удирдлага» (/s) бүх кодыг уншсан дүн. Таны заавар: хуучин логикийг 100% хуулна, танд хохиролтой алдааг олж засна. Таныг «Модуль 7в-ын төлөвлөгөөг зөвшөөрч байна» гэж бичихээс өмнө код бичихгүй.</p>
+</header>
+<section><h2>1. Хуучин логик (хэвээр үлдэнэ)</h2><div class="tablebox"><table>
+<tr><th>Хэсэг</th><th>Хуучин ERP-д</th></tr>
+<tr><td>Дэлгүүр</td><td>Нэр, холбогдох хүн, утас; идэвхтэй / идэвхгүй</td></tr>
+<tr><td>Бараа хувиарлах</td><td>Манай барааны жагсаалтаас хайж дэлгүүрт оноох / хасах</td></tr>
+<tr><td>Суутгалын тохиргоо</td><td>Бараа бүрт <b>1 ширхэгээс</b> хасах: Опп зардал, Хүргэлт, Маркетинг, Бусад (тайлбартай)</td></tr>
+<tr><td>Өдрийн тооцоо</td><td>Бараа бүрээр: хүргэсэн тоо, цуцалсан тоо, борлуулалт, 4 суутгал (тоо × тохиргоо), <b>цэвэр дүн = борлуулалт − суутгал</b>. Суутгалыг тухайн өдөрт гараар засаж болно (засварласан мөр тэмдэглэгдэнэ). Хадгалах → «Шилжүүлсэн»</td></tr>
+<tr><td>Нэгтгэл</td><td>Огнооны хүрээгээр: нийт борлуулалт, суутгал, цэвэр дүн, өдөр бүрийн мөр, шилжүүлсэн эсэх</td></tr>
+<tr><td>Самбар</td><td>Идэвхтэй дэлгүүр, энэ сарын / өнөөдрийн борлуулалт; Өнөөдөр / Өчигдөр / Уржигдарын захиалга (хүргэсэн, бэлэн, хүлээгдэж, цуцалсан)</td></tr>
+<tr><td>Буцаалт</td><td>Хүргэсний дараа цуцлагдсан захиалга → «Буцаана уу» / «Авсан»</td></tr>
+<tr><td>Нийлүүлэгчийн хуудас</td><td>Нийлүүлэгч өөрөө нэвтэрч зөвхөн өөрийн өдрийн тооцоо, нэгтгэл, буцаалт, «Таны авах дүн»-г харна (өөрчлөхгүй)</td></tr>
+<tr><td>Эрх</td><td>Удирдах — Супер админ, Админ; харах — тухайн нийлүүлэгч</td></tr>
+</table></div></section>
+<section><h2>2. Таны шийдвэр (#96)</h2><ol>
+<li><strong>Өдөр = падааны өдөр</strong> (Тооцоо хуудас шиг, B1). Падаанд орсон захиалгаас <b>хүргэгдсэн</b> барааг тэр өдөрт тооцно. Хэсэгчилсэн хүргэлтэд зөвхөн авсан тоо. Нэг өдрийн бүх захиалга дууссаны дараа л хадгалж, шилжүүлнэ — дүн дараа нь өөрчлөгдөхгүй.</li>
+<li><strong>Хөнгөлөлтийг нийлүүлэгч өөрийн бараандаа хариуцна</strong> — та өөрийн авах ёстой мөнгөө бүрэн авна. Бараан дээрх хямдрал аль хэдийн борлуулах үнэд орсон; захиалга бүхэлдээ хөнгөлсөн бол тэр дүнг барааны үнийн жингээр хувааж, нийлүүлэгчийн барааны хэсгийг түүний борлуулалтаас хасна. Хүргэлтийн төлбөр нийлүүлэгчид орохгүй (хуучин шиг).</li>
+<li><strong>Шилжүүлсэн өдөр түгжигдэнэ.</strong> Түүнээс хойш тэр өдрийн захиалга буцаагдвал (хүргэсний дараа цуцалсан) буцаалт <b>автоматаар</b> бүртгэгдэж, <b>зөвхөн нийлүүлэгчийн барааны дүнгээр</b> (суутгалын хамт тооцоолсон цэвэр дүнгээр) дараагийн шилжүүлэх дүнгээс хасагдана. Шалтгааныг (захиалгын дугаар, бараа, тоо, огноо, яагаад) <b>танд ч, нийлүүлэгчид ч</b> харуулна.</li>
+<li><strong>Нийлүүлэгч өөрөө нэвтэрч харна</strong> — хуучин шиг, зөвхөн өөрийнхөө.</li>
+</ol></section>
+<section><h2>3. Танд хохиролтой хуучин алдаа (засна)</h2><div class="note"><ol>
+<li><b>Нэг барааг 2 дэлгүүрт оноож болдог байсан</b> → нэг барааны мөнгийг хоёр нийлүүлэгчид давхар төлөх эрсдэл. V2: нэг бараа зөвхөн нэг нийлүүлэгчид.</li>
+<li><b>Хөнгөлөлтийг та бүхэлд нь төлдөг байсан</b> (нийлүүлэгчид хөнгөлөлтгүй үнээр) → засна (#96-2).</li>
+<li><b>Хэсэгчилсэн хүргэлтэд захиалсан бүх тоог тооцох</b> байсан (үйлчлүүлэгч авалгүй буцаасан барааны мөнгийг ч төлнө) → зөвхөн хүлээж авсан тоо.</li>
+<li><b>Буцаалтын дүн захиалгын нийт дүнгээр</b> (таны бараа + хүргэлтийн төлбөр орсон) — нийлүүлэгчтэй маргаан үүсгэнэ; бас гараар «хайх» дарахгүй бол олддоггүй → автомат, зөв дүнгээр, дараагийн шилжүүлэгээс хасна.</li>
+<li><b>Шилжүүлсэн өдрийн дүн дараа өөрчлөгддөг</b> байсан (дахин хадгалахад) → давхар / дутуу төлөх → түгжинэ.</li>
+<li><b>Дүнг хөтөч бодоод илгээдэг</b> (тоо, борлуулалтыг өөрчилж илгээх боломжтой) → сервер бодно; гараар зөвхөн суутгал засна, түүхэнд бичигдэнэ.</li>
+<li><b>Нийлүүлэгчийн нууц үгийг ил текстээр</b> хадгалдаг, хуудсыг програмд бичигдсэн нууц үгээр (бүгдэд ижил) хаадаг байсан → энгийн нэвтрэлт, нууц үг зөвхөн шифрлэгдсэн hash.</li>
+<li><b>Өдөр UTC-ээр</b> (өглөө 8 цагаас өмнөх захиалга өмнөх өдөрт) → Улаанбаатарын цагаар.</li>
+<li><b>Барааг кодоор холбодог</b> (код солигдвол тооцоо алга болно), бараа хассан даруйд хадгалаагүй өдрүүдийн борлуулалт алга болдог → барааны дугаараар (id), хувиарласан / хассан огноотой.</li>
+<li><b>Түүх бичигддэггүй</b> (хэн суутгал засав, хэн шилжүүлсэн гэж тэмдэглэв) → бүх үйлдэл түүхэнд.</li>
+<li><b>Бүх цуцлагдсан захиалгыг нэг дор уншдаг</b> → 1 сая захиалгад гацна → индекстэй хайлт, хуудаслалт.</li>
+<li>«Хугацааны тооцоо» хүснэгт хуучинд үүсгэх товчгүй (ашиглагддаггүй) байсан тул «Төлөгдөөгүй» дүн үргэлж буруу → V2-д шилжүүлээгүй өдрүүдийн дүн + хасагдаагүй буцаалт = «Төлөх үлдэгдэл».</li>
+</ol></div></section>
+<section><h2>4. Хуудас</h2><ul>
+<li><strong>Нийлүүлэгч (/supplier)</strong> — Супер админ, Админ: самбар (идэвхтэй дэлгүүр, энэ сар, өнөөдөр, нийт төлөх үлдэгдэл, 3 өдрийн захиалга), дэлгүүрийн жагсаалт, «+ Дэлгүүр нэмэх».</li>
+<li><strong>Дэлгүүрийн цонх</strong> табууд: Бараа (хувиарлах, суутгалын тохиргоо) · Тооцоо (Өдрийн тооцоо / Нэгтгэл / Шилжүүлсэн түүх) · Буцаалт · Нэвтрэх эрх.</li>
+<li><strong>Өдрийн тооцоо:</strong> падааны өдөр сонгоно → бараа бүрийн мөр; өмнөх буцаалтын хасалт тусдаа мөрөөр; доор «Шилжүүлэх дүн»; Хадгалах / «Шилжүүлсэн» (түгжинэ).</li>
+<li><strong>Нийлүүлэгчийн хуудас</strong> (утсанд тохиромжтой): самбар, өдрийн тооцоо, нэгтгэл, буцаалт ба хасалтын тайлбар.</li>
+<li>Барааны үлдэгдэлд <b>огт хүрэхгүй</b> — зөвхөн захиалгын мэдээллээс тооцно.</li>
+</ul></section>
+<section><h2>5. Тест</h2><p style="color:var(--muted)">Падааны өдрөөр тооцох, хэсэгчилсэн хүргэлт, хөнгөлөлтийн хуваарилалт, суутгал (тохиргоо ба гараар), нэг бараа нэг нийлүүлэгч, түгжээ, автомат буцаалт ба дараагийн шилжүүлгээс хасах, нийлүүлэгч зөвхөн өөрийнхийг харах, эрх (403), урт текст, 150 хэрэглэгч, Docker.</p></section>
+<div class="todo"><b>Танаас:</b> зөвшөөрвөл «Модуль 7в-ын төлөвлөгөөг зөвшөөрч байна» гэж чатад бичнэ үү.</div>
+<footer>Хуучин ERP-д хүрээгүй (зөвхөн кодыг уншсан).</footer>
+</div>
+</body></html>
