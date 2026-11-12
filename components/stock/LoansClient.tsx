@@ -113,7 +113,6 @@ function LoanCard({ loan: l, can, selfId, whs, busy, run }: {
   const [ded, setDed] = useState<Record<number, string>>({});
   const [retKey, setRetKey] = useState(newKey);
   const [reject, setReject] = useState(false);
-  const [charge, setCharge] = useState(false);
   const whSel = wh || primary;
 
   const open = (m: 'issue' | 'return') => { setMode(m); setQty(Object.fromEntries(l.lines.map((x) => [x.variantId, String(m === 'issue' ? x.qty : x.outstanding)]))); };
@@ -154,7 +153,7 @@ function LoanCard({ loan: l, can, selfId, whs, busy, run }: {
           </li>
         ))}
       </ul>
-      {l.status === 'ISSUED' && l.deductionDue > 0 ? <p className="text-[13.5px] font-semibold">Буцаагаагүй бол цалингаас: <span className="text-bad-ink">{money(l.deductionDue)}</span></p> : null}
+      {l.status === 'ISSUED' && l.deductionDue > 0 ? <p className="text-[13.5px] font-semibold">Буцаагаагүй бол цалингаас: <span className="text-bad-ink">{money(l.deductionDue)}</span> <span className="font-normal text-muted">(цалин бодоход автоматаар орж, цалин түгжихэд суутгагдана)</span></p> : null}
 
       {mode ? (
         <div className="flex flex-wrap items-end gap-2 rounded-xl bg-surface2 p-3">
@@ -175,15 +174,10 @@ function LoanCard({ loan: l, can, selfId, whs, busy, run }: {
           {l.status === 'REQUESTED' && l.staffId === selfId ? <Button variant="danger" loading={busy} onClick={() => run(() => post('cancel', {}), 'Хүсэлт цуцлагдлаа')}>Цуцлах</Button> : null}
           {l.status === 'REQUESTED' && can.operate ? <><Button variant="danger" onClick={() => setReject(true)}>Татгалзах</Button><Button variant="primary" onClick={() => open('issue')}>Олгох</Button></> : null}
           {l.status === 'ISSUED' && can.operate ? <Button variant="dark" onClick={() => open('return')}>Буцаалт хүлээн авах</Button> : null}
-          {l.status === 'ISSUED' && can.finance && l.outstandingQty > 0 ? <Button variant="primary" onClick={() => setCharge(true)}>Цалингаас суутгах</Button> : null}
         </div>
       )}
       <ReasonModal open={reject} title="Зээлийн хүсэлт татгалзах" label="Шалтгаан" confirmText="Татгалзах" busy={busy} onCancel={() => setReject(false)}
         onConfirm={async (note) => { if (await run(() => post('reject', { note }), 'Татгалзлаа')) setReject(false); }} />
-      <Modal open={charge} onClose={() => setCharge(false)} title="Цалингаас суутгах"
-        footer={<><Button onClick={() => setCharge(false)}>Болих</Button><Button variant="primary" loading={busy} onClick={async () => { if (await run(() => post('charge', {}), `${l.staffName}-ийн цалингаас ${money(l.deductionDue)} суутгана`)) setCharge(false); }}>Батлах</Button></>}>
-        <p className="text-[14.5px]"><strong>{l.staffName}</strong> буцаагаагүй <strong>{l.outstandingQty}</strong> ширхэг барааг цалингаас суутгана: <strong className="text-bad-ink">{money(l.deductionDue)}</strong>. Бараа ажилтны гараас хасагдаж, зээл хаагдана.</p>
-      </Modal>
     </li>
   );
 }

@@ -164,15 +164,10 @@ export async function setLoanDeduction(actor: UserActor, idInput: unknown, input
   return loadLoan(db, id);
 }
 
-/** Буцаагаагүй барааг «Цалингаас суутгах» — бараа ажилтны гараас хасагдаж, зээл хаагдана */
-export async function chargeLoan(actor: UserActor, idInput: unknown, input: { note?: unknown }) {
-  requireRole(canLoanFinance(actor.roles), 'Цалингийн суутгалыг Супер админ, Нягтлан тэмдэглэнэ');
-  const id = cleanId(idInput, 'Зээл');
-  const note = cleanNote(input.note);
-  return inTx((tx) => chargeLoanTx(tx, actor, id, note));
-}
-
-/** Модуль 7б: цалин цоожлоход ч ашиглана (эрхийг дуудагч шалгана) */
+/**
+ * Буцаагаагүй барааг цалингаас суутгах — ЗӨВХӨН цалин түгжихэд (Модуль 7б). Аудит №7 (эзний шийдвэр): зээлийн хуудасны тусдаа
+ * «Цалингаас суутгах» товч хасагдсан — бараа хасагдаад мөнгө цалинд хүрдэггүй байв. Эрхийг дуудагч шалгана.
+ */
 export async function chargeLoanTx(tx: Prisma.TransactionClient, actor: UserActor, id: number, note: string | null) {
   {
     const l = await loadLoan(tx, id);

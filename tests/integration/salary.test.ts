@@ -140,6 +140,36 @@ describe('цоож: торгууль, зээл, өр — давхардахгү�
     expect((await db.penalty.aggregate({ _sum: { deductedAmount: true } }))._sum.deductedAmount).toBe(7000);
   });
 
+  it('аудит №6: хадгалсны дараа зээлийн бараа буцаасан / суутгал өөрчилсөн бол түгжихгүй — дахин хадгалахад зөв дүнгээр суутгана', async () => {
+    const key = `u:${op.id}`;
+    await S.setConfig(acc, { staffKey: key, baseSalary: 1_000_000 });
+    const prod = await P.createProduct(sa, { code: 'L6', name: 'Бараа', price: 20000 });
+    const v = prod.variants[0]!.id;
+    const whId = (await W.createWarehouse(sa, { name: 'Төв' })).id;
+    await D.createReceipt(wh, { warehouseId: whId, lines: [{ variantId: v, qty: 10 }], idemKey: randomUUID() });
+    const loan = await LN.requestLoan(op, { lines: [{ variantId: v, qty: 2 }], idemKey: randomUUID() });
+    await LN.issueLoan(wh, loan.loan.id, { warehouseId: whId });
+    const half = Number(U.ubDay().slice(8)) <= 15 ? 1 : 2;
+    const r = await S.saveSalary(acc, { staffKey: key, ym, half, baseSalary: 500_000, loanIds: [loan.loan.id] });
+    expect([r.loanTotal, r.transferSalary]).toEqual([30_000, 470_000]);
+    // хадгалсны дараа агуулах 1 ширхгийг буцааж авлаа
+    await LN.returnLoan(wh, loan.loan.id, { warehouseId: whId, lines: [{ variantId: v, qty: 1 }], idemKey: randomUUID() });
+    await err(S.lockSalary(adm, r.id), 409, 'stale');
+    expect((await db.staffLoan.findUniqueOrThrow({ where: { id: loan.loan.id } })).status).toBe('ISSUED'); // юу ч хөдлөөгүй
+    expect(await db.stockMove.count({ where: { type: 'LOAN_CHARGE' } })).toBe(0);
+    // суутгалын дүн өөрчлөгдсөн ч мөн адил
+    const r2 = await S.saveSalary(acc, { staffKey: key, ym, half, baseSalary: 500_000, loanIds: [loan.loan.id], version: (await db.staffSalaryRecord.findUniqueOrThrow({ where: { id: r.id } })).version });
+    expect([r2.loanTotal, r2.transferSalary]).toEqual([15_000, 485_000]);
+    await LN.setLoanDeduction(acc, loan.loan.id, { variantId: v, deduction: 12_000 });
+    await err(S.lockSalary(adm, r.id), 409, 'stale');
+    const r3 = await S.saveSalary(acc, { staffKey: key, ym, half, baseSalary: 500_000, loanIds: [loan.loan.id] });
+    expect([r3.loanTotal, r3.transferSalary]).toEqual([12_000, 488_000]);
+    await S.lockSalary(adm, r.id);
+    const mv = await db.stockMove.findMany({ where: { type: 'LOAN_CHARGE' } });
+    expect(mv.map((m) => m.qty)).toEqual([1]);
+    expect((await V.reconcile(sa, { fresh: true })).ok).toBe(true);
+  });
+
   it('зээлсэн бараа «Бараа зээл»-тэй: хөнгөлөлттэй үнээр, цоожлоход «Цалингаас суутгасан» (барааны журналаар, тулгалт 0), дахин суутгагдахгүй; ажилтны өр хэсэгчлэн', async () => {
     const key = `u:${op.id}`;
     await S.setConfig(acc, { staffKey: key, baseSalary: 1_000_000 });

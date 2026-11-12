@@ -254,8 +254,9 @@ describe('бараа зээл (#38)', () => {
     // хямдрал / суутгал засах — СА, нягтлан
     await err(L.setLoanDeduction(wh, loan.id, { variantId: v1, deduction: 4000 }), 403);
     await L.setLoanDeduction(acc, loan.id, { variantId: v1, deduction: 4000 });
-    await err(L.chargeLoan(wh, loan.id, {}), 403);
-    const ch = await L.chargeLoan(acc, loan.id, { note: '11-р сарын цалингаас' });
+    // Аудит №7: зээлийн хуудаснаас тусдаа «Цалингаас суутгах» байхгүй — зөвхөн цалин түгжихэд (chargeLoanTx)
+    expect((L as Record<string, unknown>).chargeLoan).toBeUndefined();
+    const ch = await db.$transaction((tx) => L.chargeLoanTx(tx, acc, loan.id, '11-р сарын цалингаас'));
     expect(ch.amount).toBe(2 * 4000);
     l = await L.getLoan(mk, loan.id);
     expect(l).toMatchObject({ status: 'CLOSED', outstandingQty: 0 });

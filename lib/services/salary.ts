@@ -330,10 +330,18 @@ export async function lockSalary(actor: UserActor, idIn: unknown) {
       left -= a;
     }
     // Зээлсэн бараа: «Цалингаас суутгах» (Бараа зээлтэй ижил — барааны журналаар, давхардахгүй)
-    const loanIds = ((r.loans as { loanId: number }[]) ?? []).map((l) => l.loanId).filter((lid) => !prev.loansCharged.includes(lid));
-    for (const lid of loanIds) {
-      const res = await chargeLoanTx(tx, actor, lid, `Цалингаас суутгав — ${st.name} ${r.periodLabel}`);
-      if (res.duplicate) throw conflict(`Зээл #${lid} аль хэдийн хаагдсан — цалинг дахин хадгална уу`, 'stale');
+    const saved = ((r.loans as { loanId: number; amount: number }[]) ?? []).filter((l) => !prev.loansCharged.includes(l.loanId));
+    const loanIds = saved.map((l) => l.loanId);
+    // Аудит №6: хадгалснаас хойш буцаалт / суутгалын өөрчлөлт болсон бол хадгалсан дүнгээр суутгахгүй — дахин хадгалуулна
+    for (const l of saved) {
+      const now = inp.loans.find((x) => x.id === l.loanId);
+      if (!now) throw conflict(`Зээл #${l.loanId} аль хэдийн хаагдсан — цалинг дахин хадгална уу`, 'stale');
+      if (now.amount !== l.amount) throw conflict(`Зээл #${l.loanId}-ийн суутгах дүн өөрчлөгдсөн (${money(l.amount)} → ${money(now.amount)}) — цалинг дахин хадгална уу`, 'stale');
+    }
+    for (const l of saved) {
+      const res = await chargeLoanTx(tx, actor, l.loanId, `Цалингаас суутгав — ${st.name} ${r.periodLabel}`);
+      if (res.duplicate) throw conflict(`Зээл #${l.loanId} аль хэдийн хаагдсан — цалинг дахин хадгална уу`, 'stale');
+      if (res.amount !== l.amount) throw conflict(`Зээл #${l.loanId}-ийн суутгах дүн өөрчлөгдсөн (${money(l.amount)} → ${money(res.amount)}) — цалинг дахин хадгална уу`, 'stale');
     }
     // Өрийн төлөлт
     const payIds: number[] = [];
