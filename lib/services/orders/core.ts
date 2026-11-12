@@ -2,7 +2,7 @@ import { Prisma, type CancelReason, type OrderStatus } from '@prisma/client';
 import { db } from '../../db';
 import { badRequest, conflict } from '../../errors';
 import { normalizePhone, isValidPhone } from '../../phone';
-import { PROVINCE_CENTER, PROVINCES, UB_DISTRICTS, isUB } from '../../geo';
+import { PROVINCES, UB_DISTRICTS, isUB } from '../../geo';
 import { reasonProblem } from '../../catalog/variants';
 import { ubDay, isYmd } from '../../ubdate';
 import { getSettingNumber } from '../stock/core';
@@ -83,10 +83,8 @@ export function cleanAddress(input: { province?: unknown; district?: unknown; kh
   let addressDetail = String(input.addressDetail ?? '').trim().replace(/\s+/g, ' ').slice(0, 300);
   if (isUB(province)) {
     if (addressDetail.length < 2) throw badRequest('Дэлгэрэнгүй хаяг (байр, орц, тоот) бичнэ үү', 'bad_address');
-  } else if (addressDetail.length < 2) {
-    // Орон нутаг: байр, тоот заавал биш — аймгийн төвөөр («Увс, Улаангом»); Налайх, Багануур, Багахангай бол дүүргийн нэр л
-    addressDetail = PROVINCE_CENTER[province] ?? '';
   }
+  // Орон нутаг: дэлгэрэнгүй хаяг заавал биш — бичээгүй бол зөвхөн аймгийн нэр («Увс»); аймгийн төвийг таамаглаж нэмэхгүй (эзний шийдвэр #125)
   return { province, district, khoroo, addressDetail };
 }
 

@@ -10,7 +10,7 @@ import { api, ApiError } from '@/components/ui/api';
 import { Thumb } from '@/components/products/ProductsClient';
 import { ZoomButton, largeOf } from '@/components/ui/Lightbox';
 import { money, ubDateTime } from '@/lib/format';
-import { PROVINCE_CENTER, PROVINCES, UB, UB_DISTRICTS, fullAddress, isUB } from '@/lib/geo';
+import { PROVINCES, UB, UB_DISTRICTS, fullAddress, isUB } from '@/lib/geo';
 import { formatPhone } from '@/lib/phone';
 
 /** Хайлтын үр дүн (Модуль 1 + үлдэгдэл) */
@@ -198,7 +198,7 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
   const pcs = lines.reduce((a, l) => a + l.qty, 0);
   const dup = card?.active && card.active.id !== edit?.id ? card.active : null;
   const statusHint = edit ? null : !ub || prepaidWait ? 'Төлбөр хүлээж буй' : scheduled ? 'Он сар өдөртэй' : 'Шинэ';
-  const addr = useMemo(() => fullAddress({ province, district: ub ? district : null, khoroo: khoroo ? Number(khoroo) : null, addressDetail: !ub && detail.trim().length < 2 ? PROVINCE_CENTER[province] ?? '' : detail }), [province, district, khoroo, detail, ub]);
+  const addr = useMemo(() => fullAddress({ province, district: ub ? district : null, khoroo: khoroo ? Number(khoroo) : null, addressDetail: detail }), [province, district, khoroo, detail, ub]);
   const locked = !!edit?.inHandover;
 
   function addHit(h: Hit) {
@@ -306,7 +306,7 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
             </label>
           </div>
           <label className="flex flex-col gap-1"><span className={lbl}>Дэлгэрэнгүй хаяг {ub ? <span className="text-bad-ink">*</span> : <span className="font-normal text-subtle">(заавал биш)</span>}</span>
-            <textarea rows={3} value={detail} onChange={(e) => setDetail(e.target.value)} placeholder={ub ? 'Хороолол, байр, тоот...' : `Сум, баг / унаа, илгээх газар — бичихгүй бол «${PROVINCE_CENTER[province] ?? province}»`} aria-label="Дэлгэрэнгүй хаяг"
+            <textarea rows={3} value={detail} onChange={(e) => setDetail(e.target.value)} placeholder={ub ? 'Хороолол, байр, тоот...' : 'Сум, баг / унаа, илгээх газар — бичихгүй бол зөвхөн аймгийн нэр'} aria-label="Дэлгэрэнгүй хаяг"
               className="rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[13.5px] text-ink outline-none focus:border-accent" />
             <span className="text-[12px] text-subtle [overflow-wrap:anywhere]">📍 {addr}</span>
           </label>
