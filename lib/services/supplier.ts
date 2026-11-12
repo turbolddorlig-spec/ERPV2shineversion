@@ -62,7 +62,7 @@ async function liveItems(tx: Tx | typeof db, shopId: number, from: string, to: s
     JOIN "ProductVariant" v ON v.id = dl."variantId"
     JOIN asg a ON a."productId" = v."productId" AND a."fromDate" <= (d."createdAt" + interval '8 hours')::date
       AND (a."toDate" IS NULL OR a."toDate" > (d."createdAt" + interval '8 hours')::date)
-    WHERE d.kind = 'EXTRA_SALE' AND d."createdAt" >= ${ubDayStart(from)} AND d."createdAt" < ${ubDayStart(addDays(to, 1))}
+    WHERE d.kind = 'EXTRA_SALE' AND d.status = 'DONE' AND d."createdAt" >= ${ubDayStart(from)} AND d."createdAt" < ${ubDayStart(addDays(to, 1))}
     GROUP BY 1, 2, 3, 4 HAVING sum(dl.qty) > 0`;
   return rows.map((r) => ({ ...r, date: ymdOf(r.date) }));
 }
@@ -99,7 +99,8 @@ export interface DayCalc {
   /** Шилжүүлсний дараа илэрсэн буцаалт/нэмэгдэл (шилжүүлсэн өдөрт) */
   laterChanges?: AdjView[];
 }
-type Override = { operatorCost: number; deliveryCost: number; marketingCost: number; otherCost: number; note: string };
+/** perUnit (аудит Б19): 1 ширхэгийн суутгал — хүргэгдсэн тоогоор үржинэ. perUnit-гүй (хуучин) бичлэг = нийт дүн */
+type Override = { operatorCost: number; deliveryCost: number; marketingCost: number; otherCost: number; note: string; perUnit?: boolean };
 type DayRowDb = Prisma.SupplierDayGetPayload<object>;
 
 const KIND_LABEL: Record<string, string> = { REFUND: 'Буцаалт', ADDITION: 'Нэмэгдэл', CARRY: 'Өмнөх үлдэгдэл' };
@@ -160,8 +161,9 @@ async function computeLive(tx: Tx | typeof db, shopId: number, from: string, to:
     const ov = ovByDate.get(date) ?? {};
     const lines = [...s.lines.values()].map((l) => {
       const o = ov[String(l.productId)];
+      const k = o?.perUnit ? l.qty : 1;
       const r = o
-        ? { ...l, operatorCost: o.operatorCost, deliveryCost: o.deliveryCost, marketingCost: o.marketingCost, otherCost: o.otherCost, manual: true, manualNote: o.note }
+        ? { ...l, operatorCost: o.operatorCost * k, deliveryCost: o.deliveryCost * k, marketingCost: o.marketingCost * k, otherCost: o.otherCost * k, manual: true, manualNote: o.note, manualPerUnit: o.perUnit ? { operatorCost: o.operatorCost, deliveryCost: o.deliveryCost, marketingCost: o.marketingCost, otherCost: o.otherCost } : null }
         : { ...l, operatorCost: l.perUnit.operatorCost * l.qty, deliveryCost: l.perUnit.deliveryCost * l.qty, marketingCost: l.perUnit.marketingCost * l.qty, otherCost: l.perUnit.otherCost * l.qty };
       r.deduction = r.operatorCost + r.deliveryCost + r.marketingCost + r.otherCost;
       r.net = r.sales - r.deduction;
@@ -233,9 +235,17 @@ export async function syncAdjustments(shopId: number) {
           }
         }
         const amount = diff < 0 ? -(sales - deduction) : sales - deduction;
+        // Аудит Б20: барааг хожуу оноосон (шилжүүлэхээс өмнө хүргэгдсэн байсан) бол «нөхөн олголт» гэж тодорхой бичнэ
+        let assignedLater = false;
+        if (diff > 0 && !item && day.transferredAt) {
+          const od = await tx.order.findUnique({ where: { number: orderNumber }, select: { deliveredAt: true } });
+          assignedLater = !!od?.deliveredAt && od.deliveredAt <= day.transferredAt;
+        }
         const reason = diff < 0
           ? `${orderNumber} — «${name}» ${x} ширхэгийг ${date}-ны тооцоог шилжүүлсний дараа буцаасан (цуцалсан эсвэл үйлчлүүлэгч аваагүй). Тэр үед олгосон ${money(sales)} борлуулалтаас суутгал ${money(deduction)}-ийг хасаад ${money(sales - deduction)} буцааж тооцно.`
-          : `${orderNumber} — «${name}» ${x} ширхэг ${date}-ны тооцоог шилжүүлсний дараа хүргэгдсэн тул нэмж олгоно: борлуулалт ${money(sales)} − суутгал ${money(deduction)}.`;
+          : assignedLater
+            ? `${orderNumber} — «${name}» ${x} ширхэг: бараа энэ нийлүүлэгчид хожим оноогдсон (оноохоос өмнө хүргэгдсэн) — нөхөн олголт: борлуулалт ${money(sales)} − суутгал ${money(deduction)}.`
+            : `${orderNumber} — «${name}» ${x} ширхэг ${date}-ны тооцоог шилжүүлсний дараа хүргэгдсэн тул нэмж олгоно: борлуулалт ${money(sales)} − суутгал ${money(deduction)}.`;
         await tx.supplierAdjustment.create({
           data: { shopId, kind: diff < 0 ? 'REFUND' : 'ADDITION', sourceDayId: day.id, sourceDate: day.date, orderNumber, productId: pid, productName: name, qty: x, sales, deduction, amount, reason },
         });
@@ -628,6 +638,8 @@ export async function overrideDay(actor: UserActor, b: Record<string, unknown>) 
   const ov: Override | null = clear ? null : {
     operatorCost: cleanInt(b.operatorCost, 'Опп зардал'), deliveryCost: cleanInt(b.deliveryCost, 'Хүргэлт'),
     marketingCost: cleanInt(b.marketingCost, 'Маркетинг'), otherCost: cleanInt(b.otherCost, 'Бусад'), note: cleanText(b.note, 200),
+    // Аудит Б19 (эзний шийдвэр): гараар засах нь 1 ширхэгийн суутгал — хожим хүргэгдсэн ширхэгт ч автоматаар үржинэ
+    perUnit: true,
   };
   return db.$transaction(async (tx) => {
     await lockShop(tx, shopId);

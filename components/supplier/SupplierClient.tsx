@@ -32,7 +32,7 @@ interface Detail {
   openDays: RangeDay[]; transferredDays: RangeDay[]; adjustments: Adj[]; orderDays: OrderDay[];
   login: { id: string; name: string; phone: string; isActive: boolean; lastLoginAt: string | null } | null;
 }
-interface Line { productId: number; code: string; name: string; qty: number; cancelledQty: number; unitPrice: number; sales: number; operatorCost: number; deliveryCost: number; marketingCost: number; otherCost: number; otherNote: string; deduction: number; net: number; manual: boolean; manualNote: string }
+interface Line { productId: number; code: string; name: string; qty: number; cancelledQty: number; unitPrice: number; sales: number; operatorCost: number; deliveryCost: number; marketingCost: number; otherCost: number; otherNote: string; deduction: number; net: number; manual: boolean; manualNote: string; manualPerUnit?: { operatorCost: number; deliveryCost: number; marketingCost: number; otherCost: number } | null }
 interface Day { shopId: number; date: string; status: 'OPEN' | 'TRANSFERRED'; lines: Line[]; totals: { qty: number; cancelledQty: number; sales: number; deductions: number; net: number }; unfinished: number; adjustments: Adj[]; adjTotal: number; payable: number; carry: number; transferredAt: string | null; transferredByName: string | null; version: number; laterChanges?: Adj[] }
 
 export function SupplierClient({ admin }: { admin: boolean }) {
@@ -345,7 +345,10 @@ function DayTab({ detail, date, setDate, q, post }: { detail: Detail; date: stri
 }
 
 function OverrideDialog({ line, date, version, onClose, post, onDone }: { line: Line; date: string; version: number; onClose: () => void; post: Post; onDone: () => void }) {
-  const [v, setV] = useState({ operatorCost: String(line.operatorCost), deliveryCost: String(line.deliveryCost), marketingCost: String(line.marketingCost), otherCost: String(line.otherCost), note: line.manualNote });
+  // Б19: 1 ширхэгийн суутгалаар засна (хүргэгдсэн тоогоор үржинэ)
+  const per = (total: number) => String(line.qty > 0 ? Math.round(total / line.qty) : total);
+  const pu = line.manualPerUnit;
+  const [v, setV] = useState({ operatorCost: pu ? String(pu.operatorCost) : per(line.operatorCost), deliveryCost: pu ? String(pu.deliveryCost) : per(line.deliveryCost), marketingCost: pu ? String(pu.marketingCost) : per(line.marketingCost), otherCost: pu ? String(pu.otherCost) : per(line.otherCost), note: line.manualNote });
   const f = (k: keyof typeof v, label: string) => (
     <label className="flex flex-col gap-1 text-[12.5px] font-semibold text-muted">{label}<input value={v[k]} inputMode="numeric" onChange={(e) => setV({ ...v, [k]: digits(e.target.value) })} className={clsx(inputCls, 'text-right')} /></label>
   );
@@ -354,7 +357,8 @@ function OverrideDialog({ line, date, version, onClose, post, onDone }: { line: 
     <Modal open onClose={onClose} title={`Суутгал засах · ${line.name}`} subtitle={`${date} · ${line.qty} ширхэг · зөвхөн Супер админ, түүхэнд бичигдэнэ`}
       footer={<>{line.manual ? <Button onClick={() => void save(true)}>Тохиргоогоор болгох</Button> : null}<Button onClick={onClose}>Болих</Button><Button variant="primary" onClick={() => void save()}>Хадгалах</Button></>}>
       <div className="grid grid-cols-2 gap-3">
-        {f('operatorCost', 'Опп зардал (нийт)')}{f('deliveryCost', 'Хүргэлт (нийт)')}{f('marketingCost', 'Маркетинг (нийт)')}{f('otherCost', 'Бусад (нийт)')}
+        {f('operatorCost', 'Опп зардал (1 ширхэг)')}{f('deliveryCost', 'Хүргэлт (1 ширхэг)')}{f('marketingCost', 'Маркетинг (1 ширхэг)')}{f('otherCost', 'Бусад (1 ширхэг)')}
+        <p className="col-span-2 text-[12px] text-muted">Хүргэгдсэн ширхэгээр үржинэ — одоо {line.qty} ширхэг; хожим нэмэгдвэл суутгал ч өснө.</p>
         <label className="col-span-2 flex flex-col gap-1 text-[12.5px] font-semibold text-muted">Шалтгаан<input data-autofocus value={v.note} onChange={(e) => setV({ ...v, note: e.target.value })} className={inputCls} /></label>
       </div>
     </Modal>

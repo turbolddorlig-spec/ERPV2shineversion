@@ -680,7 +680,7 @@ function ExtraSaleModal({ items, onClose, onDone }: { items: GItem[]; onClose: (
     catch (e) { setErr(msg(e)); setBusy(false); }
   }
   return (
-    <Modal open onClose={onClose} title="Нэмэлт бараа зарсан" subtitle="Үнэ системийн үнээр бодогдоно"
+    <Modal open onClose={onClose} title="Нэмэлт бараа зарсан" subtitle="Үнэ системийн үнээр. Мөнгөө нягтланд тушаахад бараа таны нэрээс хасагдана"
       footer={<><Button variant="ghost" onClick={onClose}>Болих</Button><Button variant="primary" size="lg" loading={busy} disabled={!lines.length || !pay} onClick={submit}>Бүртгэх</Button></>}>
       <div className="flex flex-col gap-2">
         {items.map((i) => (

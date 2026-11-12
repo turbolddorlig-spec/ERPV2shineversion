@@ -342,7 +342,8 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
       // бага болвол илүү төлөлт — нягтлан буцаана. Жолоочид оноосон бол хуваарилалтаас гарна.
       if (o.prepaid && t.total > o.paidAmount) {
         unpaid = true;
-        Object.assign(data, { status: 'PENDING_PAYMENT', prepaid: false, confirmedAt: null, paymentDeadline: new Date(Date.now() + settings.waitDays * 86_400_000),
+        // Б22: confirmedAt хэвээр — барааны гарцад анх баталгаажсан өдөртөө үлдэнэ (давхар тоологдохгүй)
+        Object.assign(data, { status: 'PENDING_PAYMENT', prepaid: false, paymentDeadline: new Date(Date.now() + settings.waitDays * 86_400_000),
           ...(o.status === 'ASSIGNED' ? { driverId: null, driverName: null, assignedAt: null } : {}) });
         changes.payment = { from: 'Мөнгө орсон', to: `Төлбөр хүлээж буй — дутуу ${(t.total - o.paidAmount).toLocaleString('en-US')}₮ (төлсөн ${o.paidAmount.toLocaleString('en-US')}₮)` };
       } else if (o.prepaid && t.total < o.paidAmount) {

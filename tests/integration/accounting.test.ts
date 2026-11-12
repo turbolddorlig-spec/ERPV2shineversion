@@ -423,7 +423,12 @@ describe('автомат дутуу барааны өр (#82 6)', () => {
     expect(r1.ran).toBe(true);
     expect(r1.created).toBe(2);
     expect((await DB.closeDayShortages(new Date(`${U.ubDay()}T00:06:00+08:00`))).ran).toBe(false);
+    // Аудит Б16: «зарсан» бүртгэл өрийг хаахгүй (мөнгө тушаах эсвэл бараа буцаах хүртэл)
     await G.extraSale(drv, { lines: [{ variantId: v1, qty: 2 }, { variantId: v2, qty: 1 }], payment: 'CASH', idemKey: key() });
+    expect(await db.companyDebt.count({ where: { driverId: drv.id, status: 'PENDING' } })).toBe(2);
+    // мөнгөөр хаавал бараа хасагдаж, шөнийн ажил дахин үүсгэхгүй
+    for (const d of await db.companyDebt.findMany({ where: { driverId: drv.id, status: 'PENDING' } })) await DB.resolveDebt(acc, d.id, { note: 'Бэлнээр тушаасан', payment: 'CASH' });
+    expect((await DB.closeDayShortages(new Date(`${U.ubDay(new Date(), 1)}T00:05:00+08:00`))).created ?? 0).toBe(0);
     expect(await db.companyDebt.count({ where: { driverId: drv.id, status: 'PENDING' } })).toBe(0);
     await recOk();
   });

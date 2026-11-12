@@ -100,7 +100,8 @@ export async function setConfig(actor: UserActor, b: Record<string, unknown>) {
 // ───────────── Гарцын тоолол (нэг дүрэм — бүх цонхонд) ─────────────
 
 /** «Тоологдох» захиалга: төлбөр хүлээж буйгаас бусад; тэр өдөртөө (баталгаажсан UB өдөр) цуцлагдсан орохгүй */
-const COUNTED = Prisma.sql`o.status <> 'PENDING_PAYMENT' AND o."confirmedAt" IS NOT NULL
+// Аудит Б22: нэг удаа баталгаажсан (confirmedAt) захиалга дараа нь «Төлбөр хүлээж буй» руу буцсан ч анхны өдөртөө тоологдоно
+const COUNTED = Prisma.sql`o."confirmedAt" IS NOT NULL
   AND NOT (o.status = 'CANCELLED' AND (o."cancelledAt" IS NULL OR (o."cancelledAt" + interval '8 hours')::date <= (o."confirmedAt" + interval '8 hours')::date))`;
 /** Одоогийн (амьд) тоолол — цуцлагдсан бүгд хасагдана (ажлын цонхны «Хийсэн») */
 const LIVE = Prisma.sql`o.status NOT IN ('PENDING_PAYMENT', 'CANCELLED') AND o."confirmedAt" IS NOT NULL`;

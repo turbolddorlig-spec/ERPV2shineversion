@@ -92,9 +92,9 @@ export function UsersClient({ assignable, canUnlock, selfId }: { assignable: Rol
   async function runAction(row: Row, action: 'activate' | 'deactivate' | 'unlock' | 'reset-password') {
     setBusy(true);
     try {
-      const r = await api<{ temporaryPassword?: string }>(`/api/users/${row.id}/${action}`, { method: 'POST', json: {} });
+      const r = await api<{ temporaryPassword?: string; user?: { warning?: string | null } }>(`/api/users/${row.id}/${action}`, { method: 'POST', json: {} });
       if (action === 'reset-password' && r.temporaryPassword) setTempPw({ name: row.name, phone: row.phone, password: r.temporaryPassword });
-      setFlash({ activate: 'Эрхийг нээлээ', deactivate: 'Эрхийг хаалаа. Бүх төхөөрөмжөөс гаргасан.', unlock: 'Түгжээг тайллаа', 'reset-password': 'Түр нууц үг үүслээ' }[action]);
+      setFlash(r.user?.warning ? `Эрхийг хаалаа. ${r.user.warning}` : { activate: 'Эрхийг нээлээ', deactivate: 'Эрхийг хаалаа. Бүх төхөөрөмжөөс гаргасан.', unlock: 'Түгжээг тайллаа', 'reset-password': 'Түр нууц үг үүслээ' }[action]);
       setConfirm(null); setActionsFor(null);
       await load();
     } catch (e) {

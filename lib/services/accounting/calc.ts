@@ -150,7 +150,7 @@ export async function computeDay(tx: Tx | typeof db, ymd: string, driverId?: str
     rulesFor(tx, ymd),
     tx.$queryRaw<{ driverId: string; n: number; amount: number }[]>`
       SELECT "driverId", count(*)::int AS n, coalesce(sum(total), 0)::int AS amount FROM "DriverDoc"
-      WHERE kind = 'EXTRA_SALE' AND "createdAt" >= ${ubDayStart(ymd)} AND "createdAt" < ${ubDayStart(addDays(ymd, 1))}
+      WHERE kind = 'EXTRA_SALE' AND status = 'DONE' AND "createdAt" >= ${ubDayStart(ymd)} AND "createdAt" < ${ubDayStart(addDays(ymd, 1))}
       ${driverId ? Prisma.sql`AND "driverId" = ${driverId}::uuid` : Prisma.empty} GROUP BY 1`,
   ]);
   const ids = new Set<string>([...handovers.map((h) => h.driverId), ...settlements.map((s) => s.driverId)]);

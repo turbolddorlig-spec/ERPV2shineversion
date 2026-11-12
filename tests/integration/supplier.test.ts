@@ -173,18 +173,19 @@ describe('гараар суутгал (зөвхөн Супер админ), ши
     await err(SP.overrideDay(adm, { shopId: shop, date: today, productId: shoeLine.productId, operatorCost: 0, deliveryCost: 0, marketingCost: 0, otherCost: 0 }), 403);
     await SP.overrideDay(sa, { shopId: shop, date: today, productId: shoeLine.productId, operatorCost: 1000, deliveryCost: 1000, marketingCost: 1000, otherCost: 500, note: 'Тохиролцсон' });
     let day = await SP.dayView(adm, shop, today);
-    expect([day.lines[0]!.manual, day.lines[0]!.deduction, day.totals.net]).toEqual([true, 3500, 36500]);
+    // Аудит Б19: 1 ширхэгийн суутгал (3,500₮) × 2 ширхэг
+    expect([day.lines[0]!.manual, day.lines[0]!.qty, day.lines[0]!.deduction, day.totals.net]).toEqual([true, 2, 7000, 33000]);
     expect(await db.auditLog.count({ where: { action: 'supplier.deduction_override' } })).toBe(1);
     const t = await SP.transferDay(adm, { shopId: shop, date: today, version: day.version });
-    expect(t.payable).toBe(36500);
+    expect(t.payable).toBe(33000);
     day = await SP.dayView(adm, shop, today);
-    expect([day.status, day.payable, day.transferredByName]).toEqual(['TRANSFERRED', 36500, adm.name]);
+    expect([day.status, day.payable, day.transferredByName]).toEqual(['TRANSFERRED', 33000, adm.name]);
     await err(SP.overrideDay(sa, { shopId: shop, date: today, productId: shoeLine.productId, operatorCost: 0, deliveryCost: 0, marketingCost: 0, otherCost: 0 }), 423);
     await err(SP.transferDay(adm, { shopId: shop, date: today }), 409, 'already_transferred');
     // тохиргоо өөрчилсөн ч шилжүүлсэн өдөр өөрчлөгдөхгүй
     await err(SP.saveDeduction(adm, { shopId: shop, productId: shoeP, operatorCost: 9000, deliveryCost: 0, marketingCost: 0, otherCost: 0 }), 403);
     await SP.saveDeduction(sa, { shopId: shop, productId: shoeP, operatorCost: 9000, deliveryCost: 0, marketingCost: 0, otherCost: 0 });
-    expect((await SP.dayView(adm, shop, today)).payable).toBe(36500);
+    expect((await SP.dayView(adm, shop, today)).payable).toBe(33000);
     await err(SP.undoTransfer(adm, { shopId: shop, date: today }), 403);
     await SP.undoTransfer(sa, { shopId: shop, date: today });
     expect((await SP.dayView(adm, shop, today)).status).toBe('OPEN');

@@ -215,14 +215,22 @@ async function assertDriverClear(tx: Prisma.TransactionClient | typeof db, id: s
 export async function deactivateUser(actor: UserActor, id: string) {
   if (id === actor.id) throw badRequest('Өөрийн эрхийг өөрөө хааж болохгүй');
   const target = await loadManageable(actor, id);
-  if (!target.isActive) return db.user.findUniqueOrThrow({ where: { id }, select: PUBLIC_SELECT });
+  if (!target.isActive) return { ...(await db.user.findUniqueOrThrow({ where: { id }, select: PUBLIC_SELECT })), warning: null as string | null };
   return db.$transaction(async (tx) => {
     if (target.roles.includes('SUPER_ADMIN')) await assertNotLastSuperAdmin(id, tx);
     if (target.roles.includes('DRIVER')) await assertDriverClear(tx, id, target.name);
     const u = await tx.user.update({ where: { id }, data: { isActive: false }, select: PUBLIC_SELECT });
     const n = await revokeAllSessions(id, tx);
-    await writeAudit(actor, 'user.deactivated', 'User', id, { sessionsClosed: n }, tx);
-    return u;
+    // Аудит Б18: нээлттэй зээл, өр, хасагдаагүй торгууль байвал анхааруулна (цалингийн / тооцооны самбарт үлдэнэ)
+    const [loans, debts, pens, cdebt] = await Promise.all([
+      tx.staffLoan.count({ where: { staffId: id, status: 'ISSUED' } }),
+      tx.staffDebt.count({ where: { staffKey: `u:${id}`, isActive: true } }),
+      tx.penalty.count({ where: { userId: id, status: 'ACTIVE', deducted: false } }),
+      tx.companyDebt.count({ where: { driverId: id, status: 'PENDING' } }),
+    ]);
+    const open = [loans ? `${loans} зээл` : '', debts ? `${debts} өр` : '', pens ? `${pens} торгууль` : '', cdebt ? `${cdebt} жолоочийн өр` : ''].filter(Boolean);
+    await writeAudit(actor, 'user.deactivated', 'User', id, { sessionsClosed: n, ...(open.length ? { open } : {}) }, tx);
+    return { ...u, warning: open.length ? `${u.name}-д дуусаагүй ${open.join(', ')} байна — цалин / тооцооны самбарт «Идэвхгүй» гэж үлдэнэ, тэндээс хааж дуусгана уу.` : null };
   });
 }
 

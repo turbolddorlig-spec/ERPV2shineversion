@@ -184,12 +184,13 @@ export async function noPageId(tx: Tx | typeof db): Promise<number> {
  * Одоо: ижил захиалга (дугаар хэвээр) «Шинэ»; баталгаажсан мөч = одоо (захиалгын «өдөр» болно);
  * хүргэх өдөр мөнгө орсон өдрөөс өмнө бол мөнгө орсон өдөр (хойших — он сар өдөртэй — хэвээр).
  */
-export function paidOrderData(o: { deliveryDate: Date }, now = new Date()) {
+export function paidOrderData(o: { deliveryDate: Date; confirmedAt?: Date | null }, now = new Date()) {
   const today = ubDay(now);
   const from = o.deliveryDate.toISOString().slice(0, 10);
   const moved = from < today;
   return {
-    data: { status: 'NEW' as const, prepaid: true, confirmedAt: now, paymentDeadline: null, ...(moved ? { deliveryDate: new Date(`${today}T00:00:00Z`) } : {}), version: { increment: 1 } },
+    // Аудит Б22 (#104 «өдөр бэхлэгдэнэ»): өмнө нь баталгаажсан (засаад төлбөр хүлээж буй руу буцсан) бол анхны өдөр хэвээр
+    data: { status: 'NEW' as const, prepaid: true, confirmedAt: o.confirmedAt ?? now, paymentDeadline: null, ...(moved ? { deliveryDate: new Date(`${today}T00:00:00Z`) } : {}), version: { increment: 1 } },
     deliveryChange: moved ? { from, to: today } : null,
   };
 }

@@ -68,8 +68,16 @@ export async function salaryBoard(actor: UserActor, ymIn?: string) {
   assert(actor);
   const ym = ymIn && /^\d{4}-\d{2}$/.test(ymIn) ? ymIn : ymdOf(new Date(Date.now() + 8 * 3600_000)).slice(0, 7);
   const p1 = periodOf(ym, 1); const p2 = periodOf(ym, 2);
+  // Аудит Б18: ажлаас гарсан (идэвхгүй) ч нээлттэй зээл, өр, хасагдаагүй торгууль, түгжээгүй цалинтай бол самбарт (саарал) үлдэнэ
+  const [loanIds, debtKeys, penIds, recKeys] = await Promise.all([
+    db.staffLoan.findMany({ where: { status: 'ISSUED' }, select: { staffId: true }, distinct: ['staffId'] }),
+    db.staffDebt.findMany({ where: { isActive: true, staffKey: { startsWith: 'u:' } }, select: { staffKey: true }, distinct: ['staffKey'] }),
+    db.penalty.findMany({ where: { status: 'ACTIVE', deducted: false }, select: { userId: true }, distinct: ['userId'] }),
+    db.staffSalaryRecord.findMany({ where: { isLocked: false, staffKey: { startsWith: 'u:' } }, select: { staffKey: true }, distinct: ['staffKey'] }),
+  ]);
+  const pendingIds = [...new Set([...loanIds.map((x) => x.staffId), ...debtKeys.map((x) => x.staffKey.slice(2)), ...penIds.map((x) => x.userId), ...recKeys.map((x) => x.staffKey.slice(2))])];
   const [users, externals, configs, records, drvPen] = await Promise.all([
-    db.user.findMany({ where: { isActive: true, NOT: { roles: { hasSome: EXCLUDED_ROLES } } }, select: { id: true, name: true, roles: true, phone: true }, orderBy: { name: 'asc' } }),
+    db.user.findMany({ where: { OR: [{ isActive: true }, { isActive: false, id: { in: pendingIds } }], NOT: { roles: { hasSome: EXCLUDED_ROLES } } }, select: { id: true, name: true, roles: true, phone: true, isActive: true }, orderBy: { name: 'asc' } }),
     db.externalStaff.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } }),
     db.staffSalaryConfig.findMany(),
     db.staffSalaryRecord.findMany({ where: { periodStart: { in: [dateOnly(p1.start), dateOnly(p2.start)] } } }),
@@ -77,12 +85,12 @@ export async function salaryBoard(actor: UserActor, ymIn?: string) {
   ]);
   const cm = new Map(configs.map((c) => [c.userId, c]));
   const rm = new Map(records.map((r) => [`${r.staffKey}|${ymdOf(r.periodStart)}`, r]));
-  const row = (key: string, base: { name: string; roleLabel: string; role: string; external: boolean; configured: boolean; salaryType: string; baseSalary: number; phone?: string }) => ({
+  const row = (key: string, base: { name: string; roleLabel: string; role: string; external: boolean; configured: boolean; salaryType: string; baseSalary: number; phone?: string; inactive?: boolean }) => ({
     key, ...base,
     periods: [p1, p2].map((p) => { const r = rm.get(`${key}|${p.start}`); return r ? { id: r.id, transferSalary: r.transferSalary, transferred: r.transferred, isLocked: r.isLocked, orderCount: r.orderCount, totalDeductions: r.totalDeductions + r.loanTotal + r.debtTotal, penaltyDeducted: r.penaltyDeducted } : null; }),
   });
   const rows = [
-    ...users.map((u) => { const c = cm.get(u.id); const role = u.roles.find((r) => !EXCLUDED_ROLES.includes(r)) ?? u.roles[0]!; return row(`u:${u.id}`, { name: u.name, phone: u.phone, role, roleLabel: u.roles.map((r) => ROLE_LABEL[r]).join(', '), external: false, configured: !!c, salaryType: c?.salaryType ?? 'FIXED', baseSalary: c?.baseSalary ?? 0 }); }),
+    ...users.map((u) => { const c = cm.get(u.id); const role = u.roles.find((r) => !EXCLUDED_ROLES.includes(r)) ?? u.roles[0]!; return row(`u:${u.id}`, { name: u.name, phone: u.phone, role, roleLabel: u.roles.map((r) => ROLE_LABEL[r]).join(', ') + (u.isActive ? '' : ' · Идэвхгүй (тооцоо дутуу)'), external: false, configured: !!c, salaryType: c?.salaryType ?? 'FIXED', baseSalary: c?.baseSalary ?? 0, inactive: !u.isActive }); }),
     ...externals.map((x) => row(`x:${x.id}`, { name: x.name, role: 'EXTERNAL', roleLabel: `Гадны · ${x.jobTitle}`, external: true, configured: true, salaryType: 'FIXED', baseSalary: x.baseSalary })),
   ];
   const tot = (i: 0 | 1) => rows.reduce((s, r) => s + (r.periods[i]?.transferSalary ?? 0), 0);

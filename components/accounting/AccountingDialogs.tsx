@@ -129,6 +129,7 @@ export function DebtLedgerDialog({ onClose }: { onClose: () => void }) {
   const [form, setForm] = useState({ kind: 'OTHER', description: '', amount: '', orderNumber: '' });
   const [resolve, setResolve] = useState<DebtRow | null>(null);
   const [note, setNote] = useState('');
+  const [pay, setPay] = useState<'CASH' | 'BANK' | ''>('');
   const [busy, setBusy] = useState(false);
   const loadBoard = useCallback(async () => { try { setBoard(await api('/api/accounting/debts')); } catch (e) { setErr(msg(e)); } }, []);
   const loadLedger = useCallback(async (id: string) => { try { setLedger(await api(`/api/accounting/debts/${id}`)); setErr(null); } catch (e) { setErr(msg(e)); } }, []);
@@ -141,7 +142,7 @@ export function DebtLedgerDialog({ onClose }: { onClose: () => void }) {
   };
   const doResolve = async () => {
     setBusy(true); setErr(null);
-    try { await api(`/api/accounting/debts/entry/${resolve!.id}/resolve`, { method: 'POST', json: { note } }); setResolve(null); setNote(''); await loadLedger(sel!); await loadBoard(); }
+    try { await api(`/api/accounting/debts/entry/${resolve!.id}/resolve`, { method: 'POST', json: { note, ...(pay ? { payment: pay } : {}) } }); setResolve(null); setNote(''); setPay(''); await loadLedger(sel!); await loadBoard(); }
     catch (e) { setErr(msg(e)); } finally { setBusy(false); }
   };
   const shortageNow = async () => { try { await api(`/api/accounting/debts/${sel}`, { method: 'POST' }); await loadLedger(sel!); await loadBoard(); } catch (e) { setErr(msg(e)); } };
@@ -176,8 +177,15 @@ export function DebtLedgerDialog({ onClose }: { onClose: () => void }) {
         </Modal>
       ) : null}
       {resolve ? (
-        <Modal open onClose={() => setResolve(null)} title="Өр хасах" subtitle={`${resolve.kindLabel} · ${money(resolve.amount)}`} footer={<><Button onClick={() => setResolve(null)}>Болих</Button><Button variant="primary" loading={busy} onClick={() => void doResolve()}>Хасах</Button></>}>
-          {resolve.auto ? <Notice tone="warn">Автомат дутуу барааны өр — бараа буцаахад өөрөө хаагдана. Гараар хаавал бараа жолоочид хэвээр бол дараагийн өдрийн эцэст дахин үүснэ.</Notice> : null}
+        <Modal open onClose={() => setResolve(null)} title="Өр хасах" subtitle={`${resolve.kindLabel} · ${money(resolve.amount)}`} footer={<><Button onClick={() => setResolve(null)}>Болих</Button><Button variant="primary" loading={busy} disabled={resolve.kind === 'GOODS_NOT_RETURNED' && resolve.auto && !pay} onClick={() => void doResolve()}>Хасах</Button></>}>
+          {resolve.kind === 'GOODS_NOT_RETURNED' && resolve.auto ? (
+            <>
+              <Notice tone="warn">Жолоочид байгаа барааны өр — зөвхөн МӨНГӨӨР (доор) эсвэл жолооч барааг агуулахад буцааж өгөхөд хаагдана. Мөнгө авахад бараа жолоочийн нэрээс хасагдана (зарагдсан).</Notice>
+              <div className="mt-2 flex gap-2" role="radiogroup" aria-label="Төлбөр">
+                {(['CASH', 'BANK'] as const).map((p) => <Button key={p} size="sm" variant={pay === p ? 'primary' : 'secondary'} aria-pressed={pay === p} onClick={() => setPay(p)}>{p === 'CASH' ? 'Бэлэн авсан' : 'Дансаар авсан'}</Button>)}
+              </div>
+            </>
+          ) : null}
           <label htmlFor="rn" className="mt-2 block text-[13px] font-semibold text-muted">Шалтгаан (жишээ: бэлнээр төлсөн)</label>
           <textarea id="rn" data-autofocus rows={2} value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} className="mt-1 w-full rounded-xl border border-line bg-surface px-3 py-2" />
         </Modal>

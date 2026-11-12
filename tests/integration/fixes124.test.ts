@@ -57,7 +57,7 @@ describe('#124-1 урьдчилж төлсөн захиалгыг засах', (
     // бараа нэмж 45,000₮ → дутуу 15,000₮ → Төлбөр хүлээж буй
     await O.updateOrder(op, order.id, { lines: [{ variantId: v1, qty: 3 }], version: o.version });
     o = await db.order.findUniqueOrThrow({ where: { id: order.id } });
-    expect([o.status, o.prepaid, o.total, o.confirmedAt]).toEqual(['PENDING_PAYMENT', false, 45000, null]);
+    expect([o.status, o.prepaid, o.total, o.confirmedAt !== null]).toEqual(['PENDING_PAYMENT', false, 45000, true]); // Б22: анхны өдөр хэвээр
     const log = await db.auditLog.findFirstOrThrow({ where: { entityId: String(order.id), action: 'order.updated' }, orderBy: { id: 'desc' } });
     expect(JSON.stringify(log.details)).toContain('дутуу 15,000₮');
     // дахин төлөгдөхөд Шинэ, дугаар хэвээр

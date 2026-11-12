@@ -5,7 +5,8 @@ import { writeAudit, SYSTEM_ACTOR } from '../../audit';
 import { canAccount, canDrive } from '../../permissions';
 import { dateOnly, ubDay, ubDayStart, ubHour, isYmd } from '../../ubdate';
 import { inTx, type UserActor } from '../orders/core';
-import { addDays } from '../delivery/core';
+import { addDays, driverLocationId } from '../delivery/core';
+import { applyMoves } from '../stock/core';
 import { driverGoods } from '../delivery/driver';
 
 type Tx = Prisma.TransactionClient;
@@ -41,12 +42,11 @@ function serialize(d: Prisma.CompanyDebtGetPayload<object>) {
 /** Жолооч бүрийн нээлттэй өр (хамгийн их нь эхэнд) */
 export async function debtBoard(actor: UserActor) {
   assertAccount(actor);
-  const [drivers, sums] = await Promise.all([
-    db.user.findMany({ where: { isActive: true, roles: { has: 'DRIVER' } }, select: { id: true, name: true, phone: true }, orderBy: { name: 'asc' } }),
-    db.companyDebt.groupBy({ by: ['driverId'], where: { status: 'PENDING' }, _sum: { amount: true }, _count: true }),
-  ]);
+  const sums = await db.companyDebt.groupBy({ by: ['driverId'], where: { status: 'PENDING' }, _sum: { amount: true }, _count: true });
+  // Аудит Б18: ажлаас гарсан жолоочийн нээлттэй өр ч жагсаалт, нийлбэрт үлдэнэ
+  const drivers = await db.user.findMany({ where: { OR: [{ isActive: true, roles: { has: 'DRIVER' } }, { id: { in: sums.map((x) => x.driverId) } }] }, select: { id: true, name: true, phone: true, isActive: true }, orderBy: { name: 'asc' } });
   const m = new Map(sums.map((s) => [s.driverId, s]));
-  const items = drivers.map((d) => ({ ...d, pending: m.get(d.id)?._sum.amount ?? 0, count: m.get(d.id)?._count ?? 0 }))
+  const items = drivers.map((d) => ({ id: d.id, name: d.isActive ? d.name : `${d.name} (идэвхгүй)`, phone: d.phone, inactive: !d.isActive, pending: m.get(d.id)?._sum.amount ?? 0, count: m.get(d.id)?._count ?? 0 }))
     .sort((a, b) => b.pending - a.pending || a.name.localeCompare(b.name, 'mn'));
   return { items, total: items.reduce((s, i) => s + i.pending, 0) };
 }
@@ -92,18 +92,37 @@ export async function addDebt(actor: UserActor, input: { driverId?: unknown; kin
 }
 
 /** «Өр хасах» (хуучин шиг тайлбартай). Автомат дутуу барааны өрийг гараар хаавал бараа буцаагаагүй хэвээр — дараагийн өдрийн эцэст дахин үүсч болно */
-export async function resolveDebt(actor: UserActor, idIn: unknown, input: { note?: unknown }) {
+export async function resolveDebt(actor: UserActor, idIn: unknown, input: { note?: unknown; payment?: unknown }) {
   assertAccount(actor);
   const id = Number(idIn);
   if (!Number.isInteger(id) || id <= 0) throw notFound('Өр олдсонгүй');
   const note = String(input.note ?? '').trim().slice(0, 500);
   if (note.length < 3) throw badRequest('Хасах шалтгаанаа бичнэ үү', 'reason_required');
   return inTx(async (tx) => {
-    const n = await tx.companyDebt.updateMany({ where: { id, status: 'PENDING' }, data: { status: 'RESOLVED', resolvedAt: new Date(), resolvedByName: actor.name, resolvedNote: note, version: { increment: 1 } } });
-    const d = await tx.companyDebt.findUnique({ where: { id } });
-    if (!d) throw notFound('Өр олдсонгүй');
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(3::int4, 0::int4)`;
+    const d0 = await tx.companyDebt.findUnique({ where: { id } });
+    if (!d0) throw notFound('Өр олдсонгүй');
+    if (d0.status !== 'PENDING') return { debt: serialize(d0), duplicate: true };
+    // Аудит Б16/Б17 (эзний шийдвэр): жолоочид байгаа барааны өр зөвхөн МӨНГӨӨР (нягтлан авсан) эсвэл БАРААГААР (агуулахад буцаасан) хаагдана.
+    // Мөнгө авахад бараа жолоочийн нэрээс журналаар (зарагдсан) хасагдана — шөнө дахин өр үүсэхгүй.
+    let sale: { docId: number; payment: string } | null = null;
+    const dq = d0.qty ?? 0;
+    if (d0.kind === 'GOODS_NOT_RETURNED' && d0.variantId && dq > 0) {
+      const payment = String(input.payment ?? '');
+      if (!['CASH', 'BANK'].includes(payment)) throw badRequest('Барааны өрийг мөнгөөр (Бэлэн / Данс) хаана — эсвэл жолооч барааг агуулахад буцааж өгнө', 'payment_required');
+      const fromId = await driverLocationId(tx, { id: d0.driverId, name: d0.driverName });
+      const unit = d0.unitPrice ?? Math.round(d0.amount / dq);
+      const doc = await tx.driverDoc.create({ data: {
+        kind: 'EXTRA_SALE', driverId: d0.driverId, driverName: d0.driverName, byId: actor.id, byName: actor.name, payment: payment as 'CASH' | 'BANK', total: d0.amount,
+        note: `Өрийн мөнгө нягтлан хүлээн авсан: ${note}`, idemKey: `debt-${id}`, lines: { create: [{ variantId: d0.variantId, qty: dq, unitPrice: unit }] },
+      } });
+      await applyMoves(tx, actor, { type: 'driver_doc', id: doc.id }, [{ type: 'EXTRA_SALE', variantId: d0.variantId, qty: dq, fromId, toId: null, note: `Барааны өр мөнгөөр хаагдсан (${d0.driverName})` }]);
+      sale = { docId: doc.id, payment };
+    }
+    const n = await tx.companyDebt.updateMany({ where: { id, status: 'PENDING' }, data: { status: 'RESOLVED', resolvedAt: new Date(), resolvedByName: actor.name, resolvedNote: sale ? `${sale.payment === 'CASH' ? 'Бэлэн' : 'Данс'}: ${note}` : note, version: { increment: 1 } } });
+    const d = await tx.companyDebt.findUniqueOrThrow({ where: { id } });
     if (!n.count) return { debt: serialize(d), duplicate: true };
-    await writeAudit(actor, 'debt.resolved', 'CompanyDebt', String(id), { driver: d.driverName, kind: d.kind, amount: d.amount, note }, tx, ['money', 'debt']);
+    await writeAudit(actor, 'debt.resolved', 'CompanyDebt', String(id), { driver: d.driverName, kind: d.kind, amount: d.amount, note, ...(sale ? { payment: sale.payment, goodsOut: dq, doc: sale.docId } : {}) }, tx, ['money', 'debt', ...(sale ? ['stock'] : [])]);
     return { debt: serialize(d), duplicate: false };
   });
 }

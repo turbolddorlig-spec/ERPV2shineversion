@@ -341,12 +341,24 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     // Зарах, буцаах
     await err(G.extraSale(drv, { lines: [{ variantId: v1, qty: 4 }], payment: 'CASH', idemKey: key() }), 409, 'too_many');
     const s = await G.extraSale(drv, { lines: [{ variantId: v1, qty: 2 }], payment: 'CASH', idemKey: key(), note: 'Хөршид' });
-    expect([s.doc.total, s.doc.kind]).toEqual([20000, 'EXTRA_SALE']);
+    expect([s.doc.total, s.doc.kind, s.doc.status]).toEqual([20000, 'EXTRA_SALE', 'REPORTED']);
     await DR.deliverOrder(drv, ids[0]!, { payment: 'CASH' });
     await G.receiveReturn(wh, { driverId: drv.id, lines: [{ variantId: v1, qty: 1 }], idemKey: key() });
+    // Аудит Б16: «зарсан» нь зөвхөн мэдээлэл — бараа жолоочид хэвээр, нягтланд мөнгө тушаах хүртэл
+    expect(await goods(drv)).toEqual({ [v1]: [2, 0, 2] });
+    let c = await G.driverControl(sa);
+    expect(c.items.find((x) => x.id === drv.id)).toMatchObject({ delivered: 1, cash: 20000, extraSales: 0, goods: 2, returnable: 2 });
+    // Б17: нягтлан өр үүсгэж (Одоо хаах) «Мөнгө авсан» → бараа жолоочоос хасагдаж, өр дахин үүсэхгүй
+    const DB = await import('@/lib/services/accounting/debts');
+    await DB.closeShortagesNow(sa, drv.id);
+    const debt = await db.companyDebt.findFirstOrThrow({ where: { driverId: drv.id, kind: 'GOODS_NOT_RETURNED', status: 'PENDING' } });
+    await err(DB.resolveDebt(sa, debt.id, { note: 'Бэлнээр өгсөн' }), 400, 'payment_required');
+    await DB.resolveDebt(sa, debt.id, { note: 'Бэлнээр өгсөн', payment: 'CASH' });
     expect(await goods(drv)).toEqual({});
-    const c = await G.driverControl(sa);
-    expect(c.items.find((x) => x.id === drv.id)).toMatchObject({ delivered: 1, cash: 20000, extraSales: 20000, goods: 0, returnable: 0 });
+    c = await G.driverControl(sa);
+    expect(c.items.find((x) => x.id === drv.id)).toMatchObject({ extraSales: 20000, goods: 0 });
+    await DB.closeShortagesNow(sa, drv.id);
+    expect(await db.companyDebt.count({ where: { driverId: drv.id, status: 'PENDING' } })).toBe(0);
     await recOk();
   });
 

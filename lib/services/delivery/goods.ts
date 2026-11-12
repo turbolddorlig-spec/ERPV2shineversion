@@ -275,14 +275,13 @@ export async function extraSale(actor: UserActor, input: { lines?: unknown; paym
       if (l.qty > have) throw conflict(`«${labels.get(l.variantId)}» танд ${have} байна (хүргэлтийн захиалгын барааг зарахгүй)`, 'too_many');
     }
     const total = lines.reduce((n, l) => n + (prices.get(l.variantId) ?? 0) * l.qty, 0);
-    const fromId = await driverLocationId(tx, actor);
+    // Аудит Б16 (эзний шийдвэр): жолоочийн «зарсан» бүртгэл зөвхөн МЭДЭЭЛЭЛ — бараа жолоочийн нэр дээр үлдэж, өр хаагдахгүй.
+    // Нягтланд мөнгө тушаахад (Өр → «Мөнгө авсан») эсвэл бараагаа агуулахад буцаахад л хаагдана.
     const d = await tx.driverDoc.create({
-      data: { kind: 'EXTRA_SALE', driverId: actor.id, driverName: actor.name, byId: actor.id, byName: actor.name, note, idemKey, payment, total,
+      data: { kind: 'EXTRA_SALE', status: 'REPORTED', driverId: actor.id, driverName: actor.name, byId: actor.id, byName: actor.name, note, idemKey, payment, total,
         lines: { create: lines.map((l) => ({ variantId: l.variantId, qty: l.qty, unitPrice: prices.get(l.variantId) ?? 0 })) } },
     });
-    await applyMoves(tx, actor, { type: 'driver_doc', id: d.id }, lines.map((l) => ({ type: 'EXTRA_SALE' as const, variantId: l.variantId, qty: l.qty, fromId, toId: null, note: 'Нэмэлт бараа зарсан' })), labels);
-    await syncShortageDebts(tx, actor.id);
-    await writeAudit(actor, 'driver.extra_sale', 'DriverDoc', String(d.id), { total, payment, lines: lines.map((l) => ({ name: labels.get(l.variantId), qty: l.qty, price: prices.get(l.variantId) })) } as Prisma.InputJsonValue, tx, ['stock', 'delivery', 'money']);
+    await writeAudit(actor, 'driver.extra_sale', 'DriverDoc', String(d.id), { total, payment, reported: true, lines: lines.map((l) => ({ name: labels.get(l.variantId), qty: l.qty, price: prices.get(l.variantId) })) } as Prisma.InputJsonValue, tx, ['delivery', 'money']);
     return d;
   });
   stockCache.today = null;
@@ -307,7 +306,7 @@ export async function driverControl(actor: UserActor, dateIn?: string) {
     db.$queryRaw<{ id: string; postponed: number }[]>`
       SELECT "postponedByDriverId" AS id, count(*)::int AS postponed FROM "Order" WHERE "postponedByDriverId" IS NOT NULL AND "postponedAt" >= ${t0} AND "postponedAt" < ${t1} GROUP BY 1`,
     db.$queryRaw<{ id: string; extraSales: number }[]>`
-      SELECT "driverId" AS id, COALESCE(sum(total), 0)::int AS "extraSales" FROM "DriverDoc" WHERE kind = 'EXTRA_SALE' AND "createdAt" >= ${t0} AND "createdAt" < ${t1} GROUP BY 1`,
+      SELECT "driverId" AS id, COALESCE(sum(total), 0)::int AS "extraSales" FROM "DriverDoc" WHERE kind = 'EXTRA_SALE' AND status = 'DONE' AND "createdAt" >= ${t0} AND "createdAt" < ${t1} GROUP BY 1`,
     db.$queryRaw<{ id: string; balance: number; held: number }[]>`
       WITH bal AS (
         SELECT l."userId", sum(b.qty)::int AS balance FROM "StockLocation" l JOIN "StockBalance" b ON b."locationId" = l.id AND b.qty > 0

@@ -177,6 +177,19 @@ describe('цоож: торгууль, зээл, өр — давхардахгү�
     expect((await S.prepareSalary(acc, key, ym, unl === a ? 1 : 2)).auto.penaltyTotal).toBe(3000);
   });
 
+  it('аудит Б18: нээлттэй зээлтэй ажилтныг идэвхгүй болгоход анхааруулна, цалингийн самбарт «Идэвхгүй» гэж үлдэнэ', async () => {
+    const UU = await import('@/lib/services/users');
+    const prod = await P.createProduct(sa, { code: 'L18', name: 'Бараа', price: 20000 });
+    const whId = (await W.createWarehouse(sa, { name: 'Төв' })).id;
+    await D.createReceipt(wh, { warehouseId: whId, lines: [{ variantId: prod.variants[0]!.id, qty: 3 }], idemKey: randomUUID() });
+    const loan = await LN.requestLoan(op, { lines: [{ variantId: prod.variants[0]!.id, qty: 1 }], idemKey: randomUUID() });
+    await LN.issueLoan(wh, loan.loan.id, { warehouseId: whId });
+    const r = await UU.deactivateUser(sa, op.id);
+    expect(r.warning).toContain('1 зээл');
+    const board = await S.salaryBoard(acc, ym);
+    expect(board.rows.find((x) => x.key === `u:${op.id}`)?.inactive).toBe(true);
+  });
+
   it('аудит №6: хадгалсны дараа зээлийн бараа буцаасан / суутгал өөрчилсөн бол түгжихгүй — дахин хадгалахад зөв дүнгээр суутгана', async () => {
     const key = `u:${op.id}`;
     await S.setConfig(acc, { staffKey: key, baseSalary: 1_000_000 });
