@@ -7,9 +7,10 @@ cd "$(dirname "$0")"
 say() { printf '\n\033[1;33m▶ %s\033[0m\n' "$1"; }
 [ -f .env ] || { echo ".env алга — эхлээд ./install.sh ажиллуулна уу"; exit 1; }
 
-say "Шинэчлэхийн өмнөх backup"
-docker compose run --rm -e BACKUP_NOW=1 backup >/dev/null
-ls -1t backups | head -1
+say "Шинэчлэхийн өмнөх backup (шалгалттай; амжилтгүй бол шинэчлэхгүй)"
+docker compose build backup >/dev/null
+BK=$(docker compose run --rm -T -e BACKUP_NOW=update backup </dev/null | tail -n 1) || { echo "АЛДАА: backup авч чадсангүй — шинэчлэлтийг зогсоолоо"; exit 1; }
+echo "$BK"
 
 PREV=$(git rev-parse --short HEAD)
 say "Шинэ код татаж байна (одоогийн: $PREV)"
@@ -28,6 +29,7 @@ if [ "$ok" = 1 ]; then
   say "Амжилттай: $(git rev-parse --short HEAD)"
 else
   echo "АЛДАА: апп эхэлсэнгүй. Логийг харах: docker compose logs --tail=100 app"
-  echo "Өмнөх хувилбар руу буцах: git checkout $PREV && docker compose up -d --build"
+  echo "Өмнөх хувилбар руу буцах (код + өгөгдөл):"
+  echo "  git checkout $PREV && docker compose up -d --build && ./restore.sh backups/${BK#/backups/}"
   exit 1
 fi

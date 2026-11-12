@@ -1,0 +1,4 @@
+# Нөөц хуулбарын контейнер: pg_dump (postgres:16) + rclone (Google Drive руу хуулна)
+FROM rclone/rclone:1.68.2 AS rc
+FROM postgres:16-alpine
+COPY --from=rc /usr/local/bin/rclone /usr/local/bin/rclone

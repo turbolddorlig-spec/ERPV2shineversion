@@ -33,7 +33,7 @@ async function logout() {
 export interface StockAlert { kind: 'mismatch' | 'stale'; count: number; at: string | null; since: string | null }
 const ubTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString('mn-MN', { timeZone: 'Asia/Ulaanbaatar', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 
-export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHref, assignAlert, jobsAlert, shortageSkip, children }: { user: { name: string; roleLabels: string[] }; nav: NavItem[]; alert?: StockAlert | null; boostAlert?: { red: number; orange: number } | null; reorderAlert?: { urgent: number; order: number; late: number } | null; reorderHref?: string; assignAlert?: { today: number; leftover: number; late: boolean; hour: number } | null; jobsAlert?: { at: string } | null; shortageSkip?: { date: string; at: string } | null; children: ReactNode }) {
+export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHref, assignAlert, jobsAlert, shortageSkip, backupAlert, children }: { user: { name: string; roleLabels: string[] }; nav: NavItem[]; alert?: StockAlert | null; boostAlert?: { red: number; orange: number } | null; reorderAlert?: { urgent: number; order: number; late: number } | null; reorderHref?: string; assignAlert?: { today: number; leftover: number; late: boolean; hour: number } | null; jobsAlert?: { at: string } | null; shortageSkip?: { date: string; at: string } | null; backupAlert?: { level: 'bad' | 'warn'; text: string }[] | null; children: ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [pathname]);
@@ -181,6 +181,14 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
             <div role="alert" data-jobs-alert className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] border border-bad/40 bg-bad-soft px-4 py-3 text-[13.5px] font-semibold text-bad-ink">
               <span aria-hidden>⛔</span>
               <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">Автомат ажил (захиалга цуцлах, Meta, шөнийн өр, Gmail, тулгалт) {ubTime(jobsAlert.at)}-аас хойш ажиллаагүй байна — серверийг шалгуулна уу.</span>
+            </div>
+          ) : null}
+          {backupAlert?.length ? (
+            <div role="alert" data-backup-alert className={clsx('mb-4 flex flex-col gap-1 rounded-[14px] border px-4 py-3 text-[13.5px] font-semibold',
+              backupAlert.some((a) => a.level === 'bad') ? 'border-bad/40 bg-bad-soft text-bad-ink' : 'border-warn/40 bg-warn-soft text-warn')}>
+              {backupAlert.map((a, i) => (
+                <span key={i} className="flex min-w-0 gap-2"><span aria-hidden>{a.level === 'bad' ? '⛔' : '⚠️'}</span><span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{a.text}</span></span>
+              ))}
             </div>
           ) : null}
           {shortageSkip ? (
