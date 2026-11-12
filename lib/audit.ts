@@ -33,6 +33,7 @@ export const getDiscountTick = () => discountTick;
 
 export const AUDIT_LABEL: Record<string, string> = {
   'auth.login': 'Нэвтэрсэн',
+  'legacy.import': 'Хуучин ERP-ээс туршилтын оруулалт',
   'meta.retry': 'Meta алдаатай эвентийг дахин илгээсэн',
   'order.route_no': 'Жолооч хүргэлтийн дараалал тавьсан',
   'calls.created': 'Залгах тэмдэглэл үүсгэсэн',
