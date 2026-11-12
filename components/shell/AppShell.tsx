@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Icon } from '../icons';
 import { ThemeToggle } from './ThemeToggle';
+import { buildTree, SUB_LABEL } from './navTree';
 
 export interface NavItem {
   key: string; label: string; short: string; href: string; group: string; icon: string; readOnly: boolean; badge?: number;
@@ -40,16 +41,34 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
   const best = nav.filter((n) => pathname === n.href || pathname.startsWith(n.href + '/')).sort((a, b) => b.href.length - a.href.length)[0]?.href;
   const active = (href: string) => href === best;
   const current = nav.find((n) => active(n.href));
-  const groups = Array.from(new Set(nav.map((n) => n.group)));
+  const tree = buildTree(nav);
+  // Өргөн цэс (анх) / нарийн — хэрэглэгч бүрийн төхөөрөмж дээр санана
+  const [userSlim, setUserSlim] = useState(false);
+  useEffect(() => { try { setUserSlim(localStorage.getItem('zahialga:nav:slim') === '1'); } catch { /* ignore */ } }, []);
+  // Өргөн хүснэгттэй хуудсанд (Барааны гарц) цэс автоматаар нарийн — хүснэгт багтана; «»»-оор түр өргөсгөнө
+  const wideTable = pathname.startsWith('/goods-outflow');
+  const [wideHere, setWideHere] = useState(false);
+  useEffect(() => setWideHere(false), [pathname]);
+  const slim = wideTable ? !wideHere : userSlim;
+  const toggleSlim = () => {
+    if (wideTable) { setWideHere(!wideHere); return; }
+    const v = !userSlim; setUserSlim(v); try { localStorage.setItem('zahialga:nav:slim', v ? '1' : '0'); } catch { /* ignore */ }
+  };
+  const nodeActive = (n: { href: string; item: NavItem | null; children: NavItem[] }) => (n.item ? active(n.item.href) : false) || n.children.some((c) => active(c.href));
+  const badgeEl = (b: number, small = false) => b ? <span className={clsx('rounded-full bg-[#E8590C] font-bold text-white', small ? 'min-w-[16px] px-1 text-center text-[10px] leading-[16px]' : 'min-w-[18px] px-1 text-center text-[10.5px] leading-[18px]')}>{b > 99 ? '99+' : b}</span> : null;
 
   return (
     <div className="min-h-screen">
-      {/* Компьютер, том таблет: зүүн rail цэс */}
-      <nav aria-label="Үндсэн цэс" className="fixed inset-y-0 left-0 z-30 hidden w-[84px] flex-col gap-1 overflow-y-auto bg-rail px-2 py-3.5 lg:flex">
-        <Link href="/" aria-label="Нүүр" className="mx-auto mb-3 grid h-11 w-11 place-items-center rounded-[13px] bg-[#E8590C] text-[22px] font-extrabold tracking-[-0.04em] text-white">
-          z<span className="text-[#16181D]">.</span>
-        </Link>
-        {nav.map((n) => (
+      {/* Компьютер, том таблет: зүүн цэс — өргөн (бүтэцтэй, #130) эсвэл нарийн (хуучин rail) */}
+      <nav aria-label="Үндсэн цэс" data-nav={slim ? 'slim' : 'wide'} className={clsx('fixed inset-y-0 left-0 z-30 hidden flex-col gap-0.5 overflow-y-auto bg-rail py-3.5 lg:flex', slim ? 'w-[84px] px-2' : 'w-[204px] px-2.5')}>
+        <div className={clsx('mb-3 flex items-center', slim ? 'flex-col gap-2' : 'justify-between pl-1')}>
+          <Link href="/" aria-label="Нүүр" className="grid h-11 w-11 place-items-center rounded-[13px] bg-[#E8590C] text-[22px] font-extrabold tracking-[-0.04em] text-white">
+            z<span className="text-[#16181D]">.</span>
+          </Link>
+          <button type="button" onClick={toggleSlim} aria-label={slim ? 'Цэсийг өргөн болгох' : 'Цэсийг нарийн болгох'} title={slim ? 'Өргөн цэс' : 'Нарийн цэс'}
+            className="grid h-8 w-8 place-items-center rounded-lg text-[15px] font-bold text-rail-text hover:bg-rail-active hover:text-white">{slim ? '»' : '«'}</button>
+        </div>
+        {slim ? nav.map((n) => (
           <Link key={n.key} href={n.href} aria-current={active(n.href) ? 'page' : undefined} title={n.label}
             className={clsx('relative flex min-h-[58px] flex-col items-center justify-center gap-1 rounded-xl px-0.5 py-1.5 text-center',
               active(n.href) ? 'bg-rail-active text-white' : 'text-rail-text hover:bg-rail-active/60 hover:text-white')}>
@@ -57,9 +76,35 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
             <span className="text-[10.5px] font-semibold leading-tight">{n.short}</span>
             {n.badge ? <span className="absolute right-1.5 top-1 min-w-[18px] rounded-full bg-[#E8590C] px-1 text-[10.5px] font-bold leading-[18px] text-white">{n.badge > 99 ? '99+' : n.badge}</span> : null}
           </Link>
-        ))}
-        <Link href="/me" title="Миний мэдээлэл" className="mx-auto mt-auto grid h-10 w-10 place-items-center rounded-full bg-[#2A2E38] text-[12px] font-bold text-[#ECEDEF]">
-          {initials(user.name)}
+        )) : tree.map((n) => {
+          const on = nodeActive(n);
+          return (
+            <div key={n.id} className="flex flex-col">
+              <Link href={n.href} aria-current={n.item && active(n.item.href) ? 'page' : undefined} data-nav-node={n.id}
+                className={clsx('flex min-h-[40px] items-center gap-2.5 rounded-xl px-2.5 text-[13.5px] font-semibold',
+                  on ? 'bg-rail-active text-white' : 'text-rail-text hover:bg-rail-active/60 hover:text-white')}>
+                <Icon name={n.icon} size={19} className={on ? 'text-[#FF8A4C]' : undefined} />
+                <span className="min-w-0 flex-1 truncate">{n.label}</span>
+                {n.children.length ? badgeEl(n.item?.badge ?? 0) : badgeEl(n.badge)}
+              </Link>
+              {n.children.length ? (
+                <div className="mb-1 ml-[22px] flex flex-col border-l border-[#2A2E38] pl-2">
+                  {n.children.map((c) => (
+                    <Link key={c.key} href={c.href} aria-current={active(c.href) ? 'page' : undefined} data-nav-sub={c.key}
+                      className={clsx('flex min-h-[28px] items-center gap-1.5 rounded-lg px-2 text-[12px]',
+                        active(c.href) ? 'bg-rail-active font-bold text-white' : 'text-rail-text hover:bg-rail-active/60 hover:text-white')}>
+                      <span className="min-w-0 flex-1 truncate">{SUB_LABEL[c.key] ?? c.label}</span>
+                      {badgeEl(c.badge ?? 0, true)}
+                    </Link>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+        <Link href="/me" title="Миний мэдээлэл" className={clsx('mt-auto flex items-center gap-2.5 rounded-xl', slim ? 'mx-auto' : 'px-1.5 py-1 hover:bg-rail-active/60')}>
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#2A2E38] text-[12px] font-bold text-[#ECEDEF]">{initials(user.name)}</span>
+          {slim ? null : <span className="min-w-0 truncate text-[12.5px] font-semibold text-rail-text">{user.name}</span>}
         </Link>
       </nav>
 
@@ -87,21 +132,33 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
                 <Icon name="close" />
               </button>
             </div>
-            {groups.map((g) => (
-              <div key={g} className="px-2 pb-2">
-                <p className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-[0.07em] text-subtle">{g}</p>
-                {nav.filter((n) => n.group === g).map((n) => (
-                  <Link key={n.key} href={n.href} aria-current={active(n.href) ? 'page' : undefined}
-                    className={clsx('flex min-h-[48px] items-center gap-3 rounded-xl px-3 text-[15px] font-semibold',
-                      active(n.href) ? 'bg-accent-soft text-accent-ink' : 'text-ink hover:bg-surface2')}>
+            <div className="flex flex-col px-2 pb-2">
+              {tree.map((n) => (
+                <div key={n.id} className="flex flex-col">
+                  <Link href={n.href} aria-current={n.item && active(n.item.href) ? 'page' : undefined}
+                    className={clsx('flex min-h-[46px] items-center gap-3 rounded-xl px-3 text-[15px] font-semibold',
+                      nodeActive(n) ? 'bg-accent-soft text-accent-ink' : 'text-ink hover:bg-surface2')}>
                     <Icon name={n.icon} size={20} />
                     <span className="flex-1">{n.label}</span>
-                    {n.badge ? <span className="rounded-full bg-accent px-2 text-[12px] font-bold leading-6 text-on-accent">{n.badge}</span> : null}
-                    {n.readOnly ? <span className="text-[11px] font-bold text-subtle">харах</span> : null}
+                    {(n.children.length ? n.item?.badge ?? 0 : n.badge) ? <span className="rounded-full bg-accent px-2 text-[12px] font-bold leading-6 text-on-accent">{n.children.length ? n.item?.badge : n.badge}</span> : null}
+                    {n.item?.readOnly ? <span className="text-[11px] font-bold text-subtle">харах</span> : null}
                   </Link>
-                ))}
-              </div>
-            ))}
+                  {n.children.length ? (
+                    <div className="mb-1 ml-[26px] flex flex-col border-l border-line pl-2">
+                      {n.children.map((c) => (
+                        <Link key={c.key} href={c.href} aria-current={active(c.href) ? 'page' : undefined}
+                          className={clsx('flex min-h-[38px] items-center gap-2 rounded-lg px-2.5 text-[13.5px]',
+                            active(c.href) ? 'bg-accent-soft font-bold text-accent-ink' : 'text-muted hover:bg-surface2')}>
+                          <span className="flex-1">{SUB_LABEL[c.key] ?? c.label}</span>
+                          {c.badge ? <span className="rounded-full bg-accent px-1.5 text-[11px] font-bold leading-5 text-on-accent">{c.badge}</span> : null}
+                          {c.readOnly ? <span className="text-[11px] font-bold text-subtle">харах</span> : null}
+                        </Link>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
             <div className="mt-auto border-t border-line px-4 pt-3">
               <Link href="/me" className="flex items-center gap-3 rounded-xl py-2">
                 <span className="grid h-10 w-10 place-items-center rounded-full bg-ink text-[13px] font-bold text-on-ink">{initials(user.name)}</span>
@@ -118,7 +175,7 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
         </div>
       ) : null}
 
-      <div className="lg:pl-[84px]">
+      <div className={slim ? 'lg:pl-[84px]' : 'lg:pl-[204px]'}>
         <div className="mx-auto w-full max-w-[1400px] has-[.full-bleed]:max-w-none px-[max(16px,env(safe-area-inset-left))] pb-[max(24px,env(safe-area-inset-bottom))] pt-4 lg:px-7 lg:pt-6">
           {alert ? (
             <Link href="/warehouse" role="alert" className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] border border-bad/40 bg-bad-soft px-4 py-3 text-[13.5px] font-semibold text-bad-ink hover:brightness-95">
