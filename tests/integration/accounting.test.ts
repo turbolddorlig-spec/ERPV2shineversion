@@ -4,6 +4,7 @@ import type { Role } from '@prisma/client';
 import { AppError } from '@/lib/errors';
 import type { UserActor } from '@/lib/services/users';
 import { resetDb } from '../helpers/reset';
+import { bankPay } from '../helpers/bankPay';
 
 /**
  * Модуль 6 — нягтлан: падааны өдрөөр тооцоо (#83), цалин (хуучин хүснэгт + тохиргоо), тооцоо нийлэх, түгжээ, төлөв солих,
@@ -156,7 +157,7 @@ describe('падааны өдрөөр тооцоо (#83)', () => {
 
   it('хэсэгчилсэн хүргэлт: дүн буурч хүлээн авах зөв (#73); урьдчилж төлсөн хасагдана', async () => {
     const pre = (await O.createOrder(op, ub({ deliveryDate: today, prepaidWait: true }))).order.id;
-    await O.markPaid(olead, pre);
+    await bankPay(pre);
     const [a] = await outFor(drv, 1);
     await L.assignOrders(lead, { ids: [pre], driverId: drv.id });
     const h2 = await db.handover.findFirstOrThrow({ where: { driverId: drv.id } });

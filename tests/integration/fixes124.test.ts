@@ -4,6 +4,7 @@ import type { Role } from '@prisma/client';
 import { AppError } from '@/lib/errors';
 import type { UserActor } from '@/lib/services/users';
 import { resetDb } from '../helpers/reset';
+import { bankPay } from '../helpers/bankPay';
 
 /** Бүрэн тестээр илэрсэн алдааны засвар (#124) — эзний шийдвэр бүрээр */
 let db: typeof import('@/lib/db').db;
@@ -51,7 +52,7 @@ describe('#124-1 урьдчилж төлсөн захиалгыг засах', (
   it('гараар «Мөнгө орсон»: дүн өсвөл Төлбөр хүлээж буй (дутуу), дахин төлөхөд Шинэ; буурвал илүү төлөлт', async () => {
     const { order } = await O.createOrder(op, ub({ prepaidWait: true }));
     expect([order.status, order.total]).toEqual(['PENDING_PAYMENT', 30000]);
-    await O.markPaid(lead, order.id);
+    await bankPay(order.id);
     let o = await db.order.findUniqueOrThrow({ where: { id: order.id } });
     expect([o.status, o.prepaid, o.paidAmount]).toEqual(['NEW', true, 30000]);
     // бараа нэмж 45,000₮ → дутуу 15,000₮ → Төлбөр хүлээж буй
@@ -61,7 +62,7 @@ describe('#124-1 урьдчилж төлсөн захиалгыг засах', (
     const log = await db.auditLog.findFirstOrThrow({ where: { entityId: String(order.id), action: 'order.updated' }, orderBy: { id: 'desc' } });
     expect(JSON.stringify(log.details)).toContain('дутуу 15,000₮');
     // дахин төлөгдөхөд Шинэ, дугаар хэвээр
-    await O.markPaid(lead, order.id);
+    await bankPay(order.id);
     o = await db.order.findUniqueOrThrow({ where: { id: order.id } });
     expect([o.status, o.prepaid, o.paidAmount, o.number]).toEqual(['NEW', true, 45000, order.number]);
     // бараа хасаж 15,000₮ → илүү төлөлт 30,000₮, захиалга хэвээр явна
@@ -92,9 +93,10 @@ describe('#124-1 урьдчилж төлсөн захиалгыг засах', (
 });
 
 describe('аудит Б7: илүү төлөлт бүх тохиолдолд «Банк импорт → Илүү»-д, буцаахад тэмдэг арилна', () => {
-  it('гараар «Мөнгө орсон» → дүн буурсан: банкгүй илүү жагсаалтад; «Илүүг буцаасан» → тэмдэг арилна', async () => {
+  it('(#142-оос өмнөх) гараар «Мөнгө орсон» өгөгдөл → дүн буурсан: банкгүй илүү жагсаалтад; «Илүүг буцаасан» → тэмдэг арилна', async () => {
     const { order } = await O.createOrder(op, ub({ prepaidWait: true }));
-    await O.markPaid(lead, order.id);
+    // Одоо гараар «Мөнгө орсон» хориотой (#142) — хуучин өгөгдлийг шууд бичиж дуурайна
+    await db.order.update({ where: { id: order.id }, data: { status: 'NEW', prepaid: true, paidAmount: order.total, confirmedAt: new Date(), paymentDeadline: null } });
     const o = await db.order.findUniqueOrThrow({ where: { id: order.id } });
     await O.updateOrder(op, order.id, { lines: [{ variantId: v1, qty: 1 }], version: o.version });
     const l = await B.listTransactions(acc, { tab: 'EXCESS_AMOUNT' });
@@ -151,14 +153,19 @@ describe('#124-5 Meta: буцаагаад дахин төлөгдвөл илгэ
   it('SKIPPED → PENDING; илгээгдсэнийг дахин илгээхгүй', async () => {
     await M.setMetaSettings(sa, { pixelId: '1234567890', token: 'EAAB' + 'x'.repeat(40) });
     const { order } = await O.createOrder(op, ub({ prepaidWait: true }));
-    await O.markPaid(lead, order.id);
-    await O.undoPaid(lead, order.id, { note: 'Андуурсан төлбөр' });
+    // #142: «Мөнгө орсон» зөвхөн банкаар; дүн нэмэгдэж «Төлбөр хүлээж буй» болоход Meta SKIPPED, дутууг төлөхөд дахин PENDING
+    await bankPay(order.id);
+    const lines = (await db.orderLine.findMany({ where: { orderId: order.id } })).map((l) => ({ variantId: l.variantId, qty: l.qty + 1 }));
+    const o1 = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    await O.updateOrder(op, order.id, { lines, version: o1.version });
+    expect((await db.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe('PENDING_PAYMENT');
     expect((await db.metaEvent.findUniqueOrThrow({ where: { orderId: order.id } })).status).toBe('SKIPPED');
-    await O.markPaid(lead, order.id);
+    await bankPay(order.id);
     expect((await db.metaEvent.findUniqueOrThrow({ where: { orderId: order.id } })).status).toBe('PENDING');
     await db.metaEvent.update({ where: { orderId: order.id }, data: { status: 'SENT' } });
-    await O.undoPaid(lead, order.id, { note: 'Дахин андуурсан' });
-    await O.markPaid(lead, order.id);
+    const o2 = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    await O.updateOrder(op, order.id, { lines: lines.map((l) => ({ ...l, qty: l.qty + 1 })), version: o2.version });
+    await bankPay(order.id);
     expect((await db.metaEvent.findUniqueOrThrow({ where: { orderId: order.id } })).status).toBe('SENT');
   });
 });

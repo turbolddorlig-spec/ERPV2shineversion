@@ -4,7 +4,7 @@ import { badRequest, conflict, forbidden, notFound } from '../../errors';
 import { writeAudit } from '../../audit';
 import { canLoanFinance, canOperateStock, canRequestLoan, canSeeAllLoans, canView } from '../../permissions';
 import {
-  applyMoves, claimIdem, cleanId, cleanIdemKey, cleanLines, cleanNote, getSettingNumber, inTx, requireRole, staffLocationId, uniqueViolation, warehouseLocation, type UserActor,
+  applyMoves, assertNotReserved, claimIdem, cleanId, cleanIdemKey, cleanLines, cleanNote, getSettingNumber, inTx, lockReservedVariants, requireRole, staffLocationId, uniqueViolation, warehouseLocation, type UserActor,
 } from './core';
 import { bustTodayCache } from './views';
 import { variantInfo } from './info';
@@ -111,7 +111,10 @@ export async function issueLoan(actor: UserActor, idInput: unknown, input: { war
       moves.push({ type: 'LOAN_OUT' as const, variantId: line.variantId, qty: q, fromId: locationId, toId: staffLoc, note: `${l.staffName}-д зээл` });
     }
     if (!moves.length) throw badRequest('Дор хаяж нэг бараа олгоно уу', 'no_lines');
+    // Аудит #142 (эзний шийдвэр, Б10 шиг): захиалгад түгжигдсэн барааг ажилтанд зээлээр гаргахгүй
+    await lockReservedVariants(tx, moves);
     await applyMoves(tx, actor, { type: 'loan', id }, moves);
+    await assertNotReserved(tx, moves, undefined, true);
     const u = await tx.staffLoan.update({ where: { id }, data: { warehouseId, issuedById: actor.id, issuedByName: actor.name, issuedAt: new Date() }, include: { lines: true } });
     await writeAudit(actor, 'loan.issued', 'StaffLoan', String(id), { staff: l.staffName, warehouse: warehouse.name, total: moves.reduce((s, m) => s + m.qty, 0) }, tx, ['stock', 'loan']);
     return { loan: u, duplicate: false };

@@ -4,6 +4,7 @@ import type { Role } from '@prisma/client';
 import { AppError } from '@/lib/errors';
 import type { UserActor } from '@/lib/services/users';
 import { resetDb } from '../helpers/reset';
+import { bankPay } from '../helpers/bankPay';
 
 let db: typeof import('@/lib/db').db;
 let P: typeof import('@/lib/services/products');
@@ -100,9 +101,10 @@ describe('захиалга үүсгэх', () => {
     expect(order.confirmedAt).toBeNull();
     expect(order.paymentDeadline!.getTime()).toBeGreaterThan(Date.now() + 6.9 * 86_400_000);
     expect(await db.metaEvent.count()).toBe(0);
+    // #142: гараар «Мөнгө орсон» хориотой (ахлах ч) — зөвхөн банкны гүйлгээгээр
     await err(O.markPaid(op, order.id), 403);
-    const [a, b] = await Promise.all([O.markPaid(lead, order.id), O.markPaid(lead, order.id)]);
-    expect([a.duplicate, b.duplicate].sort()).toEqual([false, true]);
+    await err(O.markPaid(lead, order.id), 403, 'bank_only');
+    await bankPay(order.id);
     const paid = await db.order.findUniqueOrThrow({ where: { id: order.id } });
     expect(paid).toMatchObject({ status: 'NEW', prepaid: true });
     expect(paid.createdAt.getTime()).toBe(order.createdAt.getTime());

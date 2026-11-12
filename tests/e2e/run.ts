@@ -350,6 +350,11 @@ async function main() {
   check('цуцалсны дараа нөөц суллагдсан', (await avail()) === a0);
   const paidOp = await req(`/api/orders/${oid}/paid`, { cookie: opA.cookie, method: 'POST', body: {} });
   check('оператор «Мөнгө орсон» дарахгүй → 403', paidOp.status === 403, String(paidOp.status));
+  // #142: гараар «Мөнгө орсон» хэн ч дарахгүй (админ ч) — зөвхөн банкны импортоор; цуцлахад хувилбар заавал
+  const paidAdm = await req(`/api/orders/${oid}/paid`, { cookie: adm.cookie, method: 'POST', body: {} });
+  check('#142 админ ч гараар «Мөнгө орсон» → 403 bank_only', paidAdm.status === 403 && paidAdm.text.includes('bank_only'), paidAdm.text.slice(0, 80));
+  const cnNoVer = await req(`/api/orders/${oid}/cancel`, { cookie: opB.cookie, method: 'POST', body: { reason: 'CUSTOMER_CANCELLED', note: 'E2E хувилбаргүй' } });
+  check('#142 хувилбаргүй цуцлалт → 400 version_required', cnNoVer.status === 400 && cnNoVer.text.includes('version_required'), cnNoVer.text.slice(0, 80));
   const st = await req('/api/settings/orders', { cookie: adm.cookie });
   check('Meta токен API хариунд гарахгүй', st.status === 200 && !/"token"\s*:/.test(st.text), st.text.slice(0, 80));
   const stOp = await req('/api/settings/orders', { cookie: opA.cookie, method: 'POST', body: { kind: 'fees', feeUB: 0 } });

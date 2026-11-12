@@ -4,6 +4,7 @@ import type { Role } from '@prisma/client';
 import { AppError } from '@/lib/errors';
 import type { UserActor } from '@/lib/services/users';
 import { resetDb } from '../helpers/reset';
+import { bankPay } from '../helpers/bankPay';
 
 /** Модуль 7б — Ажилтны цалин (#93): хуучин логик + цоожлоход торгууль/зээл/өр хэрэгжинэ, тайлахад буцна */
 let db: typeof import('@/lib/db').db;
@@ -86,7 +87,7 @@ describe('хагас сар, тогтмол цалин', () => {
     const mk = async (o: Record<string, unknown> = {}) => (await O.createOrder(op, { phone: String(99400000 + ++seq), province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 1, addressDetail: 'Тест 5-р байр', pageId: page, lines: [{ variantId: prod.variants[0]!.id, qty: 1 }], idemKey: randomUUID(), ...o })).order.id;
     const a1 = await mk(); const a2 = await mk(); const a3 = await mk({ prepaidWait: true });
     await db.order.update({ where: { id: a1 }, data: { status: 'DELIVERED' } });
-    await O.markPaid(await actor(['OPERATOR_LEAD']), a3); // мөнгө орсон
+    await bankPay(a3); // мөнгө орсон (банкаар, #142)
     void a2; // Шинэ — тоологдохгүй
     const half = Number(U.ubDay().slice(8)) <= 15 ? 1 : 2;
     const prep = await S.prepareSalary(acc, key, ym, half);

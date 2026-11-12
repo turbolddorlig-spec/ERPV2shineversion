@@ -175,13 +175,14 @@ function MatchDialog({ t, onClose, onDone }: { t: Tx; onClose: () => void; onDon
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [pick, setPick] = useState<(typeof items)[number] | null>(null);
+  const [note, setNote] = useState('');
   useEffect(() => {
     const h = setTimeout(async () => { try { setItems((await api<{ items: typeof items }>(`/api/bank/orders?q=${encodeURIComponent(q)}`)).items); } catch (e) { setErr(msg(e)); } }, 250);
     return () => clearTimeout(h);
   }, [q]);
   const go = async (number: string) => {
     setBusy(true); setErr(null);
-    try { const r = await api<{ paid: number; total: number; paidMarked: boolean }>(`/api/bank/${t.id}/match`, { method: 'POST', json: { orderNumber: number } }); onDone(`№${number}: төлсөн ${money(r.paid)} / ${money(r.total)}${r.paidMarked ? ' — «Мөнгө орсон» боллоо' : ''}`); }
+    try { const r = await api<{ paid: number; total: number; paidMarked: boolean }>(`/api/bank/${t.id}/match`, { method: 'POST', json: { orderNumber: number, note } }); onDone(`№${number}: төлсөн ${money(r.paid)} / ${money(r.total)}${r.paidMarked ? ' — «Мөнгө орсон» боллоо' : ''}`); }
     catch (e) { setErr(msg(e)); } finally { setBusy(false); }
   };
   return (
@@ -204,9 +205,12 @@ function MatchDialog({ t, onClose, onDone }: { t: Tx; onClose: () => void; onDon
             <div className="min-w-0"><div className="text-[11.5px] font-bold text-subtle">ГҮЙЛГЭЭ</div><b>{money(t.amount)}</b><span className="block [overflow-wrap:anywhere]">{t.description}</span>{t.phone ? <span className="block text-muted">Утас: {t.phone}</span> : null}</div>
             <div className="min-w-0"><div className="text-[11.5px] font-bold text-subtle">ЗАХИАЛГА</div><b>№{pick.number}</b><span className="block">Утас: {pick.phone}</span><span className="block">Дүн {money(pick.total)}{pick.paid ? ` · өмнө төлсөн ${money(pick.paid)}` : ''}</span></div>
           </div>
-          {t.phone && t.phone !== pick.phone ? <p className="mt-2 font-semibold text-bad-ink">Анхаар: гүйлгээний утас захиалгын утастай таарахгүй байна.</p> : null}
+          {t.phone && t.phone !== pick.phone ? (<>
+            <p className="mt-2 font-semibold text-bad-ink">Анхаар: гүйлгээний утас захиалгын утастай таарахгүй байна. Итгэлтэй бол шалтгаанаа бичнэ үү (түүхэнд үлдэнэ).</p>
+            <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} placeholder="Жишээ: ах нь өөрийн данснаас шилжүүлсэн" aria-label="Шалтгаан" className="mt-1 h-10 w-full rounded-lg border border-line bg-surface px-2" />
+          </>) : null}
           <p className="mt-2 text-muted">Тааруулсны дараа өөрчлөх боломжгүй.</p>
-          <div className="mt-2 flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => setPick(null)}>Болих</Button><Button size="sm" variant="primary" loading={busy} onClick={() => void go(pick.number)}>Тийм, тааруулах</Button></div>
+          <div className="mt-2 flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => setPick(null)}>Болих</Button><Button size="sm" variant="primary" loading={busy} disabled={!!t.phone && t.phone !== pick.phone && note.replace(/\s/g, '').length < 5} onClick={() => void go(pick.number)}>Тийм, тааруулах</Button></div>
         </div>
       ) : null}
     </Modal>

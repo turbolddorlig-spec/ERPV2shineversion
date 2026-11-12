@@ -123,10 +123,18 @@ export async function decideCount(actor: UserActor, idInput: unknown, input: { l
       else { minus += -delta; moves.push({ type: 'COUNT_MINUS' as const, variantId: l.variantId, qty: -delta, fromId: locationId, toId: null, note: `Тооллого №${id}: систем ${l.systemQty} → тоолсон ${l.countedQty}` }); }
     }
     await applyMoves(tx, actor, { type: 'count', id }, moves);
+    // Аудит #142: тооллогоор дутсан нь бодит тул хориглохгүй, гэхдээ захиалгад түгжигдсэнээс бага үлдвэл анхааруулна
+    const minusIds = moves.filter((m) => m.type === 'COUNT_MINUS').map((m) => m.variantId);
+    const short = minusIds.length ? await tx.$queryRaw<{ variantId: number; total: number; reserved: number }[]>`
+      SELECT v.id AS "variantId",
+        COALESCE((SELECT sum(b.qty) FROM "StockBalance" b JOIN "StockLocation" l ON l.id = b."locationId" AND l.kind = 'WAREHOUSE' WHERE b."variantId" = v.id), 0)::int AS total,
+        COALESCE((SELECT sum(r.qty) FROM "StockReservation" r WHERE r."variantId" = v.id), 0)::int AS reserved
+      FROM "ProductVariant" v WHERE v.id = ANY(${minusIds}::int[])` : [];
+    const reservedShort = short.filter((x) => x.reserved > x.total).map((x) => ({ variantId: x.variantId, total: x.total, reserved: x.reserved }));
     const left = await tx.stockCountLine.count({ where: { countId: id, status: 'PENDING' } });
     if (!left) await tx.stockCount.update({ where: { id }, data: { status: 'CLOSED', closedAt: new Date() } });
     await writeAudit(actor, action === 'approve' ? 'stock.count_approved' : 'stock.count_rejected', 'StockCount', String(id), { warehouse: warehouse.name, lines: lines.length, plus, minus }, tx, ['stock']);
-    return { decided: lines.length, plus, minus, closed: !left };
+    return { decided: lines.length, plus, minus, closed: !left, reservedShort };
   });
 }
 

@@ -124,7 +124,6 @@ export function OrderDetail({ id }: { id: number }) {
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface/95 px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 backdrop-blur lg:left-[84px]">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-end gap-2">
           <Link href="/orders" className="mr-auto inline-flex h-11 items-center gap-1 rounded-[11px] border border-line bg-surface px-4 font-semibold"><Icon name="left" size={16} />Жагсаалт</Link>
-          {o.can.markPaid && o.status === 'PENDING_PAYMENT' ? <Button variant="dark" loading={busy} onClick={() => act('paid', {}, 'Мөнгө орсон — захиалга «Шинэ» боллоо')}>Мөнгө орсон</Button> : null}
           {o.can.markPaid && o.status === 'PENDING_PAYMENT' ? <Button loading={busy} onClick={() => act('extend', { days: 3 }, 'Хугацааг 3 хоногоор сунгалаа')}>+3 хоног</Button> : null}
           {o.can.markPaid && o.status === 'NEW' && o.prepaid ? <Button onClick={() => setUndo(true)}>«Мөнгө орсон» буцаах</Button> : null}
           {o.can.edit && (active || o.status === 'OUT_FOR_DELIVERY') ? <Button variant="danger" onClick={() => { setReason(''); setCnote(''); setCancelOpen(true); }}>Цуцлах</Button> : null}

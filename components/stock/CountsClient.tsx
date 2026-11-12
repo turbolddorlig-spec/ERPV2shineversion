@@ -128,7 +128,12 @@ export function CountDetail({ id, canOperate, canApprove }: { id: number; canOpe
   }
   async function act(path: string, body: unknown = {}) {
     setError(null); setBusy(true);
-    try { await api(`/api/stock/counts/${id}/${path}`, { method: 'POST', json: body }); setSel(new Set()); router.refresh(); await load(); }
+    try {
+      const r = await api<{ reservedShort?: { variantId: number; total: number; reserved: number }[] }>(`/api/stock/counts/${id}/${path}`, { method: 'POST', json: body });
+      setSel(new Set()); router.refresh(); await load();
+      // Аудит #142: тооллогоор дутаад захиалгад түгжигдсэнээс бага үлдсэн бол анхааруулна (оператор / ахлах шийднэ)
+      if (r?.reservedShort?.length) setError(`Анхаар: ${r.reservedShort.length} бараа захиалгад түгжигдсэнээс бага үлдлээ (${r.reservedShort.map((x) => `#${x.variantId}: байгаа ${x.total}, захиалгад ${x.reserved}`).join('; ')}) — захиалгуудыг шалгана уу`);
+    }
     catch (e) { setError(e instanceof ApiError ? e.message : 'Алдаа'); } finally { setBusy(false); }
   }
 

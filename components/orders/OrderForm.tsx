@@ -418,7 +418,7 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
           {feeOverride === null ? <><b className="text-ink">{money(autoFee)}</b><button type="button" onClick={() => setFeeOverride(String(autoFee))} className="font-semibold text-accent-ink">өөрчлөх</button></>
             : <><input inputMode="numeric" aria-label="Хүргэлтийн төлбөр" value={feeOverride} onChange={(e) => setFeeOverride(e.target.value.replace(/\D/g, ''))} className="h-7 w-20 rounded-md border border-warn bg-surface px-1.5 text-right font-bold" /><button type="button" onClick={() => { setFeeOverride(null); setFeeReason(''); }} className="font-semibold">буцаах</button></>}
         </span>
-        {feeOverride !== null && Number(feeOverride) !== autoFee ? <input value={feeReason} onChange={(e) => setFeeReason(e.target.value)} placeholder="Хүргэлт өөрчилсөн шалтгаан (заавал)" className="h-7 min-w-[220px] flex-1 rounded-md border border-warn bg-surface px-2 text-[12.5px]" /> : null}
+        {feeOverride !== null && (Number(feeOverride) !== autoFee || (!!edit?.deliveryFeeEdited && Number(feeOverride) < edit.deliveryFee)) ? <input value={feeReason} onChange={(e) => setFeeReason(e.target.value)} placeholder="Хүргэлт өөрчилсөн шалтгаан (заавал)" className="h-7 min-w-[220px] flex-1 rounded-md border border-warn bg-surface px-2 text-[12.5px]" /> : null}
         <span className="ml-auto flex items-baseline gap-2"><span className="font-semibold">Нийт:</span><span className="text-[19px] font-extrabold text-accent-ink">{money(total)}</span></span>
       </div>
       <div className="flex flex-col gap-2 border-t border-line bg-surface2/60 px-4 py-2.5 pb-[max(10px,env(safe-area-inset-bottom))]">

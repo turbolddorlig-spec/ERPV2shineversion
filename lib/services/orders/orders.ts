@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { CancelReason, Order, OrderLine, OrderStatus, Prisma } from '@prisma/client';
 import { db } from '../../db';
-import { badRequest, conflict, forbidden, notFound } from '../../errors';
+import { AppError, badRequest, conflict, forbidden, notFound } from '../../errors';
 import { writeAudit, SYSTEM_ACTOR } from '../../audit';
 import { canEditOrders, canMarkPaid, canSuperviseOperators } from '../../permissions';
 import { isUB } from '../../geo';
@@ -298,6 +298,12 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
           const h = await tx.handover.findUnique({ where: { driverId_date: { driverId: o.driverId, date: dateOnly(d) } }, select: { status: true } });
           if (h && isGiven(h.status)) throw conflict(`${o.driverName}-ийн ${d}-ны падаан аль хэдийн өгөгдсөн — өөр өдөр сонгоно уу`, 'handed_over');
         }
+        // Аудит #142: товлосон (маргаашаас цааш) захиалгыг ойртуулахад тэр утсаар өөр идэвхтэй захиалга байвал давхар хүргэгдэхээс сэргийлнэ
+        const tomorrowYmd = ubDay(new Date(), 1);
+        if (o.status === 'NEW' && ymdOf(o.deliveryDate) > tomorrowYmd && d <= tomorrowYmd) {
+          const dup = await findActiveDuplicate(tx, [o.phone, ...(o.extraPhone ? [o.extraPhone] : [])], id);
+          if (dup) throw conflict(`Энэ утсаар идэвхтэй захиалга №${dup.number} байна — тэр захиалгад бараа нэмэх эсвэл нэгийг нь цуцална уу`, 'duplicate_order');
+        }
         data.deliveryDate = dateOnly(d); changes.deliveryDate = { from: ymdOf(o.deliveryDate), to: d };
       }
     }
@@ -318,6 +324,8 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
       && lines.some((l) => !l.deliveryIncluded) === o.lines.some((l) => !l.deliveryIncluded);
     const feeSettings = keepFee ? { ...settings, feeUB: o.deliveryFee, feeRural: o.deliveryFee } : settings;
     const t = totals(lines, province, feeSettings, feeInput, o);
+    // Аудит #142: гараар өсгөсөн хүргэлтийн төлбөрийг бууруулах (анхдагч руу буцаах ч) — шалтгаан заавал, хөнгөлөлтийн хяналтад орно
+    const feeDownReason = o.deliveryFeeEdited && t.deliveryFee < o.deliveryFee && !t.feeReason ? requireReason(input.feeReason, 'fee_reason') : null;
     if (linesChanging) {
       await lockVariants(tx, [...new Set([...lines.map((l) => l.variantId), ...o.lines.map((l) => l.variantId)])]);
       await assertStock(tx, lines, id, new Map(o.lines.map((l) => [l.variantId, l.qty])));
@@ -364,8 +372,8 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
       if (l.unitPrice >= l.listPrice) return false;
       const ex = existing.get(l.variantId);
       return !ex || ex.unitPrice !== l.unitPrice || l.qty > ex.qty;
-    }) || !!t.feeReason;
-    await writeAudit(actor, 'order.updated', 'Order', String(id), { number: o.number, changes, ...(t.feeReason ? { feeReason: t.feeReason } : {}) } as unknown as Prisma.InputJsonValue, tx,
+    }) || !!t.feeReason || !!feeDownReason;
+    await writeAudit(actor, 'order.updated', 'Order', String(id), { number: o.number, changes, ...(t.feeReason || feeDownReason ? { feeReason: t.feeReason ?? feeDownReason } : {}) } as unknown as Prisma.InputJsonValue, tx,
       [...(discountNow ? ['order', 'discount'] : ['order']), ...(changes.payment ? ['money'] : [])]);
     return { order: u, changed: true, rebank: o.prepaid && t.total !== o.total };
   });
@@ -423,20 +431,11 @@ export async function cancelOrder(actor: UserActor | typeof SYSTEM_ACTOR & { rol
 }
 
 /** «Мөнгө орсон» (#43 9): Төлбөр хүлээж буй → Шинэ; баталгаажсан өдөр = одоо (үүссэн огноо хэвээр); Meta илгээнэ */
-export async function markPaid(actor: UserActor, idInput: unknown) {
-  if (!canMarkPaid(actor.roles)) throw forbidden('«Мөнгө орсон»-ыг ахлах оператор, админ тэмдэглэнэ');
-  const id = Number(idInput);
-  return inTx(async (tx) => {
-    if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
-    const o = await tx.order.findUniqueOrThrow({ where: { id } });
-    if (o.prepaid && o.status !== 'PENDING_PAYMENT') return { order: o, duplicate: true };
-    if (o.status !== 'PENDING_PAYMENT') throw conflict('Зөвхөн «Төлбөр хүлээж буй» захиалгад', 'bad_status');
-    const pd = paidOrderData(o);
-    const u = await tx.order.update({ where: { id }, data: { ...pd.data, paidAmount: o.total } });
-    await enqueueMeta(tx, id);
-    await writeAudit(actor, 'order.paid', 'Order', String(id), { number: o.number, total: o.total, ...(pd.deliveryChange ? { deliveryDate: pd.deliveryChange } : {}) }, tx, ['order', 'money']);
-    return { order: u, duplicate: false };
-  });
+export async function markPaid(actor: UserActor, idInput: unknown): Promise<never> {
+  // Аудит #142 (эзний шийдвэр): «Мөнгө орсон» зөвхөн «Банкны импорт»-оор (автомат эсвэл гараар тааруулах) — мөнгө ороогүй
+  // захиалгыг гараар төлсөн болгож жолооч 0₮ авах, байхгүй мөнгийг «илүү төлөлт» болгож буцаах эрсдэлийг хаана
+  void actor; void idInput;
+  throw new AppError(403, '«Мөнгө орсон»-ыг зөвхөн «Банкны импорт» хуудсанд гүйлгээгээр тааруулна', 'bank_only');
 }
 
 /** Алдаатай «Мөнгө орсон»-ыг буцаах — жолоочид оноогоогүй үед */

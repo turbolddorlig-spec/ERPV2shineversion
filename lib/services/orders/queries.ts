@@ -57,25 +57,36 @@ export interface ListParams {
   statuses?: string;
 }
 
+/** Аудит #142: хайлт 1.5 сек-ээс удаан бол зогсооно (холболт эзлэхгүй) — «илүү тодорхой бичнэ үү» */
+async function guarded<T extends readonly unknown[]>(ops: [...{ [K in keyof T]: Prisma.PrismaPromise<T[K]> }]): Promise<T> {
+  try { return await db.$transaction(ops as never) as unknown as T; }
+  catch (e) {
+    if (/statement timeout|canceling statement/i.test(String((e as Error)?.message))) throw badRequest('Хайлт хэт өргөн байна — утасны 4+ орон эсвэл илүү тодорхой үг бичнэ үү', 'search_too_broad');
+    throw e;
+  }
+}
+
 /** Хайлт (#43): утас (хэсэг), дугаар, хаяг, тэмдэглэл, барааны нэр/код — trigram индексээр, 1 сая захиалгад хурдан */
 export async function searchIds(q: string): Promise<number[] | null> {
   const s = q.trim();
   if (!s) return null;
   const digits = s.replace(/[\s-]/g, '');
   const like = `%${s.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-  if (/^\d{3,8}$/.test(digits)) {
+  // Аудит #142: 1–3 оронтой тоо хэт олон (мянга мянган) утсанд таарч удаашруулна — утас 4 оронтойгоос хайна
+  if (/^\d{1,3}$/.test(digits)) return [];
+  if (/^\d{4,8}$/.test(digits)) {
     const dl = `%${digits}%`;
-    const rows = await db.$queryRaw<{ id: number }[]>`
+    const [, rows] = await guarded([db.$executeRaw`SET LOCAL statement_timeout = '1500ms'`, db.$queryRaw<{ id: number }[]>`
       (SELECT id FROM "Order" WHERE number = ${digits.padStart(8, '0')} LIMIT 5)
       UNION (SELECT id FROM "Order" WHERE phone LIKE ${dl} ORDER BY id DESC LIMIT 500)
       UNION (SELECT id FROM "Order" WHERE "extraPhone" LIKE ${dl} ORDER BY id DESC LIMIT 200)
-      UNION (SELECT "orderId" FROM "OrderLine" WHERE code ILIKE ${dl} ORDER BY "orderId" DESC LIMIT 300)`;
+      UNION (SELECT "orderId" FROM "OrderLine" WHERE code ILIKE ${dl} ORDER BY "orderId" DESC LIMIT 300)`]);
     return rows.map((r) => r.id);
   }
   // 1–2 тэмдэгт индекс ашиглаж чадахгүй (1 сая мөр уншина) — 3+ тэмдэгтээс хайна
   if (s.length < 3) return [];
   // Түгээмэл үг (40k+ таарц) бол PK-аар буцаж уншина, ховор үг бол trigram индекс — үг бүрт тохирох төлөвлөгөө сонгуулна
-  const [, rows] = await db.$transaction([db.$executeRaw`SET LOCAL plan_cache_mode = force_custom_plan`, db.$queryRaw<{ id: number }[]>`
+  const [, , rows] = await guarded([db.$executeRaw`SET LOCAL plan_cache_mode = force_custom_plan`, db.$executeRaw`SET LOCAL statement_timeout = '1500ms'`, db.$queryRaw<{ id: number }[]>`
     (SELECT id FROM "Order" WHERE "addressDetail" ILIKE ${like} ORDER BY id DESC LIMIT 500)
     UNION (SELECT id FROM "Order" WHERE note ILIKE ${like} ORDER BY id DESC LIMIT 200)
     UNION (SELECT "orderId" FROM "OrderLine" WHERE name ILIKE ${like} OR code ILIKE ${like} ORDER BY "orderId" DESC LIMIT 500)
@@ -124,9 +135,16 @@ export async function listOrders(actor: UserActor, p: ListParams) {
   if (p.prepaid) and.push({ prepaid: true });
   // Илүү төлөлт (#124-1): урьдчилж төлсний дараа дүн буурсан — нягтлан буцаана
   // Аудит А11: самбарын тоотой ижил — цуцлагдсаныг оруулахгүй
-  if (p.overpaid) and.push({ prepaid: true, paidAmount: { gt: db.order.fields.total }, status: { not: 'CANCELLED' } });
+  // Аудит #142: хэсэгчилсэн индексээр (Order_overpaid_idx) — бүтэн уншилтгүй
+  if (p.overpaid) {
+    const r = await db.$queryRaw<{ id: number }[]>`SELECT id FROM "Order" WHERE prepaid = true AND status <> 'CANCELLED' AND "paidAmount" > total ORDER BY id DESC LIMIT 10001`;
+    and.push({ id: { in: r.length ? r.map((x) => x.id) : [-1] } });
+  }
   if (p.noKhoroo) and.push({ district: { not: null }, khoroo: null });
-  if (p.postponed) and.push({ postponeCount: { gt: 0 } });
+  if (p.postponed) {
+    const r = await db.$queryRaw<{ id: number }[]>`SELECT id FROM "Order" WHERE "postponeCount" > 0 ORDER BY id DESC LIMIT 10001`;
+    and.push({ id: { in: r.length ? r.map((x) => x.id) : [-1] } });
+  }
   if (p.todayDelivery) and.push({ deliveryDate: dateOnly(today), status: { in: ['NEW', 'ASSIGNED'] } });
   const ids = p.q ? await searchIds(p.q) : null;
   if (ids) and.push({ id: { in: ids.length ? ids : [-1] } });

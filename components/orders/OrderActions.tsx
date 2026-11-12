@@ -115,22 +115,3 @@ export function CancelOrderModal({ order, onClose, onDone }: { order: { id: numb
 }
 
 /** «Мөнгө орсон» баталгаажуулах (ахлах оператор, админ) */
-export function PaidConfirmModal({ order, onClose, onDone }: { order: { id: number; number: string; total: number; phone: string } | null; onClose: () => void; onDone: (m: string) => void }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => setError(null), [order]);
-  return (
-    <Modal open={!!order} onClose={onClose} title={order ? `№${order.number} — мөнгө орсон уу?` : ''}
-      footer={<><Button onClick={onClose}>Болих</Button><Button variant="dark" loading={busy} onClick={async () => {
-        if (!order) return;
-        setBusy(true); setError(null);
-        try { await api(`/api/orders/${order.id}/paid`, { method: 'POST', json: {} }); onDone(`№${order.number} — мөнгө орсон, «Шинэ» боллоо`); }
-        catch (e) { setError(msg(e)); } finally { setBusy(false); }
-      }}>💵 Мөнгө орсон</Button></>}>
-      <div className="flex flex-col gap-2 text-[14px]">
-        {error ? <Notice>{error}</Notice> : null}
-        {order ? <p>{formatPhone(order.phone)} · <b>{money(order.total)}</b> — урьдчилгаа орсныг шалгасан бол баталгаажуулна. Захиалга «Шинэ» болж хүргэлтэд орно.</p> : null}
-      </div>
-    </Modal>
-  );
-}

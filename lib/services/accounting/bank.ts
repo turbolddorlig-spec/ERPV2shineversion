@@ -189,6 +189,9 @@ async function autoMatch(tx: Tx, actor: Actor, txId: number, phones: string[]): 
     const orders = await tx.order.findMany({ where: { status: 'PENDING_PAYMENT', OR: [{ phone }, { extraPhone: phone }] }, orderBy: { createdAt: 'asc' }, take: 5, select: { id: true, total: true } });
     for (const o of orders) {
       await lockOrder(tx, o.id);
+      // Аудит #142: түгжихээс өмнө «Мөнгө орсон» / цуцлагдсан болсон бол дараагийн захиалгыг үзнэ
+      const cur = await tx.order.findUnique({ where: { id: o.id }, select: { status: true } });
+      if (cur?.status !== 'PENDING_PAYMENT') continue;
       const paid = (await paidFor(tx, o.id)) + t.amount;
       await tx.bankTransaction.update({ where: { id: txId }, data: { orderId: o.id, phone, status: 'PARTIAL_PAYMENT', matchedAt: new Date(), matchedByName: 'Автомат' } });
       await restatus(tx, o.id);
@@ -301,7 +304,7 @@ export async function matchOrderWithTransactions(orderId: number) {
 }
 
 /** «Гараар тааруулах»: захиалгын дугаараар (хуучин шиг; хуучин захиалгыг цуцалж шинээр үүсгэхгүй) */
-export async function manualMatch(actor: UserActor, idIn: unknown, input: { orderNumber?: unknown }) {
+export async function manualMatch(actor: UserActor, idIn: unknown, input: { orderNumber?: unknown; note?: unknown }) {
   assertEdit(actor);
   const id = Number(idIn);
   const number = String(input.orderNumber ?? '').trim();
@@ -316,7 +319,11 @@ export async function manualMatch(actor: UserActor, idIn: unknown, input: { orde
     const o0 = await tx.order.findUnique({ where: { number }, select: { id: true } });
     if (!o0) throw notFound('Захиалга олдсонгүй');
     await lockOrder(tx, o0.id);
-    const o = await tx.order.findUniqueOrThrow({ where: { id: o0.id }, select: { id: true, number: true, status: true, total: true, prepaid: true } });
+    const o = await tx.order.findUniqueOrThrow({ where: { id: o0.id }, select: { id: true, number: true, status: true, total: true, prepaid: true, phone: true, extraPhone: true } });
+    // Аудит #142 (эзний шийдвэр): гүйлгээний утас захиалгынхаас өөр бол анхааруулж, шалтгаан бичүүлнэ (түүхэнд)
+    const phoneDiff = !!t.phone && t.phone !== o.phone && t.phone !== o.extraPhone;
+    const note = String(input.note ?? '').trim().slice(0, 300);
+    if (phoneDiff && note.replace(/\s/g, '').length < 5) throw conflict(`Гүйлгээний утас ${t.phone} нь №${o.number} захиалгын утас ${o.phone}-тэй таарахгүй байна — итгэлтэй бол шалтгаанаа бичнэ үү`, 'phone_mismatch');
     // Аудит Б8 (эзний шийдвэр): зөвхөн «Төлбөр хүлээж буй» — «Шинэ», хүргэсэн, цуцлагдсанд тааруулахгүй (буцаах арга байхгүй тул)
     if (o.status !== 'PENDING_PAYMENT') throw conflict(`№${o.number} «Төлбөр хүлээж буй» биш — зөвхөн төлбөр хүлээж буй захиалгад тааруулна`, 'not_pending');
     const prev = t.orderId;
@@ -338,7 +345,7 @@ export async function manualMatch(actor: UserActor, idIn: unknown, input: { orde
     const paid = await paidFor(tx, o.id);
     let paidMarked = false;
     if (o.status === 'PENDING_PAYMENT' && paid >= o.total) paidMarked = await markPaidByBank(tx, actor, o.id, paid, 'Гараар тааруулсан');
-    await writeAudit(actor, 'bank.manual_match', 'BankTransaction', String(id), { amount: t.amount, order: o.number, prevOrderId: prev, paid, total: o.total, paidMarked }, tx, ['money', 'bank']);
+    await writeAudit(actor, 'bank.manual_match', 'BankTransaction', String(id), { amount: t.amount, order: o.number, prevOrderId: prev, paid, total: o.total, paidMarked, ...(phoneDiff ? { phoneMismatch: { tx: t.phone, order: o.phone }, note } : {}) }, tx, ['money', 'bank']);
     return { transaction: await tx.bankTransaction.findUniqueOrThrow({ where: { id } }), paid, total: o.total, paidMarked };
   });
   bustCounts();

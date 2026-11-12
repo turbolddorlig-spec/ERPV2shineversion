@@ -8,7 +8,7 @@ import { Notice } from '@/components/ui/Notice';
 import { OrderModal, type EditOrder, type FormLine, type OrderPrefill } from './OrderForm';
 import { CallsModal } from './CallsClient';
 import { HourlyModal } from './HourlyModal';
-import { CancelOrderModal, HistoryDrawer, PaidConfirmModal } from './OrderActions';
+import { CancelOrderModal, HistoryDrawer } from './OrderActions';
 import { Icon } from '@/components/icons';
 import { api, ApiError } from '@/components/ui/api';
 import { Thumb } from '@/components/products/ProductsClient';
@@ -155,8 +155,8 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
   const [hourlyOpen, setHourlyOpen] = useState(false);
   const [historyId, setHistoryId] = useState<number | null>(null);
   const [cancelling, setCancelling] = useState<OItem | null>(null);
-  const [paying, setPaying] = useState<OItem | null>(null);
   const reqId = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
 
   const openEdit = useCallback(async (id: number, addLines?: FormLine[]) => {
     try {
@@ -179,6 +179,9 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
   }, [initialModal, openEdit]);
   const load = useCallback(async () => {
     const id = ++reqId.current;
+    // Аудит #142: шинэ хайлт эхлэхэд хуучин (хүлээгдэж буй) хүсэлтийг цуцална
+    abortRef.current?.abort();
+    const ctl = new AbortController(); abortRef.current = ctl;
     const sp = new URLSearchParams({ page: String(page), statuses: f.statuses.join(',') });
     if (q.trim()) sp.set('q', q.trim());
     if (f.operatorId) sp.set('operatorId', f.operatorId);
@@ -190,9 +193,12 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
     if (f.date === 'range') { if (f.from) sp.set('from', f.from); if (f.to) sp.set('to', f.to); }
     for (const k of ['prepaid', 'overpaid', 'noKhoroo', 'postponed', 'todayDelivery'] as const) if (f[k]) sp.set(k, '1');
     try {
-      const r = await api<ListResp>(`/api/orders?${sp}`);
+      const r = await api<ListResp>(`/api/orders?${sp}`, { signal: ctl.signal });
       if (id === reqId.current) { setData(r); setError(null); }
-    } catch (e) { if (id === reqId.current) setError(e instanceof ApiError ? e.message : 'Ачаалж чадсангүй'); }
+    } catch (e) {
+      if ((e as Error)?.name === 'AbortError') return;
+      if (id === reqId.current) setError(e instanceof ApiError ? e.message : 'Ачаалж чадсангүй');
+    }
   }, [f, q, page]);
   useEffect(() => { const t = setTimeout(load, q ? 300 : 0); return () => clearTimeout(t); }, [load, q]);
 
@@ -309,7 +315,6 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
                   <td className="px-2.5 py-2">{o.driverName ? <div className="line-clamp-1">{o.driverName}</div> : <span className="text-subtle">—</span>}</td>
                   <td className="px-1.5 py-1.5">
                     <div className="flex items-center justify-center gap-0.5">
-                      {o.status === 'PENDING_PAYMENT' && can?.markPaid ? <IconBtn tone="ok" icon="cash" label="Мөнгө орсон" onClick={() => setPaying(o)} /> : null}
                       {active && can?.edit ? (o.inHandover
                         ? <IconBtn tone="muted" icon="edit" label="Падаан үүссэн — засах боломжгүй" disabled />
                         : <IconBtn tone="info" icon="edit" label="Засах" onClick={() => openEdit(o.id)} />) : null}
@@ -337,7 +342,6 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
 
       <HistoryDrawer orderId={historyId} onClose={() => setHistoryId(null)} />
       <CancelOrderModal order={cancelling} onClose={() => setCancelling(null)} onDone={(m) => { setCancelling(null); setFlash(m); load(); }} />
-      <PaidConfirmModal order={paying} onClose={() => setPaying(null)} onDone={(m) => { setPaying(null); setFlash(m); load(); }} />
       <HourlyModal open={hourlyOpen} onClose={() => setHourlyOpen(false)} />
       <CallsModal key={callsKey} open={callsOpen} onClose={() => { setCallsOpen(false); resetUrl(); }}
         onCreateOrder={(prefill) => { setCallsOpen(false); setOrderModal({ prefill, fromCalls: true }); }} />

@@ -4,6 +4,7 @@ import type { Role } from '@prisma/client';
 import { AppError } from '@/lib/errors';
 import type { UserActor } from '@/lib/services/users';
 import { resetDb } from '../helpers/reset';
+import { bankPay } from '../helpers/bankPay';
 
 /**
  * Модуль 7в — Нийлүүлэгч (#96–#98): падааны өдрөөр, авсан тоогоор, 1 ширхэгийн суутгал × тоо;
@@ -296,7 +297,8 @@ describe('мөнгө орсон захиалга (#102) — хуучин лог�
     // төлбөр хүлээж буй — тоологдохгүй
     let ov = await SP.overview(adm);
     expect([ov.orderDays[0]!.total, ov.orderDays[1]!.total]).toEqual([0, 0]);
-    const r = await O.markPaid(sa, p.id);
+    await bankPay(p.id);
+    const r = { order: await db.order.findUniqueOrThrow({ where: { id: p.id } }) };
     expect([r.order.number, r.order.status, U.ymdOf(r.order.deliveryDate), r.order.prepaid]).toEqual([p.number, 'NEW', today, true]);
     expect(await db.order.count()).toBe(1); // цуцалж дахин үүсгээгүй
     // «Шинэ» байгаад цуцлагдсан, он сар өдөртэй — тоологдохгүй
