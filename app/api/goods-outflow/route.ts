@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { errorResponse, json, requireApiUser } from '@/lib/http';
 import * as S from '@/lib/services/outflow';
 import { notFound } from '@/lib/errors';
+import { withHeavy } from '@/lib/heavy';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +14,8 @@ export async function GET(req: NextRequest) {
     const g = (k: string) => sp.get(k) ?? undefined;
     const tp = { q: g('q'), tab: g('tab'), zone: g('zone'), owner: g('owner'), dollar: g('dollar'), status: g('status'), sort: g('sort'), dir: g('dir'), page: Number(g('page') ?? 1) };
     switch (g('view') ?? 'table') {
-      case 'table': return json(await S.outflowTable(ctx.actor, tp));
+      // Аудит #141: анхны тооцоолол хүнд — зэрэг тоо хязгаартай (дараагийнх нь санах ойгоос)
+      case 'table': return json(await withHeavy(() => S.outflowTable(ctx.actor, tp)));
       case 'ids': return json(await S.filteredIds(ctx.actor, tp));
       case 'alerts': return json(await S.alertsView(ctx.actor));
       case 'pages': return json(await S.productPages(ctx.actor, g('id')));

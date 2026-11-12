@@ -133,7 +133,24 @@ export async function assignOrders(actor: UserActor, input: { ids?: unknown; dri
  * pickup = жолооч өөрөө — зөвхөн хуваарилаагүй «Шинэ» захиалгыг авна (өөр жолоочийнхыг булаахгүй).
  */
 export async function assignCore(actor: UserActor, ids: number[], driver: { id: string; name: string }, opts: { pickup?: boolean } = {}) {
-  const res = await inTx(async (tx) => {
+  // Аудит #141: олон захиалгыг 50-аар хэсэгчилж тус бүр богино гүйлгээгээр — нийтлэг түгжээг удаан барихгүй
+  if (ids.length > 50) {
+    const out = { assigned: [] as Awaited<ReturnType<typeof assignChunk>>['assigned'], skipped: [] as Awaited<ReturnType<typeof assignChunk>>['skipped'] };
+    const sorted = [...ids].sort((a, b) => a - b);
+    for (let i = 0; i < sorted.length; i += 50) {
+      const r = await assignChunk(actor, sorted.slice(i, i + 50), driver, opts);
+      out.assigned.push(...r.assigned); out.skipped.push(...r.skipped);
+    }
+    bustCounts(); kpiCache = null;
+    return out;
+  }
+  const res = await assignChunk(actor, ids, driver, opts);
+  bustCounts(); kpiCache = null;
+  return res;
+}
+
+async function assignChunk(actor: UserActor, ids: number[], driver: { id: string; name: string }, opts: { pickup?: boolean }) {
+  return inTx(async (tx) => {
     await lockDelivery(tx);
     await lockOrders(tx, ids);
     const orders = await tx.order.findMany({ where: { id: { in: ids } }, orderBy: { id: 'asc' } });
@@ -161,8 +178,6 @@ export async function assignCore(actor: UserActor, ids: number[], driver: { id: 
     }
     return { assigned: done, skipped };
   });
-  bustCounts(); kpiCache = null;
-  return res;
 }
 
 /** Агуулахаас өгөгдсөн (өөрчлөх боломжгүй) падаанууд: id → дугаар */

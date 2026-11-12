@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import ExcelJS from 'exceljs';
 import { errorResponse, requireApiUser } from '@/lib/http';
 import { callAnalysis, pageProducts, pageReport } from '@/lib/services/orders/reports';
+import { withHeavy } from '@/lib/heavy';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,7 +15,7 @@ export async function GET(req: NextRequest) {
     const wb = new ExcelJS.Workbook();
     let name = 'tailan';
     if (sp.get('kind') === 'calls') {
-      const r = await callAnalysis(ctx.actor, { ...p, bucket: sp.get('bucket') || undefined, by: sp.get('by') || undefined });
+      const r = await withHeavy(() => callAnalysis(ctx.actor, { ...p, bucket: sp.get('bucket') || undefined, by: sp.get('by') || undefined }));
       const ws = wb.addWorksheet('Дуудлага');
       ws.columns = [{ header: 'Шалтгаан', key: 'label', width: 26 }, { header: 'Тоо', key: 'n', width: 10 }, { header: '%', key: 'pct', width: 8 }];
       ws.getRow(1).font = { bold: true };
@@ -27,14 +28,14 @@ export async function GET(req: NextRequest) {
       }
       name = `duudlaga-${r.from}-${r.to}`;
     } else if (sp.get('by') === 'product') {
-      const rows = await pageProducts(ctx.actor, p);
+      const rows = await withHeavy(() => pageProducts(ctx.actor, p));
       const ws = wb.addWorksheet('Бараа');
       ws.columns = [{ header: 'Код', key: 'code', width: 16 }, { header: 'Бараа', key: 'name', width: 40 }, { header: 'Өнгө/хэмжээ', key: 'label', width: 16 }, { header: 'Ширхэг', key: 'qty', width: 10 }, { header: 'Захиалга', key: 'orders', width: 10 }];
       ws.getRow(1).font = { bold: true };
       rows.forEach((x) => ws.addRow(x));
       name = 'peij-baraa';
     } else {
-      const r = await pageReport(ctx.actor, { ...p, by: sp.get('by') || undefined });
+      const r = await withHeavy(() => pageReport(ctx.actor, { ...p, by: sp.get('by') || undefined }));
       const ws = wb.addWorksheet('Пэйж');
       ws.columns = [{ header: r.by === 'operator' ? 'Оператор' : r.by === 'day' ? 'Өдөр' : 'Пэйж', key: 'label', width: 28 }, { header: 'Захиалга', key: 'created', width: 12 }, { header: 'Баталгаажсан', key: 'confirmed', width: 14 }, { header: 'Цуцлагдсан', key: 'cancelled', width: 12 }, { header: 'Хүргэсэн', key: 'delivered', width: 12 }];
       ws.getRow(1).font = { bold: true };

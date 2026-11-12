@@ -365,6 +365,43 @@ function ApproveDialog({ r, onClose, onDone }: { r: Day; onClose: () => void; on
   );
 }
 
+/** Нягтлан өдрийг хүчээр хаах (#141): жолооч тооцоогоо илгээгээгүй ч — авсан Данс + Бэлэнээ бичнэ, дутуу нь өр */
+function ForceCloseDialog({ r, onClose, onDone }: { r: Day; onClose: () => void; onDone: () => void }) {
+  const neg = r.toReceive < 0;
+  const [cash, setCash] = useState(neg ? String(r.toReceive) : '');
+  const [bank, setBank] = useState(neg ? '0' : '');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const c = Number(cash || 0); const b = Number(bank || 0);
+  const debt = r.toReceive - c - b;
+  const go = async () => {
+    if (!window.confirm(`${r.driverName}-ийн ${r.date}-ны тооцоог хүчээр хаах уу? Бэлэн ${money(c)}, Данс ${money(b)}${debt > 0 ? `, ${money(debt)} өр болно` : ''}. Буцаах боломжгүй.`)) return;
+    setBusy(true); setErr(null);
+    try { await api('/api/accounting/settlements/force', { method: 'POST', json: { driverId: r.driverId, date: r.date, cash: c, bank: b, note } }); onDone(); }
+    catch (e) { setErr(msg(e)); } finally { setBusy(false); }
+  };
+  const num = (v: string) => v.replace(neg ? /[^\d-]/g : /[^\d]/g, '');
+  return (
+    <Modal open onClose={onClose} title="Хүчээр хаах" subtitle={`${r.driverName} · ${r.date} — жолооч тооцоогоо илгээгээгүй`}
+      footer={<><Button onClick={onClose}>Болих</Button><Button variant="danger" loading={busy} disabled={note.trim().length < 3 || (!neg && debt < 0)} onClick={() => void go()}>Хүчээр хаах</Button></>}>
+      <div className="flex flex-col gap-2.5">
+        <Row l="Хүлээн авах дүн" v={money(r.toReceive)} strong />
+        <Row l="«Данс» гэж тэмдэглэсэн хүргэлт" v={money(r.bank)} /><Row l="«Бэлэн» гэж тэмдэглэсэн хүргэлт" v={money(r.cash)} />
+        {neg ? <Notice tone="info">Компани жолоочид {money(-r.toReceive)} өгөх өдөр — зөвхөн бэлэн.</Notice> : null}
+        <div className="grid grid-cols-2 gap-2">
+          <label className="flex flex-col gap-1 text-[12px] font-semibold text-muted">Данс ₮ (авсан)<input inputMode="numeric" value={bank} disabled={neg} onChange={(e) => setBank(num(e.target.value))} className="h-11 rounded-xl border border-line bg-surface px-3 text-[15px] text-ink" /></label>
+          <label className="flex flex-col gap-1 text-[12px] font-semibold text-muted">Бэлэн ₮ (авсан)<input inputMode="numeric" value={cash} disabled={neg} onChange={(e) => setCash(num(e.target.value))} className="h-11 rounded-xl border border-line bg-surface px-3 text-[15px] text-ink" /></label>
+        </div>
+        {!neg ? (debt > 0 ? <Notice tone="warn">Дутуу {money(debt)} — жолоочийн өр болж «Төлбөр тооцооны бүртгэл»-д орно.</Notice> : debt < 0 ? <Notice>Авах дүнгээс {money(-debt)} илүү байна.</Notice> : <Notice tone="ok">Дүн яг таарч байна.</Notice>) : null}
+        <label className="flex flex-col gap-1 text-[12px] font-semibold text-muted">Шалтгаан (заавал)<textarea rows={2} maxLength={300} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Жишээ: жолооч 2 хоног тооцоогоо илгээгээгүй" className="rounded-xl border border-line bg-surface px-3 py-2 text-[14px] text-ink" /></label>
+        <Notice tone="info">Хаасны дараа жолооч энэ өдрийн юуг ч өөрчлөхгүй, буцаах боломжгүй.</Notice>
+        {err ? <Notice>{err}</Notice> : null}
+      </div>
+    </Modal>
+  );
+}
+
 // ───────────────────────── Жолоочийн дэлгэрэнгүй ─────────────────────────
 
 interface DOrder {
@@ -500,6 +537,7 @@ function DriverDrawer({ driverId, date, onClose, onChanged, onPerf, onApprove }:
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [toggle, setToggle] = useState<DOrder | null>(null);
+  const [force, setForce] = useState(false);
   const load = useCallback(async () => { try { setD(await api(`/api/accounting/driver?driverId=${driverId}&date=${date}`)); setErr(null); } catch (e) { setErr(msg(e)); } }, [driverId, date]);
   useEffect(() => { void load(); }, [load]);
   const r = d?.day;
@@ -510,7 +548,9 @@ function DriverDrawer({ driverId, date, onClose, onChanged, onPerf, onApprove }:
         {r ? <label className="mr-auto flex items-center gap-2 text-[13px] font-semibold"><input type="checkbox" className="h-5 w-5" checked={!!r.settlement?.accountingSettled} onChange={() => void markSettled()} />Тооцоо хийсэн</label> : null}
         {r && !r.locked ? <Button onClick={() => onPerf(r)}>✏️ Гүйцэтгэл засах</Button> : null}
         {r?.settlement?.status === 'PENDING' ? <Button variant="primary" onClick={() => onApprove(r)}>Баталгаажуулах</Button> : null}
+        {r && !r.locked && r.settlement?.status !== 'PENDING' && r.handover ? <Button variant="danger" onClick={() => setForce(true)}>Хүчээр хаах</Button> : null}
         <Button onClick={onClose}>Хаах</Button></>}>
+      {force && r ? <ForceCloseDialog r={r} onClose={() => setForce(false)} onDone={async () => { setForce(false); await load(); onChanged(); }} /> : null}
       {err ? <Notice>{err}</Notice> : null}
       {d && r ? (
         <div className="flex flex-col gap-3">

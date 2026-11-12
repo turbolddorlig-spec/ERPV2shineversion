@@ -12,6 +12,9 @@ export type Tx = Prisma.TransactionClient;
  * Эдгээр үйлдэл цөөн (ахлах жолооч, агуулах) бөгөөд богино тул нэг түгжээ хангалттай, зэрэг дарахад давхар бичигдэхгүй.
  */
 export async function lockDelivery(tx: Tx) {
+  // Аудит #141: түгжээг 8 сек-ээс удаан хүлээхгүй — олон хүн зэрэг дарахад холболт (pool) хүлээлтэд эзлэгдэж, нягтлан зэрэг
+  // бусад хуудас гацахаас сэргийлнэ. Хэтэрвэл «Систем түр завгүй — дахин дарна уу» (errorResponse, 409 busy).
+  await tx.$executeRaw`SET LOCAL lock_timeout = '8s'`;
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(3::int4, 0::int4)`;
 }
 

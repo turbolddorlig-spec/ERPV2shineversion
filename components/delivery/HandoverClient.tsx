@@ -99,7 +99,6 @@ export function HandoverClient() {
                     className="!bg-ok !text-white" onClick={() => run(() => api(`/api/handover/${h.id}/confirm`, { method: 'POST', json: {} }), `${h.driverName}-д өгсөн — жолооч утсаараа хүлээн авна`)}>✓ Барааг бүрэн өгсөн</Button>
                 </> : null}
                 {h.status === 'HANDED_OVER' ? <Button loading={busy} onClick={() => { if (confirm('Жолооч хараахан хүлээн аваагүй — падаан ноорог болно (бараа хөдлөөгүй). Үргэлжлүүлэх үү?')) run(() => api(`/api/handover/${h.id}/revert`, { method: 'POST', json: {} }), 'Ноорог болголоо'); }}>Буцаах</Button> : null}
-                {h.status === 'RECEIVED' ? <Button loading={busy} onClick={() => { if (confirm('Бараа жолоочоос агуулахад буцаж, захиалгууд «Жолоочид оноосон» болно. Үргэлжлүүлэх үү?')) run(() => api(`/api/handover/${h.id}/revert`, { method: 'POST', json: {} }), 'Буцаагдлаа — бараа агуулахад'); }}>Буцаах</Button> : null}
               </>
             ) : null}
             {h ? <a href={`/print/handover/${h.id}`} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center gap-1.5 rounded-[11px] border border-line bg-surface px-4 font-semibold"><Icon name="file" size={16} />Хэвлэх</a> : null}

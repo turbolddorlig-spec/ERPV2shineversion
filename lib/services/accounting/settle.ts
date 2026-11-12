@@ -140,6 +140,47 @@ async function driverDetail(driverId: string, date: string) {
   };
 }
 
+/**
+ * Аудит #141 (эзний шийдвэр): нягтлан өдрийг ХҮЧЭЭР хаана — жолооч тооцоогоо илгээгээгүй ч. Нягтлан авсан Данс + Бэлэнээ бичнэ;
+ * Авах дүнгээс дутуу нь жолоочийн өр (компанийн өрийн бүртгэлд). Шалтгаан заавал, түүхэнд. Дараа нь жолооч юу ч өөрчлөхгүй.
+ */
+export async function forceCloseSettlement(actor: UserActor, input: { driverId?: unknown; date?: unknown; cash?: unknown; bank?: unknown; note?: unknown }) {
+  assertAccount(actor);
+  const driverId = cleanUuid(input.driverId);
+  const date = cleanYmd(input.date);
+  if (date > ubDay()) throw badRequest('Ирээдүйн өдрийг хаахгүй');
+  const note = String(input.note ?? '').trim().slice(0, 300);
+  if (note.replace(/\s/g, '').length < 3) throw badRequest('Хүчээр хаах шалтгаанаа бичнэ үү', 'reason_required');
+  const name = await driverName(db, driverId);
+  return inTx(async (tx) => {
+    const s = await lockSettlement(tx, driverId, date, name);
+    if (s.status === 'COMPLETED') throw conflict('Энэ өдрийн тооцоо аль хэдийн баталгаажсан', 'day_locked');
+    const day = await computeDriverDay(tx, date, driverId);
+    if (!day.total && !day.handover) throw conflict('Энэ өдөр падаан байхгүй', 'no_handover');
+    if (day.out || day.notReceived) throw conflict(`Дуусаагүй захиалга ${day.out + day.notReceived} байна — эхлээд «Төлөв солих»-оор хүргэсэн / цуцалсан болгоно уу`, 'unfinished');
+    const neg = day.toReceive < 0;
+    const cash = cleanMoney(input.cash, 'Бэлэн', neg);
+    const bank = cleanMoney(input.bank, 'Данс');
+    const debt = day.toReceive - cash - bank;
+    if (!neg && debt < 0) throw badRequest(`Бэлэн + Данс нь Авах дүн ${day.toReceive.toLocaleString('en-US')}₮-өөс их байж болохгүй`, 'over');
+    checkSplit(day, cash, bank, neg ? 0 : debt);
+    const snapshot = { ...day, settlement: null, locked: true } as unknown as Prisma.InputJsonValue;
+    const now = new Date();
+    const u = await tx.driverSettlement.update({ where: { id: s.id }, data: {
+      status: 'COMPLETED', cashAmount: cash, bankAmount: bank, debtAmount: debt, expectedAmount: day.toReceive, submittedAt: s.submittedAt ?? now,
+      approvedAt: now, approvedByName: `${actor.name} (хүчээр)`, snapshot, version: { increment: 1 },
+    } });
+    if (debt > 0) {
+      await tx.companyDebt.create({ data: {
+        driverId, driverName: name, kind: 'SETTLEMENT_DEBT', settlementId: s.id, amount: debt, createdByName: actor.name, date: dateOnly(date),
+        description: `Нягтлан хүчээр хаасан (${date}) — Бэлэн: ${cash.toLocaleString('en-US')}₮, Данс: ${bank.toLocaleString('en-US')}₮, дутуу ${debt.toLocaleString('en-US')}₮ өр. ${note}`,
+      } });
+    }
+    await writeAudit(actor, 'settlement.force_closed', 'DriverSettlement', String(s.id), { driver: name, date, cash, bank, debt, toReceive: day.toReceive, salary: day.salary, note, wasStatus: s.status }, tx, ['money']);
+    return { settlement: u, debt };
+  });
+}
+
 // ───────────────────────── Жолооч: «Орлого» ─────────────────────────
 
 export async function driverIncome(actor: UserActor, dateIn?: string) {
@@ -149,6 +190,21 @@ export async function driverIncome(actor: UserActor, dateIn?: string) {
   const d = await driverDetail(actor.id, date);
   const debt = await db.companyDebt.aggregate({ where: { driverId: actor.id, status: 'PENDING' }, _sum: { amount: true }, _count: true });
   return { date, today: ubDay(), ...d, companyDebt: { amount: debt._sum.amount ?? 0, count: debt._count } };
+}
+
+/**
+ * Аудит #141: тооцооны хуваалтын дүрэм (жолооч бичнэ, сервер шалгана).
+ *  • Данс ≤ «Данс» гэж тэмдэглэсэн хүргэлтийн нийлбэр (бэлнээр авсныг «данс» гэж бичиж нуухгүй).
+ *  • Компани жолоочид өртэй өдөр (Авах < 0): зөвхөн бэлэн = Авах дүн (данс, өр 0) — илүү мөнгө гарахгүй.
+ */
+function checkSplit(day: DriverDay, cash: number, bank: number, debt: number) {
+  const m = (n: number) => `${n.toLocaleString('en-US')}₮`;
+  if (day.toReceive < 0) {
+    if (bank !== 0 || debt !== 0 || cash !== day.toReceive) throw badRequest(`Компани жолоочид ${m(-day.toReceive)} өгөх өдөр — зөвхөн «Бэлэн» = ${m(day.toReceive)}, Данс ба Өр 0 байна`, 'neg_split');
+    return;
+  }
+  if (cash < 0) throw badRequest('Бэлэн хасах байж болохгүй', 'bad_split');
+  if (bank > day.bank) throw badRequest(`Данс ${m(bank)} нь «Данс» гэж тэмдэглэсэн хүргэлтийн дүн ${m(day.bank)}-өөс их байж болохгүй`, 'bank_over');
 }
 
 /** «Тооцоо нийлэх»: Бэлэн + Данс + Өр = Авах дүн (сервер тооцно, утсаас ирсэн дүнд итгэхгүй) */
@@ -167,6 +223,7 @@ export async function submitSettlement(actor: UserActor, input: { date?: unknown
     const bank = cleanMoney(input.bank, 'Данс');
     const debt = cleanMoney(input.debt, 'Өр');
     if (cash + bank + debt !== day.toReceive) throw badRequest(`Бэлэн + Данс + Өр = ${day.toReceive.toLocaleString('en-US')}₮ байх ёстой (одоо ${(cash + bank + debt).toLocaleString('en-US')}₮)`, 'sum_mismatch');
+    checkSplit(day, cash, bank, debt);
     const u = await tx.driverSettlement.update({
       where: { id: s.id },
       data: { status: 'PENDING', cashAmount: cash, bankAmount: bank, debtAmount: debt, expectedAmount: day.toReceive, submittedAt: new Date(), driverName: actor.name, version: { increment: 1 } },
@@ -210,7 +267,7 @@ export async function approveSettlement(actor: UserActor, idIn: unknown) {
     const date = ymdOf(s.date);
     const day = await computeDriverDay(tx, date, s.driverId);
     if (day.out || day.notReceived) throw conflict('Дуусаагүй захиалгатай — баталгаажуулах боломжгүй', 'unfinished');
-    if (day.toReceive !== s.expectedAmount || s.cashAmount + s.bankAmount + s.debtAmount !== day.toReceive) {
+    if (day.toReceive !== s.expectedAmount || s.cashAmount + s.bankAmount + s.debtAmount !== day.toReceive || (day.toReceive >= 0 && s.bankAmount > day.bank)) {
       mismatch = { expected: s.expectedAmount, now: day.toReceive, driverId: s.driverId, date };
       return null;
     }

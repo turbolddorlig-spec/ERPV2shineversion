@@ -255,13 +255,21 @@ describe('падаан', () => {
     expect(await bal(main, v1)).toBe(b0);
     await H.prepareHandover(wh, h.id); await checkAll(h.id);
     await giveTo(h.id, drv);
+    // Аудит #141 (эзний шийдвэр): жолооч хүлээн авсан падааныг хэзээ ч буцаахгүй
     const before = await bal(main, v1);
-    const r = await H.revertHandover(wh, h.id);
-    expect(r.status).toBe('DRAFT');
-    expect(await bal(main, v1)).toBe(before + 4);
-    expect(await bal(await drvLoc(drv), v1)).toBe(0);
-    expect(await db.stockReservation.count({ where: { orderId: { in: ids } } })).toBe(4);
-    expect((await db.order.findMany({ where: { id: { in: ids } } })).every((o) => o.status === 'ASSIGNED')).toBe(true);
+    await err(H.revertHandover(wh, h.id), 409, 'handover_received');
+    expect(await bal(main, v1)).toBe(before);
+    expect(await bal(await drvLoc(drv), v1)).toBe(4);
+    expect((await db.order.findMany({ where: { id: { in: ids } } })).every((o) => o.status === 'OUT_FOR_DELIVERY')).toBe(true);
+    expect((await V.reconcile(sa, { fresh: true })).ok).toBe(true);
+  });
+
+  it('«Падаан буцаах» зөвхөн ноорогт — устгахад захиалгууд жолоочид оноосон хэвээр', async () => {
+    const ids = await dayWithOrders(2);
+    const h = await H.createHandover(wh, { driverId: drv.id, date: today, orderIds: ids });
+    await H.prepareHandover(wh, h.id);
+    await err(H.deleteHandover(wh, h.id), 409, 'not_draft');
+    await H.revertHandover(wh, h.id);
     await H.deleteHandover(wh, h.id);
     expect(await db.handover.count()).toBe(0);
     expect((await db.order.findMany({ where: { id: { in: ids } } })).every((o) => o.handoverId === null && o.status === 'ASSIGNED')).toBe(true);

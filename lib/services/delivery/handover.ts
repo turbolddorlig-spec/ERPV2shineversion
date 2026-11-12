@@ -374,37 +374,12 @@ export async function revertHandover(actor: UserActor, idInput: unknown) {
     await lockDelivery(tx);
     const h = await loadForChange(tx, id);
     if (h.status === 'DRAFT') return;
-    if (h.status === 'RECEIVED') {
-      await assertDayOpen(tx, id);
-      const hos = await tx.handoverOrder.findMany({ where: { handoverId: id, removedAt: null }, select: { orderId: true } });
-      const orderIds = hos.map((x) => x.orderId);
-      await lockOrders(tx, orderIds);
-      const orders = await tx.order.findMany({ where: { id: { in: orderIds } }, include: { lines: true } });
-      const moved = orders.find((o) => o.status !== 'OUT_FOR_DELIVERY');
-      if (moved) throw conflict(`№${moved.number} захиалгыг жолооч аль хэдийн хүргэсэн/цуцалсан тул буцаах боломжгүй`, 'driver_started');
-      const qty = new Map<number, number>();
-      for (const o of orders) for (const l of o.lines) qty.set(l.variantId, (qty.get(l.variantId) ?? 0) + l.qty);
-      const wh = await tx.warehouse.findUnique({ where: { id: h.warehouseId }, include: { location: true } });
-      const fromId = await driverLocationId(tx, { id: h.driverId, name: h.driverName });
-      await applyMoves(tx, actor, { type: 'handover', id }, [...qty.entries()].map(([variantId, q]) => ({ type: 'HANDOVER_BACK' as const, variantId, qty: q, fromId, toId: wh!.location!.id, note: `${h.number} буцаасан` })));
-      for (const o of orders) await tx.stockReservation.createMany({ data: o.lines.map((l) => ({ ref: `order:${o.id}`, orderId: o.id, variantId: l.variantId, qty: l.qty })) });
-      await tx.order.updateMany({ where: { id: { in: orderIds } }, data: { status: 'ASSIGNED', outForDeliveryAt: null, version: { increment: 1 } } });
-      // Нэмэлт бараа: жолоочид бүтэн байгаа бол агуулахад буцаж, хүсэлт дахин «хүлээгдэж» болно
-      const xdocs = await tx.driverDoc.findMany({ where: { handoverId: id, kind: 'EXTRA_TAKE', status: 'GIVEN' }, include: { lines: true } });
-      if (xdocs.length) {
-        const xq = new Map<number, number>();
-        for (const d of xdocs) for (const l of d.lines) xq.set(l.variantId, (xq.get(l.variantId) ?? 0) + l.qty);
-        const g = await driverGoods(tx, h.driverId);
-        const sold = [...xq].find(([v, q]) => (g.returnable.get(v) ?? 0) < q);
-        if (sold) throw conflict('Нэмэлт барааг жолооч зарсан/буцаасан тул падааныг буцаах боломжгүй', 'driver_started');
-        await applyMoves(tx, actor, { type: 'handover', id }, [...xq].map(([variantId, q]) => ({ type: 'HANDOVER_BACK' as const, variantId, qty: q, fromId, toId: wh!.location!.id, note: `${h.number} нэмэлт бараа буцаасан` })));
-        for (const d of xdocs) await tx.stockReservation.createMany({ data: d.lines.map((l) => ({ ref: `extra:${d.id}`, variantId: l.variantId, qty: l.qty })) });
-        await tx.driverDoc.updateMany({ where: { id: { in: xdocs.map((d) => d.id) } }, data: { status: 'REQUESTED' } });
-      }
-    }
+    // Аудит #141 (эзний шийдвэр): жолооч хүлээн авсан падааныг ХЭЗЭЭ Ч буцаахгүй — «Маргааш» болсон бараа падаангүй хоцрох,
+    // мөнгө тооцоонд орохгүй болох эрсдэлийг бүрэн хаана. Хүлээн авахаас өмнө (Ноорог / Бэлтгэсэн / Агуулах өгсөн) л буцаана.
+    if (h.status === 'RECEIVED') throw conflict('Жолооч хүлээн авсан падааныг буцаах боломжгүй — захиалга бүрийг жолооч хүргэсэн / цуцалсан / маргааш болгоно', 'handover_received');
     await tx.handoverCheck.deleteMany({ where: { handoverId: id } });
     await tx.handover.update({ where: { id }, data: { status: 'DRAFT', preparedAt: null, preparedBy: null, handedOverAt: null, handedOverBy: null, receivedAt: null, receivedBy: null, version: { increment: 1 } } });
-    await writeAudit(actor, 'handover.reverted', 'Handover', String(id), { number: h.number, from: h.status }, tx, h.status === 'RECEIVED' ? ['delivery', 'stock'] : ['delivery']);
+    await writeAudit(actor, 'handover.reverted', 'Handover', String(id), { number: h.number, from: h.status }, tx, ['delivery']);
   });
   stockCache.today = null; bustCounts();
   return handoverDetail(actor, id);

@@ -362,7 +362,7 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     await recOk();
   });
 
-  it('нэмэлт бараатай падааныг хүлээн авсны дараа «Буцаах» — нэмэлт бараа ч агуулахад, хүсэлт дахин хүлээгдэнэ; зарсан бол буцаахгүй', async () => {
+  it('#141: нэмэлт бараатай падааныг жолооч хүлээн авсны дараа «Буцаах» хориотой — бараа, хүсэлт хөдлөхгүй', async () => {
     const main = await locOf(mainWh);
     const ids = [(await O.createOrder(op, ub({ deliveryDate: today, lines: [{ variantId: v1, qty: 1 }] }))).order.id];
     await L.assignOrders(lead, { ids, driverId: drv.id });
@@ -372,8 +372,8 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     await H.prepareHandover(wh, h.id); await checkAll(h.id); await H.setCheck(wh, h.id, { variantId: v1, checked: true, kind: 'EXTRA' });
     await H.confirmHandover(wh, h.id); await H.setDriverCheck(drv, h.id, { variantId: 'all', checked: true }); await H.receiveHandover(drv, h.id);
     expect(await bal(main, v1)).toBe(b0 - 3);
-    await H.revertHandover(wh, h.id);
-    expect([await bal(main, v1), (await db.driverDoc.findUniqueOrThrow({ where: { id: rq.doc.id } })).status, await db.stockReservation.count({ where: { ref: `extra:${rq.doc.id}` } })]).toEqual([b0, 'REQUESTED', 1]);
+    await err(H.revertHandover(wh, h.id), 409, 'handover_received');
+    expect([await bal(main, v1), (await db.driverDoc.findUniqueOrThrow({ where: { id: rq.doc.id } })).status]).toEqual([b0 - 3, 'GIVEN']);
     await recOk();
   });
 
@@ -393,16 +393,21 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     await recOk();
   });
 
-  it('#124-Д: падаан буцаагдсан бол «Маргааш»-ыг буцаахгүй — падаан гацахгүй', async () => {
+  it('#141: хүлээн авсан падааныг буцаахгүй → «Маргааш» падаантайгаа үлдэж, буцаахад тэр өдрийн тооцоонд орно (падаангүй хүргэлтгүй)', async () => {
     const ids = [(await O.createOrder(op, ub({ deliveryDate: today, lines: [{ variantId: v1, qty: 1 }] }))).order.id, (await O.createOrder(op, ub({ phone: '99887766', deliveryDate: today, lines: [{ variantId: v1, qty: 1 }] }))).order.id];
     await L.assignOrders(lead, { ids, driverId: drv.id });
     const h = await H.createHandover(wh, { driverId: drv.id, date: today, orderIds: ids });
     await H.prepareHandover(wh, h.id); await checkAll(h.id); await H.confirmHandover(wh, h.id);
     await H.setDriverCheck(drv, h.id, { variantId: 'all', checked: true }); await H.receiveHandover(drv, h.id);
     await DR.postponeOrder(drv, ids[0]!, {});
-    await H.revertHandover(wh, h.id);
-    await err(DR.undoPostpone(drv, ids[0]!), 409, 'handover_reverted');
-    expect((await db.order.findUniqueOrThrow({ where: { id: ids[0]! } })).status).toBe('NEW');
+    await err(H.revertHandover(wh, h.id), 409, 'handover_received');
+    await err(H.deleteHandover(wh, h.id), 409, 'not_draft');
+    await DR.undoPostpone(drv, ids[0]!);
+    const o = await db.order.findUniqueOrThrow({ where: { id: ids[0]! } });
+    expect([o.status, o.handoverId]).toEqual(['OUT_FOR_DELIVERY', h.id]);
+    await DR.deliverOrder(drv, ids[0]!, { payment: 'CASH' });
+    const C = await import('@/lib/services/accounting/calc');
+    expect((await C.computeDriverDay(db, today, drv.id)).deliveredAmount).toBe(o.total);
     expect(await db.auditLog.count({ where: { action: { in: ['handover.check', 'handover.driver_check'] } } })).toBeGreaterThan(0);
     await recOk();
   });

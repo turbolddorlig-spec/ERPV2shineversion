@@ -198,8 +198,8 @@ export async function undoDelivery(actor: UserActor, idIn: unknown, input: { not
     checkVersion(o, input.version);
     await assertDayOpen(tx, o.handoverId, { allowPending: !!ob });
     const drv = driverOf(o, actor, ob);
-    // Жолооч: хүргэсэн өдөр эсвэл маргааш нь л (нягтлан аль ч өдөр — тооцоо баталгаажаагүй бол)
-    if (!ob && o.deliveredAt && ymdOf(new Date(o.deliveredAt.getTime() + 8 * 3600_000)) < ubDay(new Date(), -1)) throw conflict('2 хоногоос өмнө хүргэсэн захиалгыг ахлах жолооч / нягтлан шийднэ', 'too_old');
+    // Аудит #141 (эзний шийдвэр): жолооч зөвхөн хүргэсэн өдөртөө өөрөө буцаана; түүнээс хойш нягтлан (тооцоо баталгаажаагүй бол)
+    if (!ob && o.deliveredAt && ymdOf(new Date(o.deliveredAt.getTime() + 8 * 3600_000)) < ubDay()) throw conflict('Өмнөх өдөр хүргэсэн захиалгыг зөвхөн нягтлан буцаана', 'too_old');
     const labels = new Map(o.lines.map((l) => [l.variantId, l.name]));
     const toId = await driverLocationId(tx, drv);
     const back = o.lines.map((l) => ({ type: 'DELIVERY_BACK' as const, variantId: l.variantId, qty: l.qty - l.refusedQty, fromId: null, toId, note: `№${o.number} хүргэсний дараа буцаасан` }));
@@ -319,6 +319,7 @@ export async function undoPostpone(actor: UserActor, idIn: unknown) {
     const hoP = await tx.handoverOrder.findFirst({ where: { orderId: id, removeReason: 'Маргааш (бараа жолоочид)' }, orderBy: { id: 'desc' }, select: { handoverId: true } });
     await assertDayOpen(tx, hoP?.handoverId);
     // Падаан буцаагдсан бол (бараа агуулахад буцсан) «Маргааш»-ыг буцаахгүй (#124-Д) — захиалга «Шинэ» хэвээр, ахлах дахин хуваарилна
+    if (hadGoods && !hoP) throw conflict('Падааны мөр олдсонгүй — «Маргааш»-ыг буцаах боломжгүй, ахлах жолоочид хандана уу', 'handover_reverted');
     if (hadGoods && hoP) {
       const h = await tx.handover.findUnique({ where: { id: hoP.handoverId }, select: { status: true } });
       if (!h || !isGiven(h.status)) throw conflict('Падаан буцаагдсан тул «Маргааш»-ыг буцаах боломжгүй — ахлах жолоочид хандана уу', 'handover_reverted');

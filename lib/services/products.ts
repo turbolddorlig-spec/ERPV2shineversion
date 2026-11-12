@@ -568,6 +568,34 @@ export async function searchVariants(actor: UserActor, qInput: string, limit = 2
   });
 }
 
+/**
+ * Аудит #141: Excel экспорт хэсэг хэсгээр (1000 бараа) — 60,000+ хувилбарыг нэг дор санах ойд ачаалахгүй (сервер унахаас сэргийлнэ).
+ */
+export async function* exportBatches(actor: UserActor, batch = 1000) {
+  assertView(actor);
+  const { productStockTotals } = await import('./stock/views');
+  let cursor = '';
+  for (;;) {
+    const rows = await db.product.findMany({
+      where: cursor ? { code: { gt: cursor } } : undefined,
+      orderBy: { code: 'asc' }, take: batch,
+      select: {
+        id: true, code: true, name: true, description: true, price: true, costPrice: true, status: true,
+        category: { select: { name: true } }, season: { select: { name: true } },
+        variants: { where: { isActive: true }, orderBy: { sortOrder: 'asc' }, select: { id: true, code: true, color: true, size: true, priceOverride: true } },
+        images: { orderBy: [{ isMain: 'desc' }, { sortOrder: 'asc' }], select: { fileKey: true, color: true, isMain: true } },
+      },
+    });
+    if (!rows.length) return;
+    const stock = new Map<number, { total: number; available: number }>();
+    const m = await productStockTotals(rows.map((r) => r.id));
+    for (const [, v] of m) for (const [vid, x] of v.byVariant) stock.set(vid, { total: x.total, available: x.available });
+    yield { rows, stock };
+    if (rows.length < batch) return;
+    cursor = rows[rows.length - 1]!.code;
+  }
+}
+
 export async function exportRows(actor: UserActor) {
   assertView(actor);
   const showCost = canSeeCost(actor.roles);
