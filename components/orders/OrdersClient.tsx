@@ -285,9 +285,9 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
       {error ? <Notice>{error}</Notice> : null}
 
       <div className="overflow-x-auto rounded-xl border border-line bg-surface">
-        <table className="w-full min-w-[1080px] text-[13px]">
+        <table className="w-full min-w-[1160px] text-[13px]">
           <thead className="border-b border-line bg-surface2/70">
-            <tr><th className={clsx(th, 'w-[130px]')}>Захиалга</th><th className={clsx(th, 'w-[110px]')}>Утас</th><th className={th}>Бараа</th><th className={clsx(th, 'w-[250px]')}>Хаяг</th><th className={clsx(th, 'w-[150px]')}>Төлөв</th><th className={clsx(th, 'w-[95px] text-right')}>Дүн</th><th className={clsx(th, 'w-[130px]')}>Оператор</th><th className={clsx(th, 'w-[110px]')}>Жолооч</th><th className={clsx(th, 'w-[124px] text-center')}>Үйлдэл</th></tr>
+            <tr><th className={clsx(th, 'w-[130px]')}>Захиалга</th><th className={clsx(th, 'w-[110px]')}>Утас</th><th className={th}>Бараа</th><th className={clsx(th, 'w-[340px]')}>Хаяг</th><th className={clsx(th, 'w-[150px]')}>Төлөв</th><th className={clsx(th, 'w-[95px] text-right')}>Дүн</th><th className={clsx(th, 'w-[130px]')}>Оператор</th><th className={clsx(th, 'w-[110px]')}>Жолооч</th><th className={clsx(th, 'w-[124px] text-center')}>Үйлдэл</th></tr>
           </thead>
           <tbody className="divide-y divide-line">
             {data?.items.map((o) => {
@@ -302,7 +302,7 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
                       {o.lines.length > 3 ? <span className="text-[11.5px] text-subtle">+{o.lines.length - 3} бараа</span> : null}
                     </div>
                   </td>
-                  <td className="w-[250px] min-w-[220px] max-w-[280px] select-text px-2.5 py-2"><div className="line-clamp-2 text-[12.5px]" title={o.fullAddress}>{o.fullAddress}</div>{o.note ? <OperatorNote text={o.note} className="!line-clamp-3" /> : null}</td>
+                  <td className="w-[340px] min-w-[280px] max-w-[380px] select-text px-2.5 py-2"><div className="text-[12.5px] [overflow-wrap:anywhere]">{o.fullAddress}</div>{o.note ? <OperatorNote text={o.note} className="!line-clamp-3" /> : null}</td>
                   <td className="px-2.5 py-2"><StatusChip o={o} /></td>
                   <td className="px-2.5 py-2 text-right font-bold">{money(o.total)}</td>
                   <td className="px-2.5 py-2"><div className="line-clamp-1">{o.operatorName}</div>{o.pageName ? <div className="line-clamp-1 text-[11.5px] text-subtle">{o.pageName}</div> : null}</td>
