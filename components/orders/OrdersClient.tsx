@@ -298,7 +298,7 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
                   <td className="select-text px-2.5 py-2"><div className="font-semibold">{formatPhone(o.phone)}</div>{o.extraPhone ? <div className="text-[11.5px] text-muted">{formatPhone(o.extraPhone)}</div> : null}</td>
                   <td className="min-w-[220px] px-2.5 py-2">
                     <div className="flex flex-col gap-1">
-                      {o.lines.slice(0, 3).map((l) => <span key={l.id} className="flex items-center gap-1.5"><Thumb src={l.thumb} alt={`${l.name} ${l.label}`} size={26} zoom={l.code} /><span className="line-clamp-1">{l.name}{l.label ? ` · ${l.label}` : ''} <b className="whitespace-nowrap">{l.qty}ш</b></span></span>)}
+                      {o.lines.slice(0, 3).map((l) => <span key={l.id} className="flex items-start gap-1.5"><Thumb src={l.thumb} alt={`${l.name} ${l.label}`} size={26} zoom={l.code} /><span className="min-w-0 pt-0.5 [overflow-wrap:anywhere]">{l.name}{l.label ? ` · ${l.label}` : ''} <b className="whitespace-nowrap">{l.qty}ш</b></span></span>)}
                       {o.lines.length > 3 ? <span className="text-[11.5px] text-subtle">+{o.lines.length - 3} бараа</span> : null}
                     </div>
                   </td>
