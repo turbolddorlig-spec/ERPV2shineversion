@@ -317,10 +317,14 @@ export async function manualMatch(actor: UserActor, idIn: unknown, input: { orde
 export async function setRefunded(actor: UserActor, idIn: unknown, input: { refunded?: unknown }) {
   assertEdit(actor);
   const id = Number(idIn);
-  const refunded = input.refunded !== false;
+  // «Буцаасан» нь эцсийн (#127): болиулахгүй — буцаалт хийсэн мөнгийг дахин захиалгад тааруулах эрсдэлээс сэргийлнэ
+  if (input.refunded === false) throw conflict('«Буцаасан» гүйлгээг буцааж болиулах боломжгүй', 'refund_final');
+  const refunded = true;
   return inTx(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(6::int4, 0::int4)`;
     const t = await tx.bankTransaction.findUnique({ where: { id } });
     if (!t) throw notFound('Гүйлгээ олдсонгүй');
+    if (t.refunded) return { ok: true };
     await tx.bankTransaction.update({ where: { id }, data: { refunded } });
     if (t.orderId) await restatus(tx, t.orderId);
     await writeAudit(actor, refunded ? 'bank.refunded' : 'bank.unrefunded', 'BankTransaction', String(id), { amount: t.amount, phone: t.phone }, tx, ['money', 'bank']);

@@ -484,6 +484,11 @@ describe('банкны импорт (хуучнаар нь)', () => {
     await B.setRefunded(acc, free.id, { refunded: true });
     expect((await B.priceChanges(acc, {})).items).toHaveLength(0);
     expect((await B.listTransactions(acc, { tab: 'REFUNDED' })).items).toHaveLength(1);
+    // #127: «Буцаасан» эцсийн — болиулахгүй, дахин тааруулахгүй, давтан дарахад хэвээр
+    await err(B.setRefunded(acc, free.id, { refunded: false }), 409, 'refund_final');
+    await err(B.manualMatch(acc, free.id, { orderNumber: other.number }), 409, 'refunded');
+    await B.setRefunded(acc, free.id, { refunded: true });
+    expect((await db.bankTransaction.findUniqueOrThrow({ where: { id: free.id } })).refunded).toBe(true);
   });
 
   it('Gmail (Тохиргоо): хаяг + 16 оронтой App Password шифрлэгдэж хадгалагдана, API-д гарахгүй; Sync → импорт, давтахад давхардахгүй; буруу нууц үг', async () => {
