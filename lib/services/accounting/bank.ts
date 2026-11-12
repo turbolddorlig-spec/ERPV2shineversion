@@ -284,6 +284,8 @@ export async function manualMatch(actor: UserActor, idIn: unknown, input: { orde
     const t = await tx.bankTransaction.findUnique({ where: { id } });
     if (!t) throw notFound('Гүйлгээ олдсонгүй');
     if (t.refunded) throw conflict('Буцаасан гүйлгээг тааруулахгүй', 'refunded');
+    // Таарсан бол таарсан (#127, эзний шийдвэр): захиалгатай холбогдсон гүйлгээг өөр захиалгад шилжүүлэхгүй
+    if (t.orderId) throw conflict('Захиалгатай таарсан гүйлгээг өөрчлөхгүй', 'already_matched');
     const o = await tx.order.findUnique({ where: { number }, select: { id: true, number: true, status: true, total: true, prepaid: true } });
     if (!o) throw notFound('Захиалга олдсонгүй');
     await lockOrder(tx, o.id);

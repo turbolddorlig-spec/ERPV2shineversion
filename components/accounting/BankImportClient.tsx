@@ -126,7 +126,9 @@ export function BankImportClient() {
                 <td className="px-3 py-2">{t.phone ?? '—'}</td>
                 <td className="px-3 py-2"><Badge tone={t.refunded ? 'accent' : TONE[t.isDuplicate ? 'DUPLICATE' : t.status] ?? 'neutral'}>{t.statusLabel}</Badge>{t.matchedByName ? <span className="block text-[11px] text-subtle">{t.matchedByName}</span> : null}</td>
                 <td className="px-3 py-2">{t.order ? <><b>{t.order.number}</b><span className="block text-[11.5px] text-subtle">{money(t.order.total)} · {ST_L[t.order.status] ?? t.order.status}</span></> : '—'}</td>
-                <td className="px-3 py-2 text-right">{data.canEdit ? <div className="flex justify-end gap-1.5">{!t.refunded ? <><Button size="sm" onClick={() => setMatch(t)}>Гараар тааруулах</Button>{!t.order ? <Button size="sm" variant="ghost" onClick={() => void refund(t)}>Буцаасан</Button> : null}</> : <span className="text-[12px] text-subtle">Буцаасан — өөрчлөхгүй</span>}</div> : null}</td>
+                <td className="px-3 py-2 text-right">{data.canEdit ? <div className="flex justify-end gap-1.5">{t.refunded ? <span className="text-[12px] text-subtle">Буцаасан — өөрчлөхгүй</span>
+                  : t.order ? <span className="text-[12px] text-subtle">Таарсан — өөрчлөхгүй</span>
+                  : <><Button size="sm" onClick={() => setMatch(t)}>Гараар тааруулах</Button><Button size="sm" variant="ghost" onClick={() => void refund(t)}>Буцаасан</Button></>}</div> : null}</td>
               </tr>
             ))}</tbody></table></div>
           {data && !data.items.length ? <p className="px-4 py-10 text-center text-muted">Гүйлгээ алга</p> : null}
