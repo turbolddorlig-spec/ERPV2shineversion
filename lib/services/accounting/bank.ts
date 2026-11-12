@@ -325,6 +325,8 @@ export async function setRefunded(actor: UserActor, idIn: unknown, input: { refu
     const t = await tx.bankTransaction.findUnique({ where: { id } });
     if (!t) throw notFound('Гүйлгээ олдсонгүй');
     if (t.refunded) return { ok: true };
+    // Захиалгатай таарсан гүйлгээг «Буцаасан» болгохгүй (#127) — зөвхөн таараагүй / давхардсан мөнгийг буцаана
+    if (t.orderId) throw conflict('Захиалгатай таарсан гүйлгээг «Буцаасан» болгохгүй', 'linked');
     await tx.bankTransaction.update({ where: { id }, data: { refunded } });
     if (t.orderId) await restatus(tx, t.orderId);
     await writeAudit(actor, refunded ? 'bank.refunded' : 'bank.unrefunded', 'BankTransaction', String(id), { amount: t.amount, phone: t.phone }, tx, ['money', 'bank']);

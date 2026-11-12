@@ -481,6 +481,9 @@ describe('банкны импорт (хуучнаар нь)', () => {
     expect([m.paid, m.total, m.paidMarked]).toEqual([7000, 10000, false]);
     const pc = await B.priceChanges(acc, {});
     expect(pc.items.map((x) => [x.number, x.diff])).toEqual([[other.number, -3000]]);
+    // #127: захиалгатай таарсан гүйлгээг «Буцаасан» болгохгүй
+    await err(B.setRefunded(acc, free.id, { refunded: true }), 409, 'linked');
+    await db.bankTransaction.update({ where: { id: free.id }, data: { orderId: null, status: 'UNMATCHED' } });
     await B.setRefunded(acc, free.id, { refunded: true });
     expect((await B.priceChanges(acc, {})).items).toHaveLength(0);
     expect((await B.listTransactions(acc, { tab: 'REFUNDED' })).items).toHaveLength(1);
