@@ -2,7 +2,7 @@ import { Prisma, type CancelReason, type OrderStatus } from '@prisma/client';
 import { db } from '../../db';
 import { badRequest, conflict } from '../../errors';
 import { normalizePhone, isValidPhone } from '../../phone';
-import { PROVINCES, UB_DISTRICTS, isUB } from '../../geo';
+import { PROVINCE_CENTER, PROVINCES, UB_DISTRICTS, isUB } from '../../geo';
 import { reasonProblem } from '../../catalog/variants';
 import { ubDay, isYmd } from '../../ubdate';
 import { getSettingNumber } from '../stock/core';
@@ -80,8 +80,13 @@ export function cleanAddress(input: { province?: unknown; district?: unknown; kh
       if (!Number.isInteger(khoroo) || khoroo < 1 || khoroo > UB_DISTRICTS[district]!) throw badRequest('Хороо буруу', 'bad_khoroo');
     }
   }
-  const addressDetail = String(input.addressDetail ?? '').trim().replace(/\s+/g, ' ').slice(0, 300);
-  if (addressDetail.length < 2) throw badRequest('Дэлгэрэнгүй хаяг (байр, орц, тоот) бичнэ үү', 'bad_address');
+  let addressDetail = String(input.addressDetail ?? '').trim().replace(/\s+/g, ' ').slice(0, 300);
+  if (isUB(province)) {
+    if (addressDetail.length < 2) throw badRequest('Дэлгэрэнгүй хаяг (байр, орц, тоот) бичнэ үү', 'bad_address');
+  } else if (addressDetail.length < 2) {
+    // Орон нутаг: байр, тоот заавал биш — аймгийн төвөөр («Увс, Улаангом»); Налайх, Багануур, Багахангай бол дүүргийн нэр л
+    addressDetail = PROVINCE_CENTER[province] ?? '';
+  }
   return { province, district, khoroo, addressDetail };
 }
 

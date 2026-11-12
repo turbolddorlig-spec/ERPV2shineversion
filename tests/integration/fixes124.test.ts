@@ -160,3 +160,15 @@ describe('#124-И банкаар таарсан төлбөрийн «Буцаа�
     expect([oa.status, oa.prepaid, ob.status, ob.prepaid]).toEqual(['PENDING_PAYMENT', false, 'NEW', true]);
   });
 });
+
+describe('орон нутгийн хаяг (#125)', () => {
+  it('байр заавал биш — бичихгүй бол аймгийн төв; бичвэл тэр нь; УБ-д заавал', async () => {
+    const { order: a } = await O.createOrder(op, ub({ province: 'Увс', district: null, khoroo: null, addressDetail: '' }));
+    expect([a.addressDetail, (await Q.getOrder(sa, a.id)).fullAddress]).toEqual(['Улаангом', 'Увс, Улаангом']);
+    const { order: b } = await O.createOrder(op, ub({ phone: '99001122', province: 'Дархан-Уул', district: null, khoroo: null, addressDetail: '  ' }));
+    expect(b.addressDetail).toBe('Дархан');
+    const { order: c } = await O.createOrder(op, ub({ phone: '99001133', province: 'Ховд', district: null, khoroo: null, addressDetail: 'Жаргалант сум, 3-р баг' }));
+    expect(c.addressDetail).toBe('Жаргалант сум, 3-р баг');
+    await err(O.createOrder(op, ub({ phone: '99001144', addressDetail: '' })), 400, 'bad_address');
+  });
+});
