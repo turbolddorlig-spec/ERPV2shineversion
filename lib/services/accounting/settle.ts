@@ -176,10 +176,14 @@ export async function withdrawSettlement(actor: UserActor, input: { date?: unkno
   assertDriver(actor);
   const date = cleanYmd(input.date);
   return inTx(async (tx) => {
-    const s = await tx.driverSettlement.findUnique({ where: { driverId_date: { driverId: actor.id, date: dateOnly(date) } } });
+    // Аудит №4: мөрийг түгжиж аваад төлвийг дахин шалгана — нягтлан яг тэр мөчид баталгаажуулж байвал түүнийг хүлээгээд
+    // «баталгаажсан» гэж харж татгалзана (өмнө нь баталгаажсан тооцоог ноорог болгож, өр давхар бичигдэх боломжтой байв)
+    const r = await tx.$queryRaw<{ id: number }[]>`SELECT id FROM "DriverSettlement" WHERE "driverId" = ${actor.id}::uuid AND date = ${dateOnly(date)}::date FOR UPDATE`;
+    const s = r[0] ? await tx.driverSettlement.findUnique({ where: { id: r[0].id } }) : null;
     if (!s || s.status === 'DRAFT') return { duplicate: true };
     if (s.status === 'COMPLETED') throw conflict('Нягтлан баталгаажуулсан тооцоог буцаах боломжгүй', 'day_locked');
-    await tx.driverSettlement.update({ where: { id: s.id }, data: { status: 'DRAFT', submittedAt: null, cashAmount: 0, bankAmount: 0, debtAmount: 0, version: { increment: 1 } } });
+    const u = await tx.driverSettlement.updateMany({ where: { id: s.id, status: 'PENDING' }, data: { status: 'DRAFT', submittedAt: null, cashAmount: 0, bankAmount: 0, debtAmount: 0, version: { increment: 1 } } });
+    if (!u.count) throw conflict('Тооцооны төлөв өөрчлөгдсөн — хуудсаа шинэчилнэ үү', 'stale');
     await writeAudit(actor, 'settlement.withdrawn', 'DriverSettlement', String(s.id), { date }, tx, ['money']);
     return { duplicate: false };
   });
@@ -385,11 +389,15 @@ export async function createDriverPayment(actor: UserActor, input: { kind?: unkn
 export async function deleteDriverPayment(actor: UserActor, idIn: unknown) {
   assertDriver(actor);
   const id = Number(idIn);
+  if (!Number.isInteger(id) || id <= 0) throw notFound('Олдсонгүй');
   return inTx(async (tx) => {
+    // Аудит №4: мөрийг түгжиж дахин шалгана — нягтлан яг тэр мөчид зөвшөөрсөн бол устгахгүй
+    await tx.$queryRaw`SELECT id FROM "DriverPayment" WHERE id = ${id} FOR UPDATE`;
     const p = await tx.driverPayment.findUnique({ where: { id } });
     if (!p || p.driverId !== actor.id) throw notFound('Олдсонгүй');
     if (p.approved) throw conflict('Нягтлан зөвшөөрсөн — устгах боломжгүй', 'approved');
-    await tx.driverPayment.delete({ where: { id } });
+    const d = await tx.driverPayment.deleteMany({ where: { id, approved: false } });
+    if (!d.count) throw conflict('Нягтлан зөвшөөрсөн — устгах боломжгүй', 'approved');
     await writeAudit(actor, 'driver.payment_deleted', 'DriverPayment', String(id), { kind: p.kind, amount: p.amount, date: ymdOf(p.date) }, tx, ['money']);
     return { ok: true };
   });
@@ -400,7 +408,9 @@ export async function approveDriverPayment(actor: UserActor, idIn: unknown, inpu
   assertAccount(actor);
   const id = Number(idIn);
   const approved = input.approved === true;
+  if (!Number.isInteger(id) || id <= 0) throw notFound('Олдсонгүй');
   return inTx(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "DriverPayment" WHERE id = ${id} FOR UPDATE`;
     const p = await tx.driverPayment.findUnique({ where: { id } });
     if (!p) throw notFound('Олдсонгүй');
     const u = await tx.driverPayment.update({ where: { id }, data: { approved, approvedAt: approved ? new Date() : null, approvedByName: approved ? actor.name : null } });

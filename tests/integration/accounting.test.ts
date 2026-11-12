@@ -247,6 +247,43 @@ describe('тооцоо нийлэх, түгжээ', () => {
     await recOk();
   });
 
+  it('аудит №4: баталгаажуулах ба «Тооцоо буцаах» зэрэг — өр яг нэг удаа, баталгаажсан тооцоо задрахгүй; зөвшөөрсөн төлбөр устахгүй', async () => {
+    const [a, b] = await outFor(drv, 2);
+    await DR.deliverOrder(drv, a!, { payment: 'CASH' });
+    await DR.deliverOrder(drv, b!, { payment: 'CASH' });
+    const total = (await row(drv)).toReceive;
+    for (let i = 0; i < 6; i++) {
+      await S.submitSettlement(drv, { date: today, cash: total - 10000, debt: 10000 });
+      const sid = (await row(drv)).settlement!.id;
+      const [ap, wd] = await Promise.allSettled([S.approveSettlement(acc, sid), S.withdrawSettlement(drv, { date: today })]);
+      const st = await db.driverSettlement.findUniqueOrThrow({ where: { id: sid } });
+      const debts = await db.companyDebt.count({ where: { driverId: drv.id, kind: 'SETTLEMENT_DEBT' } });
+      if (st.status === 'COMPLETED') {
+        // баталгаажуулалт түрүүлсэн → буцаалт «баталгаажсан» гэж татгалзана, өр 1
+        expect(ap.status).toBe('fulfilled');
+        expect(wd.status).toBe('rejected');
+        expect(debts).toBe(1);
+        expect([st.cashAmount, st.debtAmount]).toEqual([total - 10000, 10000]);
+        await err(S.withdrawSettlement(drv, { date: today }), 409, 'day_locked');
+        break;
+      }
+      // буцаалт түрүүлсэн → ноорог, өр огт бичигдээгүй, баталгаажуулалт татгалзсан
+      expect(st.status).toBe('DRAFT');
+      expect(debts).toBe(0);
+      expect(ap.status).toBe('rejected');
+    }
+    // Жолоочийн төлбөр: зөвшөөрөх ба устгах зэрэг — зөвшөөрсөн бол устахгүй
+    for (let i = 0; i < 6; i++) {
+      const p = await S.createDriverPayment(drv, { kind: 'EXTRA', amount: 5000, date: today, note: 'Нэмэлт бараа', idemKey: key() });
+      const pid = (p as { payment: { id: number } }).payment.id;
+      const [apv, del] = await Promise.allSettled([S.approveDriverPayment(acc, pid, { approved: true }), S.deleteDriverPayment(drv, pid)]);
+      const left = await db.driverPayment.findUnique({ where: { id: pid } });
+      if (left) { expect(left.approved).toBe(true); expect(del.status).toBe('rejected'); }
+      else expect(apv.status).toBe('rejected');
+    }
+    await recOk();
+  });
+
   it('дуусаагүй бол илгээхгүй; Бэлэн+Данс+Өр = Авах дүн; илгээсний дараа жолооч өөрчлөхгүй; буцаах; баталгаажуулах → түгжээ, өр', async () => {
     const [a, b] = await outFor(drv, 2);
     await DR.deliverOrder(drv, a!, { payment: 'CASH' });
