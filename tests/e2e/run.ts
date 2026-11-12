@@ -250,8 +250,16 @@ async function main() {
   check('байгаагаас их зарлага → 409 insufficient_stock', big.status === 409 && big.text.includes('insufficient_stock'), big.text.slice(0, 100));
   const noNote = await req('/api/stock/issues', { cookie: whU.cookie, method: 'POST', body: { warehouseId: 1, reason: 'DAMAGE', note: '', lines: [{ variantId: 2, qty: 1 }], idemKey: `e2e-nn-${Date.now()}` } });
   check('тайлбаргүй зарлага → 400 reason_required', noNote.status === 400 && noNote.text.includes('reason_required'), noNote.text.slice(0, 100));
-  // Зэрэг 5 зарлага (тус бүр 3), байгаа 10 → хоёр л амжилттай
-  const vZ = 9;
+  // Б10: захиалгад түгжигдсэн барааг гаргахгүй (боломжтойгоос их)
+  const s2 = await balOf(2);
+  if (s2.reserved > 0 && (s2.byWarehouse['1'] ?? 0) > Math.max(0, s2.available)) {
+    const rv = await req('/api/stock/issues', { cookie: whU.cookie, method: 'POST', body: { warehouseId: 1, reason: 'DAMAGE', note: 'E2E нөөцтэй', lines: [{ variantId: 2, qty: Math.max(0, s2.available) + 1 }], idemKey: `e2e-rv-${Date.now()}` } });
+    check('Б10: захиалгад түгжигдсэн бараа гаргахгүй → 409 reserved_stock', rv.status === 409 && rv.text.includes('reserved_stock'), rv.text.slice(0, 100));
+  }
+  // Зэрэг 5 зарлага (тус бүр 3), байгаа 10 → хоёр л амжилттай (нөөцлөлтгүй бараа дээр)
+  const scan = JSON.parse((await req(`/api/stock?ids=${Array.from({ length: 80 }, (_, i) => i + 3).join(',')}`, { cookie: whU.cookie })).text).items as { variantId?: number; id?: number; reserved: number }[];
+  const free = scan.find((x) => x.reserved === 0 && (x as { isActive?: boolean }).isActive !== false && (x as { productStatus?: string }).productStatus === 'ACTIVE');
+  const vZ = Number(free?.variantId ?? free?.id ?? 9);
   const zBefore = (await balOf(vZ)).byWarehouse['1'] ?? 0;
   if (zBefore > 10) await req('/api/stock/issues', { cookie: whU.cookie, method: 'POST', body: { warehouseId: 1, reason: 'SAMPLE', note: 'E2E бэлтгэл зарлага', lines: [{ variantId: vZ, qty: zBefore - 10 }], idemKey: `e2e-prep-${Date.now()}` } });
   else await req('/api/stock/receipts', { cookie: whU.cookie, method: 'POST', body: { warehouseId: 1, lines: [{ variantId: vZ, qty: 10 - zBefore }], idemKey: `e2e-prep-${Date.now()}` } });
@@ -537,8 +545,10 @@ async function main() {
     const pid = JSON.parse(cr.text).id;
     const ded = await req(`/api/penalties/${pid}/deduct`, { cookie: pen.cookie, method: 'POST', body: {} });
     check('ахлах оператор цалингаас хасахгүй (нягтлан, админ) → 403', ded.status === 403, String(ded.status));
-    const cn = await req(`/api/penalties/${pid}/cancel`, { cookie: pen.cookie, method: 'POST', body: { note: 'E2E цуцлалт' } });
-    check('шалтгаантай цуцлав', cn.status === 200 && JSON.parse(cn.text).penalty?.status === 'CANCELLED', cn.text.slice(0, 100));
+    const cnLead = await req(`/api/penalties/${pid}/cancel`, { cookie: pen.cookie, method: 'POST', body: { note: 'E2E цуцлалт' } });
+    check('Б21: ахлах оператор торгууль цуцлахгүй → 403', cnLead.status === 403, String(cnLead.status));
+    const cn = await req(`/api/penalties/${pid}/cancel`, { cookie: adm.cookie, method: 'POST', body: { note: 'E2E цуцлалт' } });
+    check('шалтгаантай цуцлав (Админ)', cn.status === 200 && JSON.parse(cn.text).penalty?.status === 'CANCELLED', cn.text.slice(0, 100));
   }
 
   // ───── Модуль 7б: Ажилтны цалин ─────

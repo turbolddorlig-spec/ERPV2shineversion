@@ -4,7 +4,7 @@ import { badRequest, conflict, notFound } from '../../errors';
 import { writeAudit } from '../../audit';
 import { canApproveStock, canOperateStock, canView } from '../../permissions';
 import {
-  applyMoves, assertNotReserved, cleanId, cleanIdemKey, cleanLines, cleanNote, inTx, requireRole, transitLocationId, uniqueViolation, warehouseLocation, type UserActor,
+  applyMoves, assertNotReserved, lockReservedVariants, cleanId, cleanIdemKey, cleanLines, cleanNote, inTx, requireRole, transitLocationId, uniqueViolation, warehouseLocation, type UserActor,
 } from './core';
 import { variantInfo } from './info';
 
@@ -32,7 +32,7 @@ export async function sendTransfer(actor: UserActor, input: { fromWarehouseId?: 
       const to = await warehouseLocation(tx, toWarehouseId);
       const transit = await transitLocationId(tx);
       // Б10: үндсэн агуулах руу (дүүргэлт) биш бол захиалгад түгжигдсэн барааг шилжүүлэхгүй
-      if (!to.warehouse.isPrimary) await assertNotReserved(tx, lines, labels);
+      if (!to.warehouse.isPrimary) await lockReservedVariants(tx, lines);
       const t = await tx.stockTransfer.create({
         data: {
           fromWarehouseId, toWarehouseId, note, idemKey, refill: input.refill === true, sentById: actor.id, sentByName: actor.name,
@@ -41,6 +41,7 @@ export async function sendTransfer(actor: UserActor, input: { fromWarehouseId?: 
       });
       await applyMoves(tx, actor, { type: 'transfer', id: t.id },
         lines.map((l) => ({ type: 'TRANSFER_SEND' as const, variantId: l.variantId, qty: l.qty, fromId: from.locationId, toId: transit, note: `→ ${to.warehouse.name}` })), labels);
+      if (!to.warehouse.isPrimary) await assertNotReserved(tx, lines, labels, true);
       await writeAudit(actor, 'stock.transfer_sent', 'StockTransfer', String(t.id), { from: from.warehouse.name, to: to.warehouse.name, lines: lines.length, total: lines.reduce((s, l) => s + l.qty, 0), refill: t.refill }, tx, ['stock']);
       return t;
     });

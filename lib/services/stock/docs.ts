@@ -4,7 +4,7 @@ import { badRequest } from '../../errors';
 import { writeAudit } from '../../audit';
 import { canOperateStock } from '../../permissions';
 import {
-  ISSUE_REASON_LABEL, applyMoves, assertNotReserved, cleanId, cleanIdemKey, cleanLines, cleanNote, inTx, requireRole, uniqueViolation, warehouseLocation, type UserActor,
+  ISSUE_REASON_LABEL, applyMoves, assertNotReserved, lockReservedVariants, cleanId, cleanIdemKey, cleanLines, cleanNote, inTx, requireRole, uniqueViolation, warehouseLocation, type UserActor,
 } from './core';
 
 /** Орлого (#38): бараа, тоо, агуулах + тэмдэглэл. Олон бараа нэг баримтад. Шууд нэмэгдэнэ. */
@@ -47,9 +47,10 @@ export async function createIssue(actor: UserActor, input: { warehouseId?: unkno
   try {
     const issue = await inTx(async (tx) => {
       const { warehouse, locationId } = await warehouseLocation(tx, warehouseId);
-      await assertNotReserved(tx, lines, labels);
+      await lockReservedVariants(tx, lines);
       const r = await tx.stockIssue.create({ data: { warehouseId, reason, note, idemKey, createdById: actor.id, createdByName: actor.name } });
       await applyMoves(tx, actor, { type: 'issue', id: r.id }, lines.map((l) => ({ type: 'ISSUE', variantId: l.variantId, qty: l.qty, fromId: locationId, toId: null, note: `${ISSUE_REASON_LABEL[reason]}: ${note}` })), labels);
+      await assertNotReserved(tx, lines, labels, true);
       await writeAudit(actor, 'stock.issue', 'StockIssue', String(r.id), { warehouse: warehouse.name, reason: ISSUE_REASON_LABEL[reason], lines: lines.length, total: lines.reduce((s, l) => s + l.qty, 0), note }, tx, ['stock']);
       return r;
     });

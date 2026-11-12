@@ -159,7 +159,12 @@ export async function applyMoves(tx: Tx, actor: { id: string; name: string }, do
  * Аудит Б10 (эзний шийдвэр): захиалгад түгжигдсэн (нөөцлөгдсөн) барааг зарлагадах / өөр агуулах руу шилжүүлэхийг хориглоно.
  * Захиалах боломжтой = агуулахуудын нийт − бүх нөөцлөлт (захиалгатай ижил томьёо). Захиалга үүсгэхтэй ижил түгжээ (2, variant).
  */
-export async function assertNotReserved(tx: Tx, lines: { variantId: number; qty: number }[], labels?: Map<number, string>) {
+/** Б10: бараа (advisory 2) түгжээг хөдөлгөөний ӨМНӨ авна — захиалгын урсгалтай ижил дараалал (deadlock гарахгүй) */
+export async function lockReservedVariants(tx: Tx, lines: { variantId: number }[]) {
+  for (const id of [...new Set(lines.map((l) => l.variantId))].sort((a, b) => a - b)) await tx.$executeRaw`SELECT pg_advisory_xact_lock(2::int4, ${id}::int4)`;
+}
+
+export async function assertNotReserved(tx: Tx, lines: { variantId: number; qty: number }[], labels?: Map<number, string>, afterMoves = false) {
   const ids = [...new Set(lines.map((l) => l.variantId))].sort((a, b) => a - b);
   if (!ids.length) return;
   for (const id of ids) await tx.$executeRaw`SELECT pg_advisory_xact_lock(2::int4, ${id}::int4)`;
@@ -170,9 +175,11 @@ export async function assertNotReserved(tx: Tx, lines: { variantId: number; qty:
     FROM "ProductVariant" v WHERE v.id IN (${Prisma.join(ids)})`;
   const need = new Map<number, number>();
   for (const l of lines) need.set(l.variantId, (need.get(l.variantId) ?? 0) + l.qty);
-  const bad = rows.filter((r) => r.reserved > 0 && (need.get(r.variantId) ?? 0) > r.total - r.reserved);
+  // afterMoves: хөдөлгөөний дараа шалгана (үлдэгдэл хүрэхгүй бол эхлээд insufficient_stock гарна)
+  const before = (r: { variantId: number; total: number }) => r.total + (afterMoves ? need.get(r.variantId) ?? 0 : 0);
+  const bad = rows.filter((r) => r.reserved > 0 && (need.get(r.variantId) ?? 0) > before(r) - r.reserved);
   if (bad.length) {
-    throw conflict(bad.map((r) => `«${labels?.get(r.variantId) ?? `#${r.variantId}`}»: ${r.reserved} ширхэг захиалгад түгжигдсэн, гаргах боломжтой ${Math.max(0, r.total - r.reserved)}`).join('; '), 'reserved_stock');
+    throw conflict(bad.map((r) => `«${labels?.get(r.variantId) ?? `#${r.variantId}`}»: ${r.reserved} ширхэг захиалгад түгжигдсэн, гаргах боломжтой ${Math.max(0, before(r) - r.reserved)}`).join('; '), 'reserved_stock');
   }
 }
 
