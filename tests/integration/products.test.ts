@@ -196,6 +196,52 @@ describe('төлөв (#25, #27)', () => {
   });
 });
 
+describe('аудит Б11, Б12: үлдэгдэлтэй бараа / хувилбар', () => {
+  async function stockFor(variantId: number, qty: number) {
+    const W = await import('@/lib/services/stock/warehouses'); const D = await import('@/lib/services/stock/docs');
+    const sa = await actor(['SUPER_ADMIN']);
+    const w = await W.createWarehouse(sa, { name: `Агуулах ${seq}` });
+    await D.createReceipt(sa, { warehouseId: w.id, lines: [{ variantId, qty }], idemKey: `rc-${seq}-${variantId}-xxxxxxxx` });
+  }
+  it('Б11: үлдэгдэлтэй барааг архивлахгүй; үлдэгдэлгүй бол болно', async () => {
+    const adm = await actor(['ADMIN']);
+    const p = await P.createProduct(adm, { code: 'AR1', name: 'Архив бараа', price: 10000 });
+    await stockFor(p.variants[0]!.id, 5);
+    await err(P.setProductStatus(adm, p.id, { status: 'ARCHIVED', reason: R, version: p.version }), 409, 'has_stock');
+    await err(P.setProductStatus(adm, p.id, { status: 'ARCHIVED', reason: R, version: undefined }), 400, 'version_required');
+    await P.setProductStatus(adm, p.id, { status: 'DISCONTINUED', reason: R, version: p.version }); // зогсоох болно
+    const q = await P.createProduct(adm, { code: 'AR2', name: 'Үлдэгдэлгүй', price: 10000 });
+    expect((await P.setProductStatus(adm, q.id, { status: 'ARCHIVED', reason: R, version: q.version })).status).toBe('ARCHIVED');
+  });
+  it('Б13: Excel — өнгө / хэмжээ бүрээр, үлдэгдэлтэй; өртөг зөвхөн СА / Админд', async () => {
+    const adm = await actor(['ADMIN']); const mk = await actor(['MARKETING']);
+    const p = await P.createProduct(adm, { code: 'EX1', name: 'Цамц', price: 20000, colors: ['Хар', 'Цагаан'], sizes: ['M'] });
+    await stockFor(p.variants[0]!.id, 7);
+    const e = await P.exportRows(adm);
+    const row = e.rows.find((r) => r.code === 'EX1')!;
+    expect(row.variants).toHaveLength(2);
+    expect(e.stock.get(p.variants[0]!.id)).toEqual({ total: 7, available: 7 });
+    expect(e.showCost).toBe(true);
+    expect((await P.exportRows(mk)).showCost).toBe(false);
+  });
+  it('Б12: үлдэгдэлтэй өнгийг хасахгүй; «нэр солих»-оор үлдэгдэл, хувилбар хэвээр шинэ нэртэй', async () => {
+    const adm = await actor(['ADMIN']);
+    const p = await P.createProduct(adm, { code: 'NR1', name: 'Цамц', price: 20000, colors: ['Хар', 'Цагаан'] });
+    const black = p.variants.find((v) => v.color === 'Хар')!;
+    await stockFor(black.id, 5);
+    await err(P.updateProduct(adm, p.id, { colors: ['Цагаан', 'Хар өнгө'] }, { reason: R, version: p.version }), 409, 'variant_has_stock');
+    const r = await P.updateProduct(adm, p.id, { colors: ['Цагаан', 'Хар өнгө'], renames: [{ axis: 'color', from: 'Хар', to: 'Хар өнгө' }] }, { reason: R, version: p.version });
+    const v = r.product.variants.find((x) => x.id === black.id)!;
+    expect([v.color, v.isActive]).toEqual(['Хар өнгө', true]);
+    expect(r.product.variants).toHaveLength(2); // шинэ хоосон хувилбар үүсээгүй
+    const bal = await db.stockBalance.aggregate({ where: { variantId: black.id }, _sum: { qty: true } });
+    expect(bal._sum.qty).toBe(5);
+    // үлдэгдэлгүй өнгийг хасвал хуучин шиг идэвхгүй болно
+    const r2 = await P.updateProduct(adm, p.id, { colors: ['Хар өнгө'] }, { reason: R, version: r.product.version });
+    expect(r2.product.variants.find((x) => x.color === 'Цагаан')?.isActive).toBe(false);
+  });
+});
+
 describe('хайлт (Модуль 3-т)', () => {
   it('оператор хайна, үр дүнд өртөг байхгүй, хувилбарын үнэ зөв', async () => {
     const adm = await actor(['ADMIN']);

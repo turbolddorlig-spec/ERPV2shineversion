@@ -265,6 +265,11 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     const ob = await db.order.findUniqueOrThrow({ where: { id: b } });
     expect([ob.status, ob.cancelReason, ob.issueStatus, ob.issueFault]).toEqual(['CANCELLED', 'ISSUE', 'CANCELLED', 'OPERATOR']);
     expect(await goods(drv)).toEqual({ [v1]: [2, 0, 2], [v2]: [1, 0, 1] });
+    // Аудит Б15: операторт автомат торгууль → жолооч дахин хүргэвэл автоматаар цуцлагдана
+    const pen = await db.penalty.findFirstOrThrow({ where: { orderId: b, auto: true } });
+    expect(pen.status).toBe('ACTIVE');
+    await DR.deliverOrder(drv, b, { payment: 'CASH' });
+    expect(await db.penalty.findUniqueOrThrow({ where: { id: pen.id } })).toMatchObject({ status: 'CANCELLED', cancelledByName: 'СИСТЕМ' });
     await recOk();
   });
 
@@ -406,6 +411,23 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     const c = await G.driverControl(lead);
     expect(c.items.find((x) => x.id === drv.id)?.assigned).toBe(1);
     await err(G.driverControl(op), 403);
+  });
+
+  it('аудит Б2: жолоочийн апп, «Жолооч хяналт», «Тооцоо» — бүгд ПАДААНЫ өдрөөр, ижил тоо', async () => {
+    const [a, b] = await outFor(drv, 2);
+    await DR.deliverOrder(drv, a!, { payment: 'CASH' });
+    await DR.deliverOrder(drv, b!, { payment: 'BANK' });
+    const app = await DR.driverOrders(drv, 'delivered');
+    const ctl = (await G.driverControl(sa)).items.find((x) => x.id === drv.id)!;
+    expect([app.counts.delivered, app.money.cash, app.money.bank]).toEqual([2, ctl.cash, ctl.bank]);
+    expect(ctl.delivered).toBe(2);
+    // Падаан өчигдрийнх (шөнө 00:00-оос хойш хүргэсэн мэт) → өнөөдрийн апп / хяналтад орохгүй, өчигдрийнхөд орно
+    const y = U.ubDay(new Date(), -1);
+    await db.handover.updateMany({ where: { driverId: drv.id }, data: { date: U.dateOnly(y) } });
+    const app2 = await DR.driverOrders(drv, 'delivered');
+    expect([app2.counts.delivered, app2.money.cash, app2.items.length]).toEqual([0, 0, 0]);
+    expect((await G.driverControl(sa)).items.find((x) => x.id === drv.id)?.delivered ?? 0).toBe(0);
+    expect((await G.driverControl(sa, y)).items.find((x) => x.id === drv.id)?.delivered).toBe(2);
   });
 
   it('зэрэг: нэг захиалгыг хүргэсэн + цуцлах + маргааш зэрэг дарахад нэг нь л, тулгалт 0', async () => {

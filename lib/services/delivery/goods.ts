@@ -1,5 +1,6 @@
 import type { DeliveryPayment, DriverDocKind, Prisma } from '@prisma/client';
 import { syncShortageDebts } from '../accounting/debts';
+import { computeDay } from '../accounting/calc';
 import { db } from '../../db';
 import { badRequest, conflict, forbidden } from '../../errors';
 import { writeAudit } from '../../audit';
@@ -290,7 +291,7 @@ export async function extraSale(actor: UserActor, input: { lines?: unknown; paym
 
 // ───────────────────────── Жолоочийн хяналт ─────────────────────────
 
-/** Өдөр, жолооч бүрээр (зөвхөн харах; мөнгөний тооцоо Модуль 6). Хүргэсэн/цуцалсан/хойшилсныг тухайн үйлдлийн өдрөөр (B1) */
+/** Өдөр, жолооч бүрээр (зөвхөн харах). Хүргэсэн/цуцалсан/мөнгө — падааны өдрөөр (B1, #83, аудит Б2) */
 export async function driverControl(actor: UserActor, dateIn?: string) {
   if (!canView(actor.roles, 'driver-control')) throw forbidden();
   const date = dateIn && isYmd(dateIn) ? dateIn : ubDay();
@@ -301,19 +302,10 @@ export async function driverControl(actor: UserActor, dateIn?: string) {
       SELECT "driverId" AS id, count(*) FILTER (WHERE status = 'ASSIGNED' AND "deliveryDate" = ${d}::date)::int AS assigned,
         count(*) FILTER (WHERE status = 'OUT_FOR_DELIVERY')::int AS out
       FROM "Order" WHERE "driverId" IS NOT NULL AND (status = 'OUT_FOR_DELIVERY' OR (status = 'ASSIGNED' AND "deliveryDate" = ${d}::date)) GROUP BY 1`,
-    db.$queryRaw<{ id: string; delivered: number; partial: number; cash: number; bank: number; unpaid: number; prepaid: number; deliveredSum: number }[]>`
-      SELECT "driverId" AS id, count(*)::int AS delivered, count(*) FILTER (WHERE "originalTotal" IS NOT NULL AND "originalTotal" <> total)::int AS partial,
-        COALESCE(sum("collectAmount") FILTER (WHERE "deliveryPayment" = 'CASH'), 0)::int AS cash,
-        COALESCE(sum("collectAmount") FILTER (WHERE "deliveryPayment" = 'BANK'), 0)::int AS bank,
-        COALESCE(sum(total) FILTER (WHERE "deliveryPayment" = 'UNPAID'), 0)::int AS unpaid,
-        COALESCE(sum(total) FILTER (WHERE "deliveryPayment" = 'PREPAID'), 0)::int AS prepaid,
-        COALESCE(sum(total), 0)::int AS "deliveredSum"
-      FROM "Order" WHERE status = 'DELIVERED' AND "driverId" IS NOT NULL AND "deliveredAt" >= ${t0} AND "deliveredAt" < ${t1} GROUP BY 1`,
-    db.$queryRaw<{ id: string; cancelled: number; postponed: number }[]>`
-      SELECT id, sum(c)::int AS cancelled, sum(p)::int AS postponed FROM (
-        SELECT "driverId" AS id, 1 AS c, 0 AS p FROM "Order" WHERE status = 'CANCELLED' AND "driverId" IS NOT NULL AND "cancelledAt" >= ${t0} AND "cancelledAt" < ${t1}
-          AND "cancelReason" IN ('DRIVER_CANCELLED', 'ISSUE')
-        UNION ALL SELECT "postponedByDriverId", 0, 1 FROM "Order" WHERE "postponedByDriverId" IS NOT NULL AND "postponedAt" >= ${t0} AND "postponedAt" < ${t1}) x GROUP BY 1`,
+    // Аудит Б2 (B1, #83): хүргэсэн / цуцалсан / мөнгө — ПАДААНЫ ӨДРӨӨР, нягтлангийн «Тооцоо»-той нэг томьёо (computeDay)
+    computeDay(db, date),
+    db.$queryRaw<{ id: string; postponed: number }[]>`
+      SELECT "postponedByDriverId" AS id, count(*)::int AS postponed FROM "Order" WHERE "postponedByDriverId" IS NOT NULL AND "postponedAt" >= ${t0} AND "postponedAt" < ${t1} GROUP BY 1`,
     db.$queryRaw<{ id: string; extraSales: number }[]>`
       SELECT "driverId" AS id, COALESCE(sum(total), 0)::int AS "extraSales" FROM "DriverDoc" WHERE kind = 'EXTRA_SALE' AND "createdAt" >= ${t0} AND "createdAt" < ${t1} GROUP BY 1`,
     db.$queryRaw<{ id: string; balance: number; held: number }[]>`
@@ -327,15 +319,16 @@ export async function driverControl(actor: UserActor, dateIn?: string) {
     db.$queryRaw<{ id: string; at: Date }[]>`SELECT "driverId" AS id, max("createdAt") AS at FROM "DriverDoc" WHERE kind = 'RETURN' GROUP BY 1`,
   ]);
   const by = <T extends { id: string }>(rows: T[]) => new Map(rows.map((r) => [r.id, r]));
-  const P = by(plan); const D = by(done); const C = by(post); const E = by(extra); const G = by(goods); const L = by(last);
+  const P = by(plan); const C = by(post); const E = by(extra); const G = by(goods); const L = by(last);
+  const D = new Map(done.map((x) => [x.driverId, x]));
   const items = drivers.map((u) => {
     const g = G.get(u.id); const dd = D.get(u.id);
     return {
       id: u.id, name: u.name, phone: u.phone,
       assigned: P.get(u.id)?.assigned ?? 0, out: P.get(u.id)?.out ?? 0,
-      delivered: dd?.delivered ?? 0, partial: dd?.partial ?? 0, cancelled: C.get(u.id)?.cancelled ?? 0, postponed: C.get(u.id)?.postponed ?? 0,
+      delivered: dd?.delivered ?? 0, partial: dd?.partialCount ?? 0, cancelled: (dd?.cancelled ?? 0) + (dd?.excluded ?? 0), postponed: C.get(u.id)?.postponed ?? 0,
       goods: g?.balance ?? 0, returnable: Math.max(0, (g?.balance ?? 0) - (g?.held ?? 0)), lastReturnAt: L.get(u.id)?.at ?? null,
-      cash: dd?.cash ?? 0, bank: dd?.bank ?? 0, unpaid: dd?.unpaid ?? 0, prepaid: dd?.prepaid ?? 0, deliveredSum: dd?.deliveredSum ?? 0, extraSales: E.get(u.id)?.extraSales ?? 0,
+      cash: dd?.cash ?? 0, bank: dd?.bank ?? 0, unpaid: dd?.unpaid ?? 0, prepaid: dd?.prepaidAmount ?? 0, deliveredSum: dd?.deliveredAmount ?? 0, extraSales: E.get(u.id)?.extraSales ?? 0,
     };
   }).filter((x) => x.assigned + x.out + x.delivered + x.cancelled + x.postponed + x.goods + x.extraSales > 0);
   const sum = (k: keyof (typeof items)[number]) => items.reduce((n, x) => n + (Number(x[k]) || 0), 0);

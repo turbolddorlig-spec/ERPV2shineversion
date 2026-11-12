@@ -4,7 +4,7 @@ import { badRequest, conflict, notFound } from '../../errors';
 import { writeAudit } from '../../audit';
 import { canApproveStock, canOperateStock, canView } from '../../permissions';
 import {
-  applyMoves, cleanId, cleanIdemKey, cleanLines, cleanNote, inTx, requireRole, transitLocationId, uniqueViolation, warehouseLocation, type UserActor,
+  applyMoves, assertNotReserved, cleanId, cleanIdemKey, cleanLines, cleanNote, inTx, requireRole, transitLocationId, uniqueViolation, warehouseLocation, type UserActor,
 } from './core';
 import { variantInfo } from './info';
 
@@ -31,6 +31,8 @@ export async function sendTransfer(actor: UserActor, input: { fromWarehouseId?: 
       const from = await warehouseLocation(tx, fromWarehouseId);
       const to = await warehouseLocation(tx, toWarehouseId);
       const transit = await transitLocationId(tx);
+      // Б10: үндсэн агуулах руу (дүүргэлт) биш бол захиалгад түгжигдсэн барааг шилжүүлэхгүй
+      if (!to.warehouse.isPrimary) await assertNotReserved(tx, lines, labels);
       const t = await tx.stockTransfer.create({
         data: {
           fromWarehouseId, toWarehouseId, note, idemKey, refill: input.refill === true, sentById: actor.id, sentByName: actor.name,

@@ -12,6 +12,7 @@ import { assignCore } from './assign';
 import { addDays, driverLocationId, isGiven, lockDelivery, removeFromHandover, type Tx } from './core';
 import { assertDayOpen } from '../accounting/lock';
 import { syncShortageDebts } from '../accounting/debts';
+import { computeDay } from '../accounting/calc';
 import { autoPenaltyForIssue } from '../penalties';
 
 /**
@@ -165,6 +166,14 @@ export async function deliverOrder(actor: UserActor, idIn: unknown, input: { tak
     await writeAudit(actor, recover ? 'order.redelivered' : 'order.delivered', 'Order', String(id), {
       number: o.number, ...(ob ? { byAccountant: true, driver: drv.name } : {}), payment: pay.payment, total: sum.total, collect, ...(refused.length ? { refused, totalBefore: o.originalTotal ?? o.total } : {}), ...(pay.note ? { note: pay.note } : {}),
     } as Prisma.InputJsonValue, tx, ['order', 'delivery', 'money', 'stock']);
+    // Аудит Б15 (эзний шийдвэр): асуудлаар цуцлагдсаныг дахин хүргэвэл тэр асуудлаас үүссэн автомат торгууль (цалингаас хасаагүй) цуцлагдана
+    if (recover && o.cancelReason === 'ISSUE') {
+      const pens = await tx.penalty.findMany({ where: { orderId: o.id, auto: true, status: 'ACTIVE', deducted: false, deductedAmount: 0 } });
+      for (const pn of pens) {
+        const c = await tx.penalty.updateMany({ where: { id: pn.id, status: 'ACTIVE', deducted: false, deductedAmount: 0 }, data: { status: 'CANCELLED', cancelledAt: new Date(), cancelledByName: 'СИСТЕМ', cancelNote: `Захиалга №${o.number} дахин хүргэгдсэн`, version: { increment: 1 } } });
+        if (c.count) await writeAudit({ id: null, name: 'СИСТЕМ' }, 'penalty.cancelled', 'Penalty', String(pn.id), { user: pn.userName, category: pn.category, amount: pn.amount, note: `Захиалга №${o.number} дахин хүргэгдсэн (автомат)` }, tx, ['penalty', 'money']);
+      }
+    }
     return { order: u, duplicate: false };
   });
   bust();
@@ -427,8 +436,13 @@ export async function driverOrders(actor: UserActor, tabIn?: string) {
   const today = ubDay(); const t0 = ubDayStart(today); const t1 = ubDayStart(addDays(today, 1));
   const me = actor.id;
   const active: Prisma.OrderWhereInput = { driverId: me, status: { in: ['ASSIGNED', 'OUT_FOR_DELIVERY'] }, OR: [{ deliveryDate: { lte: dateOnly(today) } }, { status: 'OUT_FOR_DELIVERY' }] };
-  const delivered: Prisma.OrderWhereInput = { driverId: me, status: 'DELIVERED', deliveredAt: { gte: t0, lt: t1 } };
-  const cancelled: Prisma.OrderWhereInput = { driverId: me, status: 'CANCELLED', cancelledAt: { gte: t0, lt: t1 } };
+  // Аудит Б2 (B1, #83): «Хүргэсэн / Цуцалсан» ба мөнгө — ӨНӨӨДРИЙН ПАДААНЫ захиалгаар (нягтлангийн «Тооцоо»-той яг ижил).
+  // Шөнө 00:00-оос хойш хүргэсэн өчигдрийн падааны захиалга өчигдрийн тооцоонд үлдэнэ.
+  const dayIds = (await db.$queryRaw<{ orderId: number }[]>`
+    SELECT ho."orderId" FROM "HandoverOrder" ho JOIN "Handover" h ON h.id = ho."handoverId"
+    WHERE h."driverId" = ${me}::uuid AND h.date = ${dateOnly(today)}::date AND ho."removedAt" IS NULL`).map((r) => r.orderId);
+  const delivered: Prisma.OrderWhereInput = { id: { in: dayIds }, status: 'DELIVERED' };
+  const cancelled: Prisma.OrderWhereInput = { id: { in: dayIds }, status: 'CANCELLED' };
   const postponed: Prisma.OrderWhereInput = { postponedByDriverId: me, postponedAt: { gte: t0, lt: t1 } };
   const where: Record<DriverTab, Prisma.OrderWhereInput> = {
     all: { OR: [active, delivered, cancelled, postponed] },
@@ -441,21 +455,18 @@ export async function driverOrders(actor: UserActor, tabIn?: string) {
   const rows = await db.order.findMany({ where: where[tab], include: { lines: { orderBy: { id: 'asc' } } }, take: 300, orderBy: [{ routeNo: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }] });
   const counts = await db.$queryRaw<{ k: string; n: number }[]>`
     SELECT 'delivery' AS k, count(*)::int AS n FROM "Order" WHERE "driverId" = ${me}::uuid AND (status = 'OUT_FOR_DELIVERY' OR (status = 'ASSIGNED' AND "deliveryDate" <= ${dateOnly(today)}::date))
-    UNION ALL SELECT 'delivered', count(*)::int FROM "Order" WHERE "driverId" = ${me}::uuid AND status = 'DELIVERED' AND "deliveredAt" >= ${t0} AND "deliveredAt" < ${t1}
-    UNION ALL SELECT 'cancelled', count(*)::int FROM "Order" WHERE "driverId" = ${me}::uuid AND status = 'CANCELLED' AND "cancelledAt" >= ${t0} AND "cancelledAt" < ${t1}
     UNION ALL SELECT 'postponed', count(*)::int FROM "Order" WHERE "postponedByDriverId" = ${me}::uuid AND "postponedAt" >= ${t0} AND "postponedAt" < ${t1}
     UNION ALL SELECT 'tomorrow', count(*)::int FROM "Order" WHERE "driverId" = ${me}::uuid AND status = 'ASSIGNED' AND "deliveryDate" = ${dateOnly(addDays(today, 1))}::date`;
   const c = Object.fromEntries(counts.map((x) => [x.k, x.n])) as Record<string, number>;
-  const sums = await db.$queryRaw<{ cash: number; bank: number; unpaid: number; prepaid: number }[]>`
-    SELECT COALESCE(sum("collectAmount") FILTER (WHERE "deliveryPayment" = 'CASH'), 0)::int AS cash,
-           COALESCE(sum("collectAmount") FILTER (WHERE "deliveryPayment" = 'BANK'), 0)::int AS bank,
-           COALESCE(sum(total) FILTER (WHERE "deliveryPayment" = 'UNPAID'), 0)::int AS unpaid,
-           COALESCE(sum(total) FILTER (WHERE "deliveryPayment" = 'PREPAID'), 0)::int AS prepaid
-    FROM "Order" WHERE "driverId" = ${me}::uuid AND status = 'DELIVERED' AND "deliveredAt" >= ${t0} AND "deliveredAt" < ${t1}`;
+  // Тоо ба мөнгө — нягтлангийн тооцоотой нэг томьёо (computeDay)
+  const day = (await computeDay(db, today, me))[0];
+  const sums = { cash: day?.cash ?? 0, bank: day?.bank ?? 0, unpaid: day?.unpaid ?? 0, prepaid: day?.prepaidAmount ?? 0 };
+  c.delivered = day?.delivered ?? 0;
+  c.cancelled = (day?.cancelled ?? 0) + (day?.excluded ?? 0);
   return {
     tab, today,
     counts: { delivery: c.delivery ?? 0, delivered: c.delivered ?? 0, cancelled: c.cancelled ?? 0, postponed: c.postponed ?? 0, tomorrow: (c.postponed ?? 0) + (c.tomorrow ?? 0) },
-    money: sums[0] ?? { cash: 0, bank: 0, unpaid: 0, prepaid: 0 },
+    money: sums,
     items: rows.map((o) => {
       const s = serializeOrder(o);
       const mine = o.driverId === me;

@@ -99,6 +99,20 @@ describe('агуулах (#38)', () => {
   });
 });
 
+describe('аудит Б10: захиалгад түгжигдсэн бараа', () => {
+  it('зарлагадах / өөр агуулах руу шилжүүлэхийг хориглоно; захиалах боломжтой хэсгийг гаргаж болно; үндсэн рүү (дүүргэлт) болно', async () => {
+    await D.createReceipt(wh, { warehouseId: main.id, lines: [{ variantId: v1, qty: 10 }], idemKey: key() });
+    await D.createReceipt(wh, { warehouseId: w2.id, lines: [{ variantId: v1, qty: 4 }], idemKey: key() });
+    await db.stockReservation.create({ data: { ref: 'order:999', variantId: v1, qty: 12 } }); // 14 − 12 = 2 боломжтой
+    await err(D.createIssue(wh, { warehouseId: main.id, reason: 'SAMPLE', lines: [{ variantId: v1, qty: 3 }], note: N, idemKey: key() }), 409, 'reserved_stock');
+    await D.createIssue(wh, { warehouseId: main.id, reason: 'SAMPLE', lines: [{ variantId: v1, qty: 2 }], note: N, idemKey: key() });
+    await err(T.sendTransfer(wh, { fromWarehouseId: main.id, toWarehouseId: w2.id, lines: [{ variantId: v1, qty: 1 }], idemKey: key() }), 409, 'reserved_stock');
+    // үндсэн агуулах руу (дүүргэлт) — нөөцийг хангахад тустай тул болно
+    await T.sendTransfer(wh, { fromWarehouseId: w2.id, toWarehouseId: main.id, lines: [{ variantId: v1, qty: 4 }], idemKey: key() });
+    expect(await db.stockMove.count({ where: { type: 'ISSUE' } })).toBe(1);
+  });
+});
+
 describe('орлого, зарлага', () => {
   it('орлого нэмнэ; давхар дарахад нэг; зарлага тайлбар заавал; сөрөг гарахгүй', async () => {
     const k = key();

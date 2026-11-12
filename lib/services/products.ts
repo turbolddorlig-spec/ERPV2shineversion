@@ -242,6 +242,8 @@ export async function createProduct(actor: UserActor, input: ProductInput) {
 export interface UpdateInput extends ProductInput {
   /** [{id, priceOverride, isActive}] — хувилбар тус бүрийн тохиргоо */
   variants?: unknown;
+  /** Аудит Б12: [{axis:'color'|'size', from, to}] — өнгө / хэмжээний НЭР солих (үлдэгдэл, захиалга хувилбартайгаа хамт шилжинэ) */
+  renames?: unknown;
 }
 
 type Change = { from: unknown; to: unknown };
@@ -313,6 +315,23 @@ export async function updateProduct(actor: UserActor, id: number, input: UpdateI
     changes.colors = { from: p.colors, to: colors }; changes.sizes = { from: p.sizes, to: sizes }; tags.add('variant');
   }
 
+  // Аудит Б12: нэр солих — тэр хувилбарууд (үлдэгдэл, захиалга) шинэ нэрээ авна, шинэ хоосон хувилбар үүсэхгүй
+  const lc = (x: string) => x.toLocaleLowerCase('mn');
+  const renamed = new Set<number>();
+  const renameList = Array.isArray(input.renames) ? (input.renames as Record<string, unknown>[]).slice(0, 20) : [];
+  for (const r of renameList) {
+    const axis = r?.axis === 'size' ? 'size' : r?.axis === 'color' ? 'color' : null;
+    const from = String(r?.from ?? '').trim(); const to = String(r?.to ?? '').trim();
+    const oldAxis = axis === 'size' ? p.sizes : p.colors; const newAxis = axis === 'size' ? sizes : colors;
+    if (!axis || !from || !to || !oldAxis.some((x) => lc(x) === lc(from)) || !newAxis.some((x) => lc(x) === lc(to)) || newAxis.some((x) => lc(x) === lc(from)) || oldAxis.some((x) => lc(x) === lc(to))) {
+      throw badRequest('Нэр солих мэдээлэл буруу байна', 'bad_rename');
+    }
+    const exact = newAxis.find((x) => lc(x) === lc(to))!;
+    for (const v of p.variants) if (lc(v[axis]) === lc(from)) { v[axis] = exact; renamed.add(v.id); }
+    if (axis === 'size') p.sizes = p.sizes.map((x) => (lc(x) === lc(from) ? exact : x)); else p.colors = p.colors.map((x) => (lc(x) === lc(from) ? exact : x));
+    changes[`Нэр солив (${axis === 'size' ? 'хэмжээ' : 'өнгө'})`] = { from, to: exact };
+  }
+
   // Хувилбар тус бүрийн үнэ / идэвх
   const variantPatches = new Map<number, { priceOverride?: number | null; isActive?: boolean }>();
   if (input.variants !== undefined) {
@@ -345,10 +364,26 @@ export async function updateProduct(actor: UserActor, id: number, input: UpdateI
     });
     seen.add(key);
   }
+  const dropped: typeof p.variants = [];
   for (const v of p.variants) {
     if (seen.has(comboKey(v))) continue;
     // Тэнхлэгээс хасагдсан хувилбар — устгахгүй, идэвхгүй болгоно (үлдэгдлийн түүх алдагдахгүй)
     plan.push({ id: v.id, combo: v, code: variantCode(newCode, v), sortOrder: order++, isActive: false, priceOverride: v.priceOverride });
+    if (v.isActive) dropped.push(v);
+  }
+  // Аудит Б12: үлдэгдэл эсвэл нээлттэй захиалгатай өнгө / хэмжээг хасахгүй (нэрийг нь солих бол «нэр солих»)
+  if (dropped.length) {
+    const ids = dropped.map((v) => v.id);
+    const [bal, res, open] = await Promise.all([
+      db.stockBalance.groupBy({ by: ['variantId'], where: { variantId: { in: ids }, qty: { gt: 0 } }, _sum: { qty: true } }),
+      db.stockReservation.groupBy({ by: ['variantId'], where: { variantId: { in: ids } }, _sum: { qty: true } }),
+      db.orderLine.groupBy({ by: ['variantId'], where: { variantId: { in: ids }, order: { status: { in: ['NEW', 'PENDING_PAYMENT', 'ASSIGNED', 'OUT_FOR_DELIVERY'] } } }, _count: true }),
+    ]);
+    const busy = new Set([...bal.map((x) => x.variantId), ...res.map((x) => x.variantId), ...open.map((x) => x.variantId)]);
+    const blocked = dropped.filter((v) => busy.has(v.id));
+    if (blocked.length) {
+      throw conflict(`${blocked.map((v) => `«${variantLabel(v)}»`).join(', ')} — үлдэгдэл эсвэл нээлттэй захиалгатай тул хасахгүй. Нэрийг нь зассан бол «Нэр солих»-оор хадгална уу (үлдэгдэл шинэ нэр рүү шилжинэ).`, 'variant_has_stock');
+    }
   }
   if (!plan.some((v) => v.isActive)) throw badRequest('Дор хаяж нэг идэвхтэй хувилбар байх ёстой');
 
@@ -384,7 +419,7 @@ export async function updateProduct(actor: UserActor, id: number, input: UpdateI
       }
       for (const v of plan) {
         if (v.id) {
-          await tx.productVariant.update({ where: { id: v.id }, data: { code: v.code, isActive: v.isActive, priceOverride: v.priceOverride, sortOrder: v.sortOrder } });
+          await tx.productVariant.update({ where: { id: v.id }, data: { code: v.code, isActive: v.isActive, priceOverride: v.priceOverride, sortOrder: v.sortOrder, ...(renamed.has(v.id) ? { color: v.combo.color, size: v.combo.size } : {}) } });
         } else {
           await tx.productVariant.create({ data: { productId: id, code: v.code, color: v.combo.color, size: v.combo.size, isActive: v.isActive, priceOverride: v.priceOverride, sortOrder: v.sortOrder } });
         }
@@ -410,9 +445,20 @@ export async function setProductStatus(actor: UserActor, id: number, input: { st
   const status = String(input.status ?? '') as ProductStatus;
   if (!['ACTIVE', 'DISCONTINUED', 'ARCHIVED'].includes(status)) throw badRequest('Төлөв буруу');
   const version = Number(input.version);
+  if (!Number.isInteger(version)) throw badRequest('Хувилбарын дугаар алга', 'version_required');
   const reason = String(input.reason).trim().slice(0, 500);
   const p = await loadFull(id);
   if (p.status === status) return serializeProduct(p, actor.roles);
+  // Аудит Б11 (эзний шийдвэр): үлдэгдэлтэй (агуулах, жолооч, ажилтан, замд) эсвэл нээлттэй захиалгатай барааг архивлахгүй
+  if (status === 'ARCHIVED') {
+    const ids = p.variants.map((v) => v.id);
+    const [bal, open] = await Promise.all([
+      db.stockBalance.aggregate({ where: { variantId: { in: ids }, qty: { gt: 0 } }, _sum: { qty: true } }),
+      db.orderLine.count({ where: { variantId: { in: ids }, order: { status: { in: ['NEW', 'PENDING_PAYMENT', 'ASSIGNED', 'OUT_FOR_DELIVERY'] } } } }),
+    ]);
+    if ((bal._sum.qty ?? 0) > 0) throw conflict(`Энэ бараа ${bal._sum.qty} ширхэг үлдэгдэлтэй — эхлээд зарж / зарлагадаж дуусгаад архивлана уу`, 'has_stock');
+    if (open) throw conflict(`Энэ барааны ${open} нээлттэй захиалга байна — дуусгасны дараа архивлана уу`, 'has_orders');
+  }
   const updated = await db.$transaction(async (tx) => {
     const ok = await tx.product.updateMany({ where: { id, version }, data: { version: { increment: 1 }, status, statusNote: reason, updatedById: actor.id } });
     if (ok.count === 0) throw conflict('Энэ барааг өөр хүн дөнгөж сая засчихсан байна. Хуудсаа дахин ачаална уу.', 'stale');
@@ -528,10 +574,18 @@ export async function exportRows(actor: UserActor) {
   const rows = await db.product.findMany({
     orderBy: { code: 'asc' },
     select: {
-      code: true, name: true, price: true, costPrice: true, status: true,
+      id: true, code: true, name: true, description: true, price: true, costPrice: true, status: true,
       category: { select: { name: true } }, season: { select: { name: true } },
-      variants: { where: { isActive: true }, orderBy: { sortOrder: 'asc' }, select: { code: true, color: true, size: true, priceOverride: true } },
+      variants: { where: { isActive: true }, orderBy: { sortOrder: 'asc' }, select: { id: true, code: true, color: true, size: true, priceOverride: true } },
+      images: { orderBy: [{ isMain: 'desc' }, { sortOrder: 'asc' }], select: { fileKey: true, color: true, isMain: true } },
     },
   });
-  return { showCost, rows };
+  // Аудит Б13 (хуучин шиг): өнгө / хэмжээ бүрээр мөр, үлдэгдэл, захиалах боломжтой, тайлбар, зураг
+  const { productStockTotals } = await import('./stock/views');
+  const stock = new Map<number, { total: number; available: number }>();
+  for (let i = 0; i < rows.length; i += 2000) {
+    const m = await productStockTotals(rows.slice(i, i + 2000).map((r) => r.id));
+    for (const [, v] of m) for (const [vid, x] of v.byVariant) stock.set(vid, { total: x.total, available: x.available });
+  }
+  return { showCost, rows, stock };
 }

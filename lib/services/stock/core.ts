@@ -155,6 +155,27 @@ export async function applyMoves(tx: Tx, actor: { id: string; name: string }, do
   }
 }
 
+/**
+ * Аудит Б10 (эзний шийдвэр): захиалгад түгжигдсэн (нөөцлөгдсөн) барааг зарлагадах / өөр агуулах руу шилжүүлэхийг хориглоно.
+ * Захиалах боломжтой = агуулахуудын нийт − бүх нөөцлөлт (захиалгатай ижил томьёо). Захиалга үүсгэхтэй ижил түгжээ (2, variant).
+ */
+export async function assertNotReserved(tx: Tx, lines: { variantId: number; qty: number }[], labels?: Map<number, string>) {
+  const ids = [...new Set(lines.map((l) => l.variantId))].sort((a, b) => a - b);
+  if (!ids.length) return;
+  for (const id of ids) await tx.$executeRaw`SELECT pg_advisory_xact_lock(2::int4, ${id}::int4)`;
+  const rows = await tx.$queryRaw<{ variantId: number; total: number; reserved: number }[]>`
+    SELECT v.id AS "variantId",
+      COALESCE((SELECT sum(b.qty) FROM "StockBalance" b JOIN "StockLocation" l ON l.id = b."locationId" AND l.kind = 'WAREHOUSE' WHERE b."variantId" = v.id), 0)::int AS total,
+      COALESCE((SELECT sum(r.qty) FROM "StockReservation" r WHERE r."variantId" = v.id), 0)::int AS reserved
+    FROM "ProductVariant" v WHERE v.id IN (${Prisma.join(ids)})`;
+  const need = new Map<number, number>();
+  for (const l of lines) need.set(l.variantId, (need.get(l.variantId) ?? 0) + l.qty);
+  const bad = rows.filter((r) => r.reserved > 0 && (need.get(r.variantId) ?? 0) > r.total - r.reserved);
+  if (bad.length) {
+    throw conflict(bad.map((r) => `«${labels?.get(r.variantId) ?? `#${r.variantId}`}»: ${r.reserved} ширхэг захиалгад түгжигдсэн, гаргах боломжтой ${Math.max(0, r.total - r.reserved)}`).join('; '), 'reserved_stock');
+  }
+}
+
 export function uniqueViolation(e: unknown): boolean {
   return e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002';
 }

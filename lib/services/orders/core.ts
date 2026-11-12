@@ -4,7 +4,7 @@ import { badRequest, conflict } from '../../errors';
 import { normalizePhone, isValidPhone } from '../../phone';
 import { PROVINCES, UB_DISTRICTS, isUB } from '../../geo';
 import { reasonProblem } from '../../catalog/variants';
-import { ubDay, isYmd } from '../../ubdate';
+import { ubDay, isYmd, dateOnly } from '../../ubdate';
 import { getSettingNumber } from '../stock/core';
 import type { UserActor } from '../users';
 
@@ -133,8 +133,10 @@ export async function availableFor(tx: Tx | typeof db, variantIds: number[], exc
 export async function findActiveDuplicate(tx: Tx | typeof db, phones: string[], excludeId?: number) {
   const ph = [...new Set(phones.filter(Boolean))];
   if (!ph.length) return null;
+  // Аудит Б3 (хуучин шиг): маргаашаас цааш товлосон («Он сар өдөртэй») захиалга шинэ захиалгыг ХААХГҮЙ — зөвхөн анхааруулна
   return tx.order.findFirst({
-    where: { status: { in: ACTIVE }, id: excludeId ? { not: excludeId } : undefined, OR: [{ phone: { in: ph } }, { extraPhone: { in: ph } }] },
+    where: { status: { in: ACTIVE }, id: excludeId ? { not: excludeId } : undefined, OR: [{ phone: { in: ph } }, { extraPhone: { in: ph } }],
+      NOT: { status: 'NEW', deliveryDate: { gt: dateOnly(ubDay(new Date(), 1)) } } },
     select: { id: true, number: true, status: true, deliveryDate: true, operatorName: true, phone: true, total: true },
     orderBy: { id: 'desc' },
   });

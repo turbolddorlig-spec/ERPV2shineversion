@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { CancelReason, Order, OrderLine, OrderStatus, Prisma } from '@prisma/client';
 import { db } from '../../db';
 import { badRequest, conflict, forbidden, notFound } from '../../errors';
@@ -151,11 +152,20 @@ function auditTags(lines: PricedLine[], feeEdited: boolean): string[] {
 
 export async function createOrder(actor: UserActor, input: CreateInput) {
   if (!canEditOrders(actor.roles)) throw forbidden('Захиалга үүсгэх эрхгүй');
-  const idemKey = cleanIdemKey(input.idemKey);
-  const existing = await db.order.findUnique({ where: { idemKey } });
-  if (existing) return { order: existing, duplicate: true };
-
+  const baseKey = cleanIdemKey(input.idemKey);
   const phone = cleanPhone(input.phone);
+  const fpLines = cleanLineInputs(input.lines);
+  // Аудит Б5: ижил түлхүүр боловч ӨӨР утас / бараа (ноорог дахин ашигласан) бол өмнөх захиалгыг буцаахгүй — шинэ захиалга
+  const fp = (ph: string, ls: { variantId: number; qty: number }[]) => `${ph}|${ls.map((l) => `${l.variantId}:${l.qty}`).sort().join(',')}`;
+  let idemKey = baseKey;
+  const existing = await db.order.findUnique({ where: { idemKey }, include: { lines: { select: { variantId: true, qty: true } } } });
+  if (existing) {
+    if (fp(existing.phone, existing.lines) === fp(phone, fpLines)) return { order: existing, duplicate: true };
+    idemKey = `${baseKey.slice(0, 80)}-${createHash('sha1').update(fp(phone, fpLines)).digest('hex').slice(0, 12)}`;
+    const again = await db.order.findUnique({ where: { idemKey } });
+    if (again) return { order: again, duplicate: true };
+  }
+
   const extraPhone = cleanOptPhone(input.extraPhone);
   if (extraPhone === phone) throw badRequest('Нэмэлт утас үндсэн утастай ижил байна', 'bad_phone');
   const addr = cleanAddress(input);
@@ -166,7 +176,7 @@ export async function createOrder(actor: UserActor, input: CreateInput) {
   const pageId = noPage ? await noPageId(db) : pageInput;
   const deliveryDate = cleanDeliveryDate(input.deliveryDate);
   const note = String(input.note ?? '').trim().slice(0, 500) || null;
-  const lineIn = cleanLineInputs(input.lines);
+  const lineIn = fpLines;
   const settings = await orderSettings();
   // Орон нутаг заавал урьдчилгаатай (#43 8); УБ «Урьдчилгаа хүлээх» тэмдэглэвэл (#51)
   const pending = !isUB(addr.province) || input.prepaidWait === true;
@@ -346,7 +356,12 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
       const h = await tx.handover.findUnique({ where: { driverId_date: { driverId: o.driverId, date: u.deliveryDate } }, select: { id: true, status: true } });
       if (h && !isGiven(h.status)) await addToHandover(tx, h.id, id);
     }
-    const discountNow = lines.some((l) => l.unitPrice < l.listPrice && existing.get(l.variantId)?.unitPrice !== l.unitPrice) || !!t.feeReason;
+    // Аудит Б6: хөнгөлөлттэй мөрийн ТОО өсөх (нийт хөнгөлөлт нэмэгдэх) нь ч Супер админы хяналтад дахин орно
+    const discountNow = lines.some((l) => {
+      if (l.unitPrice >= l.listPrice) return false;
+      const ex = existing.get(l.variantId);
+      return !ex || ex.unitPrice !== l.unitPrice || l.qty > ex.qty;
+    }) || !!t.feeReason;
     await writeAudit(actor, 'order.updated', 'Order', String(id), { number: o.number, changes, ...(t.feeReason ? { feeReason: t.feeReason } : {}) } as unknown as Prisma.InputJsonValue, tx,
       [...(discountNow ? ['order', 'discount'] : ['order']), ...(changes.payment ? ['money'] : [])]);
     return { order: u, changed: true, rebank: o.prepaid && t.total !== o.total };

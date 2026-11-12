@@ -193,7 +193,7 @@ export async function getOrder(actor: UserActor, idInput: unknown) {
 export async function customerCard(actor: UserActor, phonesInput: string[]) {
   assertView(actor);
   const phones = [...new Set(phonesInput.map((p) => normalizePhone(p)).filter(isValidPhone))].slice(0, 2);
-  if (!phones.length) return { phones, orders: [], stats: { total: 0, delivered: 0, cancelled: 0 }, active: null, blacklist: [], calls: [], lastAddress: null };
+  if (!phones.length) return { phones, orders: [], stats: { total: 0, delivered: 0, cancelled: 0 }, active: null, scheduled: null, blacklist: [], calls: [], lastAddress: null };
   const byPhone: Prisma.OrderWhereInput = { OR: [{ phone: { in: phones } }, { extraPhone: { in: phones } }] };
   const [orders, stats, blacklist, calls] = await Promise.all([
     db.order.findMany({ where: byPhone, orderBy: { id: 'desc' }, take: 20, include: { lines: true } }),
@@ -203,7 +203,10 @@ export async function customerCard(actor: UserActor, phonesInput: string[]) {
   ]);
   const pn = await pageNames([...orders.map((o) => o.pageId), ...calls.map((c) => c.pageId).filter((x): x is number => !!x)]);
   const ser = orders.map((o) => serializeOrder(o, pn.get(o.pageId)));
-  const active = ser.find((o) => ['PENDING_PAYMENT', 'NEW', 'ASSIGNED'].includes(o.status)) ?? null;
+  // Б3: товлосон (маргаашаас цааш) «Шинэ» захиалга хаахгүй — тусад нь анхааруулга
+  const activeAll = ser.filter((o) => ['PENDING_PAYMENT', 'NEW', 'ASSIGNED'].includes(o.status));
+  const active = activeAll.find((o) => o.displayStatus !== 'SCHEDULED') ?? null;
+  const scheduled = activeAll.find((o) => o.displayStatus === 'SCHEDULED') ?? null;
   const last = orders[0];
   const callVariants = calls.map((c) => c.variantId).filter((x): x is number => !!x);
   const variants = callVariants.length ? await db.productVariant.findMany({ where: { id: { in: callVariants } }, select: { id: true, code: true, product: { select: { name: true } } } }) : [];
@@ -214,6 +217,7 @@ export async function customerCard(actor: UserActor, phonesInput: string[]) {
     orders: ser.map((o) => ({ id: o.id, number: o.number, displayStatus: o.displayStatus, statusLabel: o.statusLabel, createdAt: o.createdAt, total: o.total, lines: o.lines.map((l) => `${l.name}${l.label ? ` · ${l.label}` : ''} ${l.qty}ш`) })),
     stats: { total: stats.reduce((a, s) => a + s._count, 0), delivered: count('DELIVERED'), cancelled: count('CANCELLED') },
     active: active ? { id: active.id, number: active.number, statusLabel: active.statusLabel, deliveryDate: active.deliveryDate, inHandover: active.inHandover, version: active.version, operatorName: active.operatorName, lines: active.lines } : null,
+    scheduled: scheduled ? { id: scheduled.id, number: scheduled.number, deliveryDate: scheduled.deliveryDate, operatorName: scheduled.operatorName } : null,
     blacklist: blacklist.map((b) => ({ id: b.id, phone: b.phone, reason: b.reason, reportedBy: b.reportedBy, createdAt: b.createdAt, orderNumber: b.orderNumber })),
     calls: calls.map((c) => ({ id: c.id, phone: c.phone, note: c.note, product: c.variantId ? vn.get(c.variantId) ?? null : c.productText, variantId: c.variantId, pageId: c.pageId, pageName: c.pageId ? pn.get(c.pageId) ?? null : null, ownerName: c.ownerName, attempts: c.attempts, createdAt: c.createdAt })),
     lastAddress: last ? { province: last.province, district: last.district, khoroo: last.khoroo, addressDetail: last.addressDetail, fullAddress: fullAddress(last) } : null,

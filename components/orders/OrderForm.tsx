@@ -26,6 +26,7 @@ interface Card {
   orders: { id: number; number: string; statusLabel: string; createdAt: string; total: number; lines: string[] }[];
   stats: { total: number; delivered: number; cancelled: number };
   active: { id: number; number: string; statusLabel: string; deliveryDate: string; inHandover: boolean; operatorName: string } | null;
+  scheduled?: { id: number; number: string; deliveryDate: string; operatorName: string } | null;
   blacklist: { id: number; phone: string; reason: string; reportedBy: string; createdAt: string; orderNumber: string | null }[];
   calls: { id: number; phone: string; note: string | null; product: string | null; variantId: number | null; pageId: number | null; pageName: string | null; ownerName: string; attempts: number; createdAt: string }[];
   lastAddress: { province: string; district: string | null; khoroo: number | null; addressDetail: string; fullAddress: string } | null;
@@ -237,11 +238,12 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
           setBusy(false);
           onDone(`№${edit.number} хадгалагдлаа`, edit.id);
         } else {
-          const r = await api<{ order: { id: number; number: string } }>('/api/orders', { method: 'POST', json: { ...body, prepaidWait, idemKey } });
+          const r = await api<{ order: { id: number; number: string }; duplicate?: boolean }>('/api/orders', { method: 'POST', json: { ...body, prepaidWait, idemKey } });
           submitted.current = true;
           clearOrderDraft();
           setBusy(false);
-          onDone(`№${r.order.number} захиалга үүслээ`, r.order.id);
+          // Б5: сүлжээ тасарч дахин илгээхэд аль хэдийн үүссэн бол тодорхой хэлнэ
+          onDone(r.duplicate ? `№${r.order.number} захиалга өмнө нь үүссэн байсан (дахин үүсээгүй)` : `№${r.order.number} захиалга үүслээ`, r.order.id);
         }
         return;
       } catch (e) {
@@ -420,10 +422,12 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
         {error ? <Notice>{error}</Notice> : null}
         {restored && !edit ? <p className="rounded-lg bg-info-soft px-3 py-1.5 text-[12.5px] text-info">📝 Өмнө бөглөж байсан ноорог сэргээгдлээ{draft ? ` (${new Date(draft.savedAt + 8 * 3600_000).toISOString().slice(11, 16)})` : ''}. Шинээр эхлэх бол «Ноорог устгах».</p> : null}
         {dup && !edit ? <Notice tone="warn">Энэ утсаар идэвхтэй захиалга №{dup.number} байна — шинэ захиалга үүсгэхгүй, тэр захиалгад бараа нэмнэ.</Notice> : null}
+        {!dup && !edit && card?.scheduled ? <Notice tone="warn">Энэ утсаар {String(card.scheduled.deliveryDate).slice(0, 10)}-нд товлосон захиалга №{card.scheduled.number} бий. Шинэ захиалга үүсгэж болно, эсвэл барааг тэр захиалгад нэмнэ.</Notice> : null}
         <div className="flex flex-wrap items-center justify-end gap-2">
           {statusHint ? <span className="mr-auto text-[12.5px] text-muted">Төлөв: <b className="text-ink">{statusHint}</b></span> : null}
           {!edit && (restored || phone || detail || lines.length) ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => { if (confirm('Бөглөсөн мэдээллийг устгаж шинээр эхлэх үү?')) discardDraft(); }}>Ноорог устгах</Button> : null}
           <Button size="sm" onClick={onClose} disabled={busy}>Болих</Button>
+          {!dup && !edit && card?.scheduled && onAddToExisting ? <Button size="sm" disabled={busy} onClick={() => (clearOrderDraft(), onAddToExisting(card.scheduled!.id, lines))}>№{card.scheduled.number}-д бараа нэмэх</Button> : null}
           {dup && !edit ? <Button size="sm" variant="primary" disabled={dup.inHandover || !onAddToExisting} onClick={() => (clearOrderDraft(), onAddToExisting?.(dup.id, lines))}>№{dup.number} захиалгад бараа нэмэх</Button>
             : <Button size="sm" variant="primary" loading={busy} onClick={submit}>{edit ? 'Хадгалах' : 'Захиалга үүсгэх'}</Button>}
         </div>

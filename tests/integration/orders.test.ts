@@ -155,6 +155,31 @@ describe('захиалга үүсгэх', () => {
     await O.createOrder(op2, ub({ phone: '99112233' }));
   });
 
+  it('аудит Б5: ижил түлхүүр — ижил хүсэлт бол өмнөхийг буцаана; өөр утас / бараа бол ШИНЭ захиалга (ноорог дахин ашигласан)', async () => {
+    const k = 'draft-key-0001';
+    const a = await O.createOrder(op, ub({ phone: '94112233', idemKey: k }));
+    const a2 = await O.createOrder(op, ub({ phone: '94112233', idemKey: k }));
+    expect([a2.duplicate, a2.order.id]).toEqual([true, a.order.id]);
+    const b = await O.createOrder(op, ub({ phone: '94445566', idemKey: k }));
+    expect(b.duplicate).toBe(false);
+    expect(b.order.id).not.toBe(a.order.id);
+    expect(b.order.phone).toBe('94445566');
+    // шинэ захиалгыг давтан илгээхэд нэг л
+    const b2 = await O.createOrder(op, ub({ phone: '94445566', idemKey: k }));
+    expect([b2.duplicate, b2.order.id]).toEqual([true, b.order.id]);
+  });
+
+  it('аудит Б3 (хуучин шиг): товлосон (маргаашаас цааш) захиалга шинэ захиалгыг хаахгүй, картанд анхааруулга', async () => {
+    const far = U.ubDay(new Date(), 10);
+    const sch = (await O.createOrder(op, ub({ phone: '96112233', deliveryDate: far }))).order;
+    const card = await Q.customerCard(op, ['96112233']);
+    expect([card.active, card.scheduled?.number]).toEqual([null, sch.number]);
+    const n = (await O.createOrder(op2, ub({ phone: '96112233' }))).order;
+    expect(n.id).not.toBe(sch.id);
+    // одоо идэвхтэй (маргааш хүртэлх) захиалга бий → гурав дахь нь хаагдана
+    await err(O.createOrder(op2, ub({ phone: '96112233' })), 409, 'duplicate_order');
+  });
+
   it('үлдэгдэл: хүрэлцэхгүй бол 409; 2 оператор зэрэг сүүлийн барааг авбал 1; бараа хөдлөхгүй', async () => {
     await err(O.createOrder(op, ub({ lines: [{ variantId: v2, qty: 4 }] })), 409, 'insufficient_stock');
     const tries = await Promise.allSettled(Array.from({ length: 4 }, (_, i) => O.createOrder(i % 2 ? op : op2, ub({ phone: String(91000000 + i), lines: [{ variantId: v2, qty: 2 }] }))));
@@ -172,6 +197,14 @@ describe('захиалга үүсгэх', () => {
     const list = await Q.discountReviewList(sa, { unreviewed: true });
     expect(list.unreviewed).toBe(1);
     await Q.reviewDiscounts(sa, 'all');
+    expect(await Q.unreviewedDiscounts()).toBe(0);
+    // Аудит Б6: хөнгөлөлттэй мөрийн тоог өсгөхөд (2 → 5) дахин хяналтад; тоо бууруулахад орохгүй
+    const v0 = (await db.order.findUniqueOrThrow({ where: { id: order.id } })).version;
+    await O.updateOrder(op, order.id, { lines: [{ variantId: v1, qty: 5, unitPrice: 8000, discountReason: 'Байнгын үйлчлүүлэгч' }], version: v0 });
+    expect(await Q.unreviewedDiscounts()).toBe(1);
+    await Q.reviewDiscounts(sa, 'all');
+    const v2_ = (await db.order.findUniqueOrThrow({ where: { id: order.id } })).version;
+    await O.updateOrder(op, order.id, { lines: [{ variantId: v1, qty: 3, unitPrice: 8000, discountReason: 'Байнгын үйлчлүүлэгч' }], version: v2_ });
     expect(await Q.unreviewedDiscounts()).toBe(0);
   });
 

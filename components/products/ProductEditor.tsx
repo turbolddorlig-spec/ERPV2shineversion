@@ -166,7 +166,23 @@ export function ProductEditor({ product: initial, perms }: { product: Product | 
     setSaving(true); setReasonErr(null);
     try {
       if (changes && Object.keys(changes).length) {
-        const r = await api<{ product: Product; changed: boolean }>(`/api/products/${product.id}`, { method: 'PATCH', json: { changes, reason, version: product.version } });
+        const send = (extra: Record<string, unknown> = {}) => api<{ product: Product; changed: boolean }>(`/api/products/${product.id}`, { method: 'PATCH', json: { changes: { ...changes, ...extra }, reason, version: product.version } });
+        let r: { product: Product; changed: boolean };
+        try { r = await send(); }
+        catch (e) {
+          // Аудит Б12: үлдэгдэлтэй өнгө / хэмжээг хасах гэвэл — 1 хасагдаж 1 нэмэгдсэн бол «нэр солих» эсэхийг асууна
+          if (!(e instanceof ApiError && e.code === 'variant_has_stock')) throw e;
+          const lc = (x: string) => x.toLocaleLowerCase('mn');
+          const diff = (a: string[], b: string[]) => a.filter((x) => !b.some((y) => lc(y) === lc(x)));
+          const renames: { axis: 'color' | 'size'; from: string; to: string }[] = [];
+          for (const [axis, before, after] of [['color', product.colors, colors], ['size', product.sizes, sizes]] as const) {
+            const rem = diff(before, after); const add = diff(after, before);
+            if (rem.length === 1 && add.length === 1) renames.push({ axis, from: rem[0]!, to: add[0]! });
+          }
+          const ok = renames.length > 0 && confirm(`${renames.map((x) => `«${x.from}» → «${x.to}»`).join(', ')} гэж НЭРИЙГ нь солих уу?\n\nҮлдэгдэл, захиалга шинэ нэр рүү шилжинэ.`);
+          if (!ok) throw e;
+          r = await send({ renames });
+        }
         resetFrom(r.product);
       }
     } catch (e) {
