@@ -173,8 +173,12 @@ describe('#124-4 хуваарилагдаагүй «Шинэ» захиалгы�
     const a1 = await AS.unassignedAlert(['DRIVER_LEAD']);
     expect(a1).toEqual(hourNow >= 21 ? { today: 1, leftover: 0, late: true, hour: 21 } : null);
     expect(await AS.unassignedAlert(['OPERATOR'])).toBeNull();
-    // хоносон: хүргэх өдөр нь өнөөдөр, хуваарилагдаагүй
+    // А11: өнөөдөр үүсээд өнөөдөр хүргэх → хоносон биш (өнөөдрийн ажил)
     await db.order.update({ where: { id: order.id }, data: { deliveryDate: U.dateOnly(U.ubDay()) } });
+    AS.bustUnassignedAlert();
+    expect((await AS.unassignedAlert(['ADMIN']))?.leftover ?? 0).toBe(0);
+    // хоносон: өчигдөр үүссэн, хүргэх өдөр нь өнөөдөр, хуваарилагдаагүй
+    await db.order.update({ where: { id: order.id }, data: { createdAt: new Date(Date.now() - 86_400_000 * 1.5) } });
     AS.bustUnassignedAlert();
     expect((await AS.unassignedAlert(['ADMIN']))?.leftover).toBe(1);
     await err(A.setOrderSettings(sa, { assignHour: 5 }), 400);

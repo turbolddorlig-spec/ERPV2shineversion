@@ -47,3 +47,12 @@ describe('нууц үг', () => {
     for (const p of set) expect(p).toMatch(/^[a-hj-km-np-z2-9]{8}$/);
   });
 });
+
+describe('Аудит А11: утасны улсын код', () => {
+  it('+976 хасна, бусад 11 оронтойг хөндөхгүй', () => {
+    expect(normalizePhone('+976 8877 6655')).toBe('88776655');
+    expect(normalizePhone('97688776655')).toBe('88776655');
+    expect(normalizePhone('12388776655')).toBe('12388776655');
+    expect(isValidPhone(normalizePhone('+976 9911-2233'))).toBe(true);
+  });
+});

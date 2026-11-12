@@ -1,7 +1,14 @@
 # zahialga• ERP V2 — Cloud.mn сервер дээр ажиллах бүрэн тохиргоо
 # Анх: ./install.sh   Шинэчлэх: ./update.sh
+# Аудит А10: бүртгэл (log) дискийг дүүргэхгүй — үйлчилгээ бүрт 10MB × 5 файл
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
 services:
   db:
+    logging: *logging
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -19,6 +26,7 @@ services:
 
   # Зургийн хавтасны эрхийг апп-ын хэрэглэгч (UID 1001)-д олгоно. Аль контейнер түрүүлж асахаас үл хамааран.
   uploads-init:
+    logging: *logging
     image: postgres:16-alpine
     restart: "no"
     entrypoint: ["sh", "-c", "chown -R 1001:1001 /data && echo uploads-ok"]
@@ -26,12 +34,15 @@ services:
       - uploads:/data
 
   app:
+    logging: *logging
     build: .
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://erp:${POSTGRES_PASSWORD}@db:5432/erp?schema=public&connection_limit=20
       # HTTP (домэйнгүй) үед false байх ёстой, эс бөгөөс браузер нэвтрэлтийн cookie-г хадгалахгүй
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      # Gmail-ийн нууц үг шифрлэх тогтмол түлхүүр (install.sh / update.sh .env-д бичнэ)
+      APP_SECRET: ${APP_SECRET:-}
       APP_URL: ${APP_URL:-http://localhost}
     volumes:
       # Барааны зураг (Модуль 1)
@@ -45,6 +56,7 @@ services:
         condition: service_completed_successfully
 
   caddy:
+    logging: *logging
     image: caddy:2.8-alpine
     restart: unless-stopped
     ports:
@@ -63,6 +75,7 @@ services:
 
   # Нөөц хуулбар (#132): өдөр бүр 03:00, шалгалттай; Google Drive холбосон бол тийш ч хуулна (./setup-drive-backup.sh)
   backup:
+    logging: *logging
     build:
       context: ./docker
       dockerfile: Dockerfile.backup

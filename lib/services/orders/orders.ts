@@ -309,7 +309,9 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
     const newIds = lineIn.filter((l) => !existing.has(l.variantId)).map((l) => l.variantId);
     const snaps = newIds.length ? await snapshots(tx, newIds) : new Map<number, Snap>();
     const lines = priceLines(lineIn, snaps, existing);
-    const feeInput = input.deliveryFee !== undefined ? { fee: input.deliveryFee, reason: input.feeReason }
+    // Аудит А11: маягт одоогийн хадгалсан төлбөрийг өөрчлөлгүй буцааж илгээвэл «өөрчилсөн» гэж үзэхгүй (шалтгаан шаардахгүй)
+    const feeSame = input.deliveryFee !== undefined && input.deliveryFee !== null && input.deliveryFee !== '' && Number(input.deliveryFee) === o.deliveryFee && !o.deliveryFeeEdited;
+    const feeInput = input.deliveryFee !== undefined && !feeSame ? { fee: input.deliveryFee, reason: input.feeReason }
       : o.deliveryFeeEdited ? { fee: o.deliveryFee } : {};
     // Хүргэлтийн төлбөр захиалга үүссэн үеийнхээрээ (#124-3): бүс (УБ / орон нутаг) ба төлбөр ногдох эсэх өөрчлөгдөөгүй бол хуучин дүн
     const keepFee = !o.deliveryFeeEdited && isUB(province) === isUB(o.province)
@@ -449,7 +451,7 @@ export async function undoPaid(actor: UserActor, idInput: unknown, input: { note
     if (!(o.status === 'NEW' && o.prepaid)) throw conflict('Зөвхөн «Мөнгө орсон» гэж тэмдэглэсэн, оноогоогүй захиалгыг буцаана', 'bad_status');
     // Банкны гүйлгээгээр таарсан бол энд буцаахгүй (#124-И) — «Банкны импорт» хуудсанд гүйлгээг зөв захиалгад нь гараар тааруулна
     const linked = await tx.bankTransaction.count({ where: { orderId: id, status: { in: ['MATCHED', 'EXCESS_AMOUNT', 'PARTIAL_PAYMENT'] }, isDuplicate: false, refunded: false } });
-    if (linked) throw conflict('Банкны гүйлгээгээр таарсан төлбөр — «Банкны импорт» хуудаснаас гүйлгээг зөв захиалгад нь тааруулна уу (энэ захиалга автоматаар буцна)', 'bank_linked');
+    if (linked) throw conflict('Банкны гүйлгээгээр таарсан төлбөр — «Мөнгө орсон»-ыг болиулах боломжгүй (таарсан бол таарсан, #127). Буруу бол захиалгыг цуцалбал мөнгө «Таараагүй» руу буцна.', 'bank_linked');
     const u = await tx.order.update({ where: { id }, data: { status: 'PENDING_PAYMENT', prepaid: false, paidAmount: 0, confirmedAt: null, paymentDeadline: new Date(Date.now() + waitDays * 86_400_000), version: { increment: 1 } } });
     await skipMeta(tx, id);
     await writeAudit(actor, 'order.paid_undone', 'Order', String(id), { number: o.number, note }, tx, ['order', 'money']);
@@ -479,7 +481,7 @@ export async function autoCancelExpired(limit = 200): Promise<number> {
   const due = await db.order.findMany({ where: { status: 'PENDING_PAYMENT', paymentDeadline: { lt: new Date() } }, select: { id: true }, take: limit, orderBy: { paymentDeadline: 'asc' } });
   let n = 0;
   for (const o of due) {
-    try { const r = await cancelOrder(SYSTEM_ACTOR as never, o.id, {}, { system: true }); if (!r.duplicate) n++; } catch { /* дараагийн удаа */ }
+    try { const r = await cancelOrder(SYSTEM_ACTOR as never, o.id, {}, { system: true }); if (!r.duplicate) n++; } catch (e) { console.error(`[jobs] auto-cancel №${o.id}`, (e as Error).message); /* дараагийн удаа */ }
   }
   return n;
 }

@@ -160,7 +160,14 @@ export async function changeOwnPassword(
   if (currentPassword === newPassword) throw badRequest('Шинэ нууц үг хуучнаасаа өөр байх ёстой', 'same_password');
 
   const user = await db.user.findUniqueOrThrow({ where: { id: actor.id } });
-  if (!(await verifyPassword(currentPassword ?? '', user.passwordHash))) {
+  // Аудит А11: хулгайлсан сессээр нууц үгийг таах оролдлогоос — 15 минутад 5 буруу
+  const cs = slot(byUserIp, `${actor.id}|chpw`); const now = Date.now();
+  if (recent(cs, now) + cs.inflight >= MAX_FAILED) throw new AppError(429, 'Олон удаа буруу оруулсан. 15 минутын дараа дахин оролдоно уу.', 'too_many_attempts');
+  cs.inflight++;
+  let okPw = false;
+  try { okPw = await verifyPassword(currentPassword ?? '', user.passwordHash); } finally { cs.inflight--; }
+  if (!okPw) {
+    cs.fails.push(Date.now());
     throw new AppError(400, 'Одоогийн нууц үг буруу байна', 'wrong_password');
   }
   const passwordHash = await hashPassword(newPassword);

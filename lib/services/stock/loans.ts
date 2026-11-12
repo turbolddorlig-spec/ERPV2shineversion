@@ -26,9 +26,13 @@ export async function requestLoan(actor: UserActor, input: { lines?: unknown; no
   requireRole(canRequestLoan(actor.roles), 'Бараа зээл хүсэх эрхгүй');
   const idemKey = cleanIdemKey(input.idemKey);
   const existing = await db.staffLoan.findUnique({ where: { idemKey } });
-  if (existing) return { loan: existing, duplicate: true };
+  // Аудит А11: өөр хүний ижил түлхүүрээр бусдын зээл буцаахгүй
+  if (existing) { if (existing.staffId !== actor.id) throw conflict('Хүсэлтийн түлхүүр давхацлаа — хуудсаа дахин ачаална уу', 'idem_conflict'); return { loan: existing, duplicate: true }; }
   const note = cleanNote(input.note);
   const { lines } = await cleanLines(input.lines);
+  // Аудит А11: идэвхгүй (архивласан / хасагдсан) хувилбарыг зээлэхгүй
+  const inactive = await db.productVariant.count({ where: { id: { in: lines.map((x) => x.variantId) }, OR: [{ isActive: false }, { product: { status: 'ARCHIVED' } }] } });
+  if (inactive) throw badRequest('Идэвхгүй / архивласан бараа зээлэх боломжгүй', 'inactive_variant');
   try {
     const loan = await db.$transaction(async (tx) => {
       const l = await tx.staffLoan.create({
@@ -158,6 +162,10 @@ export async function setLoanDeduction(actor: UserActor, idInput: unknown, input
   if (l.status !== 'ISSUED') throw conflict('Нээлттэй зээлийн суутгалыг л засна');
   if (line.deduction === d) return l;
   await db.$transaction(async (tx) => {
+    // Аудит А11: тэр мөчид цалингаар суутгагдсан (хаагдсан) зээлийн суутгалыг өөрчлөхгүй
+    await tx.$queryRaw`SELECT id FROM "StaffLoan" WHERE id = ${id} FOR UPDATE`;
+    const cur = await tx.staffLoan.findUniqueOrThrow({ where: { id } });
+    if (cur.status !== 'ISSUED') throw conflict('Нээлттэй зээлийн суутгалыг л засна');
     await tx.staffLoanLine.update({ where: { id: line.id }, data: { deduction: d } });
     await writeAudit(actor, 'loan.deduction_changed', 'StaffLoan', String(id), { staff: l.staffName, variantId, from: line.deduction, to: d }, tx, ['loan']);
   });
@@ -208,7 +216,11 @@ export async function listLoans(actor: UserActor, params: { status?: string; min
   const all = canSeeAllLoans(actor.roles) && !params.mine;
   const where: Prisma.StaffLoanWhereInput = all ? {} : { staffId: actor.id };
   if (params.status === 'open') where.status = { in: ['REQUESTED', 'ISSUED'] };
-  else if (params.status && params.status !== 'all') where.status = params.status as LoanStatus;
+  else if (params.status && params.status !== 'all') {
+    // Аудит А11: буруу төлөв → 500 биш, ойлгомжтой алдаа
+    if (!['REQUESTED', 'ISSUED', 'CLOSED', 'REJECTED', 'CANCELLED'].includes(params.status)) throw badRequest('Төлөв буруу');
+    where.status = params.status as LoanStatus;
+  }
   const page = Math.max(1, Math.floor(params.page ?? 1));
   const [total, rows] = await Promise.all([
     db.staffLoan.count({ where }),

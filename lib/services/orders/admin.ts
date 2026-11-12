@@ -71,7 +71,13 @@ export async function savePage(actor: UserActor, input: { id?: unknown; name?: u
   const name = String(input.name ?? '').trim().replace(/\s+/g, ' ');
   if (name.length < 2 || name.length > 80) throw badRequest('Пэйжийн нэр 2–80 тэмдэгт');
   if (name === NO_PAGE_NAME) throw badRequest('Энэ нэр системд хадгалагдсан');
-  if (input.id && (await db.page.findUnique({ where: { id: Number(input.id) } }))?.name === NO_PAGE_NAME) throw badRequest('«Пэйж сонгоогүй»-г өөрчлөх боломжгүй');
+  if (input.id !== undefined && input.id !== null && input.id !== '') {
+    const pid = Number(input.id);
+    const ex = Number.isInteger(pid) && pid > 0 ? await db.page.findUnique({ where: { id: pid } }) : null;
+    if (!ex) throw badRequest('Пэйж олдсонгүй'); // аудит А11: 500 биш
+    if (ex.name === NO_PAGE_NAME) throw badRequest('«Пэйж сонгоогүй»-г өөрчлөх боломжгүй');
+  }
+  if (input.sortOrder !== undefined && (!Number.isInteger(Number(input.sortOrder)) || Math.abs(Number(input.sortOrder)) > 100_000)) throw badRequest('Эрэмбэ буруу');
   try {
     return await db.$transaction(async (tx) => {
       const id = input.id ? Number(input.id) : null;

@@ -193,7 +193,10 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
   const scheduled = deliveryDate > ubDay(1);
   const subtotal = lines.reduce((a, l) => a + l.listPrice * l.qty, 0);
   const discount = lines.reduce((a, l) => a + (l.listPrice - l.unitPrice) * l.qty, 0);
-  const autoFee = lines.some((l) => !l.deliveryIncluded) ? (ub ? fees.feeUB : fees.feeRural) : 0;
+  // Аудит А11 (#124-3): засахад бүс ба төлбөр ногдох эсэх өөрчлөгдөөгүй бол хадгалсан төлбөр (сервертэй ижил)
+  const hasFee = lines.some((l) => !l.deliveryIncluded);
+  const keepFee = !!edit && !edit.deliveryFeeEdited && ub === isUB(edit.province) && hasFee === edit.lines.some((l) => !l.deliveryIncluded);
+  const autoFee = keepFee ? edit!.deliveryFee : hasFee ? (ub ? fees.feeUB : fees.feeRural) : 0;
   const fee = feeOverride !== null && feeOverride !== '' ? Number(feeOverride) : autoFee;
   const total = subtotal - discount + fee;
   const pcs = lines.reduce((a, l) => a + l.qty, 0);

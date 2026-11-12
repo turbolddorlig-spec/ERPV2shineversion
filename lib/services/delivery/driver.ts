@@ -503,6 +503,7 @@ export async function setRouteNo(actor: UserActor, idIn: unknown, input: { route
   if (v !== null && (!Number.isInteger(v) || v < 0 || v > 999)) throw badRequest('Дараалал 0–999');
   const n = await db.order.updateMany({ where: { id, driverId: actor.id }, data: { routeNo: v } });
   if (!n.count) throw notFound('Захиалга олдсонгүй');
+  await writeAudit(actor, 'order.route_no', 'Order', String(id), { routeNo: v });
   return { routeNo: v };
 }
 

@@ -21,7 +21,7 @@ export interface GmailSettings {
 const DEFAULTS: GmailSettings = { email: '', passwordEnc: null, sender: '', autoSync: true, minutes: 5, days: 3, lastSyncAt: null, lastResult: null, lastOk: null };
 
 // ───────── нууц үг шифрлэх ─────────
-const secretKey = () => createHash('sha256').update(`zahialga-gmail|${process.env.APP_SECRET ?? process.env.DATABASE_URL ?? ''}`).digest();
+const secretKey = () => createHash('sha256').update(`zahialga-gmail|${process.env.APP_SECRET || process.env.DATABASE_URL || ''}`).digest();
 export function encrypt(plain: string): string {
   const iv = randomBytes(12);
   const c = createCipheriv('aes-256-gcm', secretKey(), iv);

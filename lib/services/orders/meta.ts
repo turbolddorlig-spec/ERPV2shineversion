@@ -137,5 +137,6 @@ export async function setMetaSettings(actor: UserActor, input: { pixelId?: unkno
 export async function retryFailedMeta(actor: UserActor) {
   if (!canManageOrderSettings(actor.roles)) throw forbidden();
   const r = await db.metaEvent.updateMany({ where: { status: 'FAILED' }, data: { attempts: 0, nextAttemptAt: new Date() } });
+  if (r.count) await writeAudit(actor, 'meta.retry', 'MetaEvent', null, { requeued: r.count });
   return { requeued: r.count };
 }

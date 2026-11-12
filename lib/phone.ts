@@ -1,6 +1,8 @@
 /** "9911-2233", " 9911 2233 " → "99112233". Монгол дугаар яг 8 оронтой. */
 export function normalizePhone(input: string): string {
-  return String(input ?? '').replace(/\D/g, '');
+  const d = String(input ?? '').replace(/\D/g, '');
+  // Аудит А11: «+976 8877 6655» / «97688776655» наахад улсын кодыг хасна (#50 3)
+  return d.length === 11 && d.startsWith('976') ? d.slice(3) : d;
 }
 
 export function isValidPhone(phone: string): boolean {

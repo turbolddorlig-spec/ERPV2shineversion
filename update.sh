@@ -7,6 +7,13 @@ cd "$(dirname "$0")"
 say() { printf '\n\033[1;33m▶ %s\033[0m\n' "$1"; }
 [ -f .env ] || { echo ".env алга — эхлээд ./install.sh ажиллуулна уу"; exit 1; }
 
+# Аудит А10: тогтмол APP_SECRET (байхгүй бол одоогийн Gmail шифрлэлттэй ижил утгаар нэг удаа нэмнэ — Gmail тасрахгүй)
+if ! grep -q '^APP_SECRET=' .env; then
+  PGP=$(grep -E '^POSTGRES_PASSWORD=' .env | cut -d= -f2-)
+  printf '\nAPP_SECRET=postgresql://erp:%s@db:5432/erp?schema=public&connection_limit=20\n' "$PGP" >> .env
+  echo "APP_SECRET .env-д нэмэгдлээ"
+fi
+
 say "Шинэчлэхийн өмнөх backup (шалгалттай; амжилтгүй бол шинэчлэхгүй)"
 docker compose build backup >/dev/null
 BK=$(docker compose run --rm -T -e BACKUP_NOW=update backup </dev/null | tail -n 1) || { echo "АЛДАА: backup авч чадсангүй — шинэчлэлтийг зогсоолоо"; exit 1; }

@@ -293,7 +293,9 @@ export async function unassignedAlert(roles: string[]): Promise<{ today: number;
   if (!alertCache || Date.now() - alertCache.at > 30_000) {
     const today = dateOnly(ubDay()); const tomorrow = dateOnly(ubDay(new Date(), 1));
     const r = await db.$queryRaw<{ today: number; leftover: number }[]>`
-      SELECT count(*) FILTER (WHERE "deliveryDate" = ${tomorrow}::date)::int AS today, count(*) FILTER (WHERE "deliveryDate" <= ${today}::date)::int AS leftover
+      -- Аудит А11: «Хоносон» = өмнөх өдрүүдэд үүссэн (өнөөдөр үүссэн өнөөдрийн хүргэлт «өнөөдрийн ажил»-д)
+      SELECT count(*) FILTER (WHERE "deliveryDate" = ${tomorrow}::date OR ("deliveryDate" = ${today}::date AND "createdAt" >= ${ubDayStart(ubDay())}))::int AS today,
+             count(*) FILTER (WHERE "deliveryDate" < ${today}::date OR ("deliveryDate" = ${today}::date AND "createdAt" < ${ubDayStart(ubDay())}))::int AS leftover
       FROM "Order" WHERE status = 'NEW' AND "driverId" IS NULL AND "deliveryDate" <= ${tomorrow}::date`;
     alertCache = { at: Date.now(), v: { today: r[0]?.today ?? 0, leftover: r[0]?.leftover ?? 0 } };
   }

@@ -66,6 +66,8 @@ async function loadManageable(actor: UserActor, id: string) {
 }
 
 async function assertNotLastSuperAdmin(targetId: string, tx: Prisma.TransactionClient) {
+  // Аудит А11: хоёр Супер админ зэрэг бие биенээ хаахад 0 болохоос — нэг түгжээ
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(11::int4, 0::int4)`;
   const others = await tx.user.count({ where: { id: { not: targetId }, isActive: true, roles: { has: 'SUPER_ADMIN' } } });
   if (others === 0) throw badRequest('Сүүлийн идэвхтэй Супер админыг хааж/өөрчилж болохгүй');
 }

@@ -123,7 +123,8 @@ export async function listOrders(actor: UserActor, p: ListParams) {
   if (p.district) and.push({ district: p.district });
   if (p.prepaid) and.push({ prepaid: true });
   // Илүү төлөлт (#124-1): урьдчилж төлсний дараа дүн буурсан — нягтлан буцаана
-  if (p.overpaid) and.push({ prepaid: true, paidAmount: { gt: db.order.fields.total } });
+  // Аудит А11: самбарын тоотой ижил — цуцлагдсаныг оруулахгүй
+  if (p.overpaid) and.push({ prepaid: true, paidAmount: { gt: db.order.fields.total }, status: { not: 'CANCELLED' } });
   if (p.noKhoroo) and.push({ district: { not: null }, khoroo: null });
   if (p.postponed) and.push({ postponeCount: { gt: 0 } });
   if (p.todayDelivery) and.push({ deliveryDate: dateOnly(today), status: { in: ['NEW', 'ASSIGNED'] } });

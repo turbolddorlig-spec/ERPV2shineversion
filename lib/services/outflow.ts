@@ -212,7 +212,8 @@ export async function computeAlerts(fresh = false): Promise<BoostAlert[]> {
   if (!pms.length) { alertCache = { at: now, list: [] }; return []; }
   const ids = pms.map((x) => x.productId);
   const [products, segs, aggs, watches, stock] = await Promise.all([
-    db.product.findMany({ where: { id: { in: ids } }, select: { id: true, code: true, name: true, price: true, costPrice: true } }),
+    // Аудит А11: архивласан барааны анхааруулга гаргахгүй (pmap-д ороогүй бол алгасагдана)
+    db.product.findMany({ where: { id: { in: ids }, status: { not: 'ARCHIVED' } }, select: { id: true, code: true, name: true, price: true, costPrice: true } }),
     boostSegments(ids, d2Start, now),
     unitsByDay(addDays(today, -3), today, ids),
     db.boostWatch.findMany({ where: { productId: { in: ids }, until: { gt: new Date(now) } }, orderBy: { until: 'desc' } }),
@@ -738,8 +739,10 @@ export async function workWindow(actor: UserActor, p: { tab?: string; q?: string
 export async function claim(actor: UserActor, productIdIn: unknown) {
   assertView(actor);
   const productId = Number(productIdIn);
-  const p = await db.product.findUnique({ where: { id: productId }, select: { code: true, name: true } });
+  const p = await db.product.findUnique({ where: { id: productId }, select: { code: true, name: true, status: true } });
   if (!p) throw notFound('Бараа олдсонгүй');
+  // Аудит А11: архивласан барааг ажилд авахгүй
+  if (p.status === 'ARCHIVED') throw badRequest('Архивласан барааг сонгох боломжгүй', 'archived');
   try {
     const c = await db.$transaction(async (tx) => {
       const c = await tx.workClaim.create({ data: { productId, userId: actor.id, userName: actor.name } });
@@ -764,7 +767,9 @@ export async function release(actor: UserActor, claimIdIn: unknown) {
   const own = c.userId === actor.id;
   if (!own && !isLead(actor)) throw forbidden('Бусдын сонголтыг ахлах маркетинг цуцална');
   await db.$transaction(async (tx) => {
-    await tx.workClaim.update({ where: { id: c.id }, data: { status: own ? 'RETURNED' : 'CANCELLED', endedAt: new Date(), endedByName: actor.name } });
+    // Аудит А11: тэр мөчид «Дууссан» болсон бол дарж бичихгүй
+    const u = await tx.workClaim.updateMany({ where: { id: c.id, status: 'ACTIVE' }, data: { status: own ? 'RETURNED' : 'CANCELLED', endedAt: new Date(), endedByName: actor.name } });
+    if (!u.count) throw conflict('Сонголт аль хэдийн дууссан байна — хуудсаа шинэчилнэ үү', 'stale');
     await writeAudit(actor, own ? 'outflow.claim_returned' : 'outflow.claim_cancelled', 'ProductMarketing', String(c.productId), { by: c.userName }, tx);
   });
   return { ok: true };
@@ -883,6 +888,8 @@ export async function saveScore(actor: UserActor, b: { userId?: unknown; date?: 
   if (userId === actor.id) throw forbidden('Өөрийгөө үнэлэхгүй');
   if (!isYmd(b.date)) throw badRequest('Огноо буруу');
   const date = b.date;
+  // Аудит А11: ирээдүйн өдрийг үнэлэхгүй
+  if (date > ubDay()) throw badRequest('Ирээдүйн өдрийг үнэлэх боломжгүй', 'future_date');
   const u = await db.user.findFirst({ where: { id: userId, roles: { hasSome: MKT } }, select: { id: true, name: true } });
   if (!u) throw badRequest('Маркетинг ажилтан олдсонгүй');
   const score = b.score === '' || b.score === null || b.score === undefined ? null : cleanInt(b.score, 'Оноо (1–10)', 1, 10);
@@ -1221,7 +1228,7 @@ async function pageShortfall(fresh = false): Promise<PageShortRow[]> {
   if (!pms.length) { shortCache = { at: now, list: [] }; return []; }
   const ids = pms.map((x) => x.productId);
   const [products, rows] = await Promise.all([
-    db.product.findMany({ where: { id: { in: ids } }, select: { id: true, code: true, name: true } }),
+    db.product.findMany({ where: { id: { in: ids }, status: { not: 'ARCHIVED' } }, select: { id: true, code: true, name: true } }),
     db.$queryRaw<{ productId: number; pageId: number; name: string; d2: number; d1: number }[]>`
       SELECT l."productId", o."pageId", p.name,
         count(DISTINCT o.id) FILTER (WHERE (o."confirmedAt" + interval '8 hours')::date = ${dateOnly(d2)}::date)::int AS d2,

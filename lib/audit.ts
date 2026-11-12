@@ -33,6 +33,8 @@ export const getDiscountTick = () => discountTick;
 
 export const AUDIT_LABEL: Record<string, string> = {
   'auth.login': 'Нэвтэрсэн',
+  'meta.retry': 'Meta алдаатай эвентийг дахин илгээсэн',
+  'order.route_no': 'Жолооч хүргэлтийн дараалал тавьсан',
   'calls.created': 'Залгах тэмдэглэл үүсгэсэн',
   'calls.attempt': 'Залгасан (оролдлого)',
   'calls.closed': 'Залгах тэмдэглэл хаасан',

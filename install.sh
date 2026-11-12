@@ -36,10 +36,13 @@ read -rp "Супер админы нэр: " ADMIN_NAME
 read -rsp "Супер админы нууц үг (6+ тэмдэгт): " ADMIN_PASSWORD; echo
 
 PG_PASS=$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)
+# Gmail-ийн нууц үг шифрлэх тогтмол түлхүүр (database-ийн нууц үг солигдсон ч Gmail тасрахгүй)
+APP_SECRET=$(head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 48)
 
 umask 077
 cat > .env <<ENV
 POSTGRES_PASSWORD=$PG_PASS
+APP_SECRET=$APP_SECRET
 # Домэйн хоосон бол HTTP (IP хаягаар). Домэйн авсны дараа: ./set-domain.sh <домэйн>
 DOMAIN=$DOMAIN
 COOKIE_SECURE=$COOKIE_SECURE
@@ -62,7 +65,7 @@ say "Супер админ үүсгэж байна"
 docker compose exec -T -e ADMIN_PHONE="$ADMIN_PHONE" -e ADMIN_NAME="$ADMIN_NAME" -e ADMIN_PASSWORD="$ADMIN_PASSWORD" app node scripts/create-super-admin.mjs
 
 say "Анхны backup"
-docker compose run --rm -e BACKUP_NOW=1 backup >/dev/null && ls -1 backups | tail -1
+docker compose run --rm -T -e BACKUP_NOW=1 backup </dev/null >/dev/null && ls -1 backups/daily | tail -1
 
 say "Бэлэн! Нээх хаяг: $APP_URL"
 if [ -z "$DOMAIN" ]; then
