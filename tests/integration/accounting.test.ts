@@ -382,10 +382,10 @@ describe('автомат дутуу барааны өр (#82 6)', () => {
   it('өдөрт нэг удаа (арын ажил); нэмэлт бараа зарахад ч өр хаагдана', async () => {
     const [a] = await outFor(drv, 1);
     await DR.driverCancel(drv, a!, { note: 'Үйлчлүүлэгч болисон' });
-    const r1 = await DB.closeDayShortages();
+    const r1 = await DB.closeDayShortages(new Date(`${U.ubDay()}T00:05:00+08:00`));
     expect(r1.ran).toBe(true);
     expect(r1.created).toBe(2);
-    expect((await DB.closeDayShortages()).ran).toBe(false);
+    expect((await DB.closeDayShortages(new Date(`${U.ubDay()}T00:06:00+08:00`))).ran).toBe(false);
     await G.extraSale(drv, { lines: [{ variantId: v1, qty: 2 }, { variantId: v2, qty: 1 }], payment: 'CASH', idemKey: key() });
     expect(await db.companyDebt.count({ where: { driverId: drv.id, status: 'PENDING' } })).toBe(0);
     await recOk();

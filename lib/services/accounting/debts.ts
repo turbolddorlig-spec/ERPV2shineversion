@@ -3,7 +3,7 @@ import { db } from '../../db';
 import { badRequest, forbidden, notFound } from '../../errors';
 import { writeAudit, SYSTEM_ACTOR } from '../../audit';
 import { canAccount, canDrive } from '../../permissions';
-import { dateOnly, ubDay, ubDayStart, isYmd } from '../../ubdate';
+import { dateOnly, ubDay, ubDayStart, ubHour, isYmd } from '../../ubdate';
 import { inTx, type UserActor } from '../orders/core';
 import { addDays } from '../delivery/core';
 import { driverGoods } from '../delivery/driver';
@@ -178,11 +178,23 @@ export async function syncShortageDebts(tx: Tx, driverId: string, opts: { close?
 }
 
 /** Өдрийн эцсийн автомат өр — өдөрт нэг удаа (арын ажил, олон апп байсан ч advisory lock + тэмдэглэлээр нэг л удаа) */
-export async function closeDayShortages(now = new Date()): Promise<{ ran: boolean; date?: string; created?: number; changed?: number; resolved?: number }> {
+export async function closeDayShortages(now = new Date()): Promise<{ ran: boolean; skipped?: boolean; date?: string; created?: number; changed?: number; resolved?: number }> {
   const date = ubDay(now, -1);
   const KEY = 'm6.shortageClosedFor';
   const done = await db.appSetting.findUnique({ where: { key: KEY } });
   if (done && String(done.value) >= date) return { ran: false };
+  // Хоцорсон (06:00-оос хойш) бол өнөөдрийн падааны барааг «өчигдрийн дутуу» гэж хуурамч өр бичихгүй — алгасаад анхааруулна (эзний шийдвэр)
+  if (ubHour(now) >= SHORTAGE_LATE_HOUR) {
+    // Анх суулгасан өдөр (өмнө нь нэг ч удаа хаагаагүй) — анхааруулгагүйгээр тэмдэглээд өнгөрнө
+    if (!done) { await db.appSetting.create({ data: { key: KEY, value: date } }).catch(() => null); return { ran: false, date }; }
+    await db.$transaction([
+      db.appSetting.upsert({ where: { key: KEY }, create: { key: KEY, value: date }, update: { value: date } }),
+      db.appSetting.upsert({ where: { key: SHORTAGE_SKIP_KEY }, create: { key: SHORTAGE_SKIP_KEY, value: { date, at: now.toISOString() } }, update: { value: { date, at: now.toISOString() } } }),
+    ]);
+    await writeAudit(SYSTEM_ACTOR, 'debt.shortage_skipped', 'CompanyDebt', null, { date, at: now.toISOString(), reason: `Арын ажил ${String(SHORTAGE_LATE_HOUR).padStart(2, '0')}:00-оос хойш ажилласан` }, db, ['money', 'debt', 'alert']);
+    skipCache = null;
+    return { ran: false, skipped: true, date };
+  }
   const drivers = await db.$queryRaw<{ userId: string }[]>`
     SELECT DISTINCT l."userId" FROM "StockLocation" l JOIN "StockBalance" b ON b."locationId" = l.id
     WHERE l.kind = 'DRIVER' AND b.qty > 0 AND l."userId" IS NOT NULL
@@ -196,7 +208,23 @@ export async function closeDayShortages(now = new Date()): Promise<{ ran: boolea
     created += r.created; changed += r.changed; resolved += r.resolved;
   }
   await db.appSetting.upsert({ where: { key: KEY }, create: { key: KEY, value: date }, update: { value: date } });
+  // Дараагийн амжилттай хаалт өмнөх «алгассан» анхааруулгыг арилгана
+  await db.appSetting.deleteMany({ where: { key: SHORTAGE_SKIP_KEY } });
+  skipCache = null;
   return { ran: true, date, created, changed, resolved };
+}
+
+const SHORTAGE_LATE_HOUR = 6;
+const SHORTAGE_SKIP_KEY = 'm6.shortageSkipped';
+let skipCache: { at: number; v: { date: string; at: string } | null } | null = null;
+/** Супер админ, нягтланд: шөнийн автомат өр хоцорсон тул бичигдээгүй өдөр */
+export async function shortageSkipAlert(roles: string[]): Promise<{ date: string; at: string } | null> {
+  if (!roles.some((r) => r === 'SUPER_ADMIN' || r === 'ACCOUNTING')) return null;
+  if (!skipCache || Date.now() - skipCache.at > 30_000) {
+    const row = await db.appSetting.findUnique({ where: { key: SHORTAGE_SKIP_KEY } });
+    skipCache = { at: Date.now(), v: (row?.value ?? null) as { date: string; at: string } | null };
+  }
+  return skipCache.v;
 }
 
 /** Тест / нягтлан гараар: «Өдрийн эцсийн өр бодох» (тухайн жолоочид) */
