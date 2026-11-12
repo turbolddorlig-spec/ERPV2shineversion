@@ -33,6 +33,12 @@ export function extractPhones(text: string): string[] {
   const re = /(?:^|[^0-9*])([5-9]\d{7})(?=[^0-9]|$)/g; // 5, 6, 7, 8, 9-өөр эхэлсэн 8 оронтой
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) if (!out.includes(m[1]!)) out.push(m[1]!);
+  // Зай / зураас / цэгтэй бичсэн (#126): «9988-7711», «9988 7711», «9988.7711», «99 88 77 11» — урт тооны хэсэг бол авахгүй
+  const sep = [
+    /(?<![\d*])([5-9]\d{3})[ \-.](\d{4})(?![ \-.]?\d)/g,
+    /(?<![\d*])([5-9]\d)[ \-.](\d{2})[ \-.](\d{2})[ \-.](\d{2})(?![ \-.]?\d)/g,
+  ];
+  for (const r of sep) while ((m = r.exec(text)) !== null) { const p = m.slice(1).join(''); if (!out.includes(p)) out.push(p); }
   return out;
 }
 
@@ -165,6 +171,29 @@ async function autoMatch(tx: Tx, actor: Actor, txId: number, phones: string[]): 
     }
   }
   return null;
+}
+
+/**
+ * Өмнө нь утасгүй («Таараагүй») орсон гүйлгээний утгаас утсыг дахин олж тааруулна (#126 — «9988-7711» хэлбэрийг шинээр таньдаг болсон).
+ * Сервер асахад нэг удаа (сүүлийн 60 хоног). Давхардсан, буцаасан гүйлгээнд хүрэхгүй.
+ */
+export async function rescanUnmatched(): Promise<{ scanned: number; phones: number; matched: number }> {
+  const rows = await db.bankTransaction.findMany({ where: { status: 'UNMATCHED', phone: null, isDuplicate: false, refunded: false, txDate: { gte: new Date(Date.now() - 60 * 86_400_000) } }, select: { id: true, description: true }, take: 2000 });
+  let phones = 0, matched = 0;
+  for (const r of rows) {
+    const ps = extractPhones(r.description);
+    if (!ps.length) continue;
+    phones++;
+    const m = await inTx(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(6::int4, 0::int4)`;
+      const n = await tx.bankTransaction.updateMany({ where: { id: r.id, status: 'UNMATCHED', phone: null }, data: { phone: ps[0]! } });
+      if (!n.count) return null;
+      return autoMatch(tx, SYSTEM_ACTOR, r.id, ps);
+    });
+    if (m) matched++;
+  }
+  if (matched) bustCounts();
+  return { scanned: rows.length, phones, matched };
 }
 
 export async function importTransactions(actor: Actor, list: TxIn[], source: 'CSV' | 'GMAIL') {

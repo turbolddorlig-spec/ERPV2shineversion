@@ -4,6 +4,7 @@ import { processMetaQueue } from './services/orders/meta';
 import { autoReconcile } from './services/stock/views';
 import { closeDayShortages } from './services/accounting/debts';
 import { autoGmailSync } from './services/accounting/gmail';
+import { rescanUnmatched } from './services/accounting/bank';
 import { expireExtraRequests } from './services/delivery/goods';
 
 /**
@@ -38,5 +39,7 @@ export function startJobs() {
   started = true;
   const tick = () => runJobsOnce().catch((e) => console.error('[jobs]', (e as Error).message));
   setTimeout(tick, 15_000);
+  // #126: өмнө нь танигдаагүй (зай/зураастай утастай) гүйлгээг нэг удаа дахин тааруулна
+  setTimeout(() => rescanUnmatched().then((r) => { if (r.phones) console.log(`[jobs] банк дахин уншсан: утас ${r.phones}, таарсан ${r.matched}`); }).catch((e) => console.error('[jobs] bank rescan', (e as Error).message)), 20_000);
   setInterval(tick, 60_000).unref?.();
 }

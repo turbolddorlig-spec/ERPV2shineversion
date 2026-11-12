@@ -172,3 +172,25 @@ describe('орон нутгийн хаяг (#125)', () => {
     await err(O.createOrder(op, ub({ phone: '99001144', addressDetail: '' })), 400, 'bad_address');
   });
 });
+
+describe('банкны утга дахь зай / зураастай утас (#126)', () => {
+  it('«9988-7711», «9988 7711» → 99887711 захиалгатай автоматаар таарна', async () => {
+    const { order: a } = await O.createOrder(op, ub({ phone: '99887711', prepaidWait: true }));
+    await B.importTransactions(acc, [{ date: new Date(), description: 'Bat 9988-7711', amount: a.total }], 'CSV');
+    expect((await db.order.findUniqueOrThrow({ where: { id: a.id } })).status).toBe('NEW');
+    const { order: b } = await O.createOrder(op, ub({ phone: '88776655', prepaidWait: true }));
+    await B.importTransactions(acc, [{ date: new Date(), description: '8877 6655 guilgee', amount: b.total }], 'CSV');
+    expect((await db.order.findUniqueOrThrow({ where: { id: b.id } })).status).toBe('NEW');
+  });
+});
+
+describe('өмнө танигдаагүй гүйлгээг дахин тааруулах (#126)', () => {
+  it('утасгүй «Таараагүй» гүйлгээнээс утсыг олж хүлээгдэж буй захиалгатай тааруулна', async () => {
+    const { order: a } = await O.createOrder(op, ub({ phone: '99887711', prepaidWait: true }));
+    const t = await db.bankTransaction.create({ data: { txDate: new Date(), description: 'Bat 9988 7711', amount: a.total, phone: null, source: 'CSV', importedByName: 'тест' } });
+    const r = await B.rescanUnmatched();
+    expect([r.phones, r.matched]).toEqual([1, 1]);
+    expect([(await db.order.findUniqueOrThrow({ where: { id: a.id } })).status, (await db.bankTransaction.findUniqueOrThrow({ where: { id: t.id } })).phone]).toEqual(['NEW', '99887711']);
+    expect((await B.rescanUnmatched()).phones).toBe(0);
+  });
+});

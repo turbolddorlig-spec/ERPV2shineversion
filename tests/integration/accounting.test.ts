@@ -431,6 +431,13 @@ describe('банкны импорт (хуучнаар нь)', () => {
     expect([p?.amount, p?.phone, p?.income, p?.description]).toEqual([35000, '99112233', true, '99112233 Bat']);
     expect(B.parseKhanMessage('Khan Bank: 5102xxxx dansnaas 10,000.00 MNT zarlaga garsan. Guilgeenii utga: 88112233')?.income).toBe(false);
     expect(B.extractPhones('tulbur 88001122, 99887766 12345678 199887766')).toEqual(['88001122', '99887766']);
+    // #126: зай / зураас / цэгтэй бичсэн утас; урт тоо, дүн, данс андуурахгүй
+    expect(B.extractPhones('9988-7711')).toEqual(['99887711']);
+    expect(B.extractPhones('Utga: 9988 7711 Bat')).toEqual(['99887711']);
+    expect(B.extractPhones('tulbur 9988.7711')).toEqual(['99887711']);
+    expect(B.extractPhones('99 88 77 11 guilgee')).toEqual(['99887711']);
+    expect(B.extractPhones('9988 7711 22, 1234 5678, 35,000.00, 2026/11/11 14:30, 5***2327')).toEqual([]);
+    expect(B.parseKhanMessage('Khan Bank:Tany 5***2327 dansand ORLOGO:18,000.00MNT orj ULDEGDEL:1,600,559.00MNT bolloo.Utga:9988-7711 Uvs')?.phone).toBe('99887711');
     const c = B.parseCsv('Огноо,Утга,Дүн\n2026-11-11 10:00,"99112233, захиалга",35000\n2026.11.11,зарлага,-5000\nбуруу\n11/11/2026,88001122,12,000');
     expect(c.rows.map((r) => [r.description, r.amount])).toEqual([['99112233, захиалга', 35000]]);
     // Жинхэнэ Хаан банкны мессеж (эзний илгээсэн хэлбэр), нэг имэйлд олон; Хаан банкны биш → алгасна
