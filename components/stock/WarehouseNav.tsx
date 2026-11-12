@@ -9,6 +9,7 @@ const TABS = [
   { href: '/warehouse/transfers', label: 'Шилжүүлэг' },
   { href: '/warehouse/counts', label: 'Тооллого' },
   { href: '/warehouse/moves', label: 'Хөдөлгөөн' },
+  { href: '/warehouse/issues', label: 'Зарлага хянах' },
   { href: '/loans', label: 'Бараа зээл' },
   { href: '/warehouse/settings', label: 'Агуулахууд' },
 ];

@@ -47,12 +47,19 @@ export async function stockList(actor: UserActor, params: { q?: string; category
   const whs = await warehousesWithLoc();
   // Гараар бичсэн SQL: барааны кодын индексээр алхаж эхний 51 мөрийг авна (Prisma-ийн хувилбар 60,000 мөрийг эрэмбэлдэг байсан)
   const conds: Prisma.Sql[] = [];
-  if (params.ids?.length) conds.push(Prisma.sql`v.id IN (${Prisma.join(params.ids.slice(0, STOCK_PAGE_SIZE))})`);
-  else conds.push(Prisma.sql`p.status <> 'ARCHIVED'`);
+  // Аудит #143: ids-ээр (барааны сонголт) 500 хүртэл мөр — 50-аас хойшхи мөрийн үлдэгдэл харагдахгүй байв
+  const idList = params.ids?.length ? params.ids.slice(0, 500) : null;
+  if (idList) conds.push(Prisma.sql`v.id IN (${Prisma.join(idList)})`);
+  // Аудит #143: архивласан бараа үлдэгдэлтэй бол нуухгүй (нуугдсан «далд нөөц» харагдана)
+  else conds.push(Prisma.sql`(p.status <> 'ARCHIVED' OR EXISTS (SELECT 1 FROM "StockBalance" ab WHERE ab."variantId" = v.id AND ab.qty > 0))`);
   const q = params.q?.trim();
   if (q) {
     const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-    conds.push(Prisma.sql`(p.name ILIKE ${like} OR p.code ILIKE ${like} OR v.code ILIKE ${like} OR v.color ILIKE ${like})`);
+    // Аудит #143: OR-ийн оронд trigram индекстэй тус тусын хайлтын нэгдэл (60,000 хувилбарыг бүтэн уншихгүй)
+    conds.push(Prisma.sql`v.id IN (
+      SELECT pv.id FROM "ProductVariant" pv WHERE pv."productId" IN (SELECT id FROM "Product" WHERE name ILIKE ${like} UNION SELECT id FROM "Product" WHERE code ILIKE ${like})
+      UNION SELECT id FROM "ProductVariant" WHERE code ILIKE ${like}
+      UNION SELECT id FROM "ProductVariant" WHERE color ILIKE ${like})`);
   }
   if (params.categoryId) conds.push(Prisma.sql`p."categoryId" = ${params.categoryId}`);
   const locIds = params.warehouseId ? whs.filter((w) => w.id === params.warehouseId).map((w) => w.locationId) : whs.map((w) => w.locationId);
@@ -67,9 +74,9 @@ export async function stockList(actor: UserActor, params: { q?: string; category
   const fetched = await db.$queryRaw<{ id: number; isActive: boolean; status: string }[]>`
     SELECT v.id, v."isActive", p.status::text AS status FROM "ProductVariant" v JOIN "Product" p ON p.id = v."productId"
     WHERE ${Prisma.join(conds, ' AND ')} ORDER BY ${order}
-    LIMIT ${STOCK_PAGE_SIZE + 1} OFFSET ${(page - 1) * STOCK_PAGE_SIZE}`;
-  const hasMore = fetched.length > STOCK_PAGE_SIZE;
-  const rows = fetched.slice(0, STOCK_PAGE_SIZE);
+    LIMIT ${(idList ? idList.length : STOCK_PAGE_SIZE) + 1} OFFSET ${idList ? 0 : (page - 1) * STOCK_PAGE_SIZE}`;
+  const hasMore = !idList && fetched.length > STOCK_PAGE_SIZE;
+  const rows = idList ? fetched : fetched.slice(0, STOCK_PAGE_SIZE);
   const ids = rows.map((r) => r.id);
   const [info, bal] = await Promise.all([variantInfo(ids), balancesFor(ids)]);
   return {
@@ -255,7 +262,7 @@ export async function refillList(actor: UserActor) {
 
 // ───────────────────────── өнөөдрийн ажил (#39) ─────────────────────────
 
-export interface TodayCounts { refill: number; incoming: number; discrepancy: number; loanRequests: number; countsToApprove: number; openCounts: number; returns: number }
+export interface TodayCounts { refill: number; incoming: number; discrepancy: number; loanRequests: number; countsToApprove: number; openCounts: number; returns: number; issuesToReview: number }
 
 /** Агуулахын «Өнөөдрийн ажил» самбар ба цэсний тэмдэгт (15 сек санана; ажлын хуудас өөрөө шинэ тоог авна) */
 export async function todayWork(actor: UserActor, opts: { fresh?: boolean } = {}): Promise<TodayCounts & { approver: boolean }> {
@@ -264,7 +271,7 @@ export async function todayWork(actor: UserActor, opts: { fresh?: boolean } = {}
   const cached = stockCache.today as { at: number; data: TodayCounts } | null;
   if (!opts.fresh && cached && Date.now() - cached.at < 15_000) return { ...cached.data, approver };
   const primary = await db.warehouse.findFirst({ where: { isPrimary: true, isActive: true }, include: { location: true } });
-  const [refill, incoming, discrepancy, loanRequests, countsToApprove, openCounts, returns] = await Promise.all([
+  const [refill, incoming, discrepancy, loanRequests, countsToApprove, openCounts, returns, issuesToReview] = await Promise.all([
     primary?.location ? db.$queryRaw<{ n: number }[]>`
       SELECT count(*)::int AS n FROM (SELECT "variantId", sum(qty) AS demand FROM "StockReservation" GROUP BY "variantId") d
       WHERE d.demand > COALESCE((SELECT b.qty FROM "StockBalance" b WHERE b."locationId" = ${primary.location.id} AND b."variantId" = d."variantId"), 0)`.then((r) => r[0]?.n ?? 0) : 0,
@@ -279,8 +286,10 @@ export async function todayWork(actor: UserActor, opts: { fresh?: boolean } = {}
       held AS (SELECT o."driverId", sum(ol.qty) AS held FROM "Order" o JOIN "OrderLine" ol ON ol."orderId" = o.id WHERE o.status = 'OUT_FOR_DELIVERY' AND o."driverId" IN (SELECT "userId" FROM bal) GROUP BY 1)
       SELECT count(*)::int AS n FROM (SELECT bal.bal, COALESCE(held.held, 0) AS held FROM bal LEFT JOIN held ON held."driverId" = bal."userId") x
       WHERE x.bal > x.held`.then((r) => r[0]?.n ?? 0),
+    // Аудит #143: хянаагүй зарлага (админд)
+    db.stockIssue.count({ where: { reviewedAt: null } }),
   ]);
-  const data = { refill, incoming, discrepancy, loanRequests, countsToApprove, openCounts, returns };
+  const data = { refill, incoming, discrepancy, loanRequests, countsToApprove, openCounts, returns, issuesToReview };
   stockCache.today = { at: Date.now(), data };
   return { ...data, approver };
 }
@@ -290,7 +299,7 @@ export async function warehouseBadge(actor: UserActor): Promise<number> {
   if (!canView(actor.roles, 'warehouse')) return 0;
   const t = await todayWork(actor);
   if (!canOperateStock(actor.roles)) return 0;
-  return t.refill + t.incoming + t.loanRequests + t.returns + (t.approver ? t.countsToApprove + t.discrepancy : 0);
+  return t.refill + t.incoming + t.loanRequests + t.returns + (t.approver ? t.countsToApprove + t.discrepancy + t.issuesToReview : 0);
 }
 export function bustTodayCache() { stockCache.today = null; }
 
@@ -313,16 +322,21 @@ async function runReconcile() {
   return { ok: rows.length === 0, mismatches: rows, moves: Number(totals[0]?.moves ?? 0), checkedAt: new Date(), ms: Date.now() - t0 };
 }
 
-/** «Журналын нийлбэр = үлдэгдэл» шалгалт. 5 минут санана; «Дахин шалгах» нь шууд ажиллуулна (зөвхөн админ). */
+/** «Журналын нийлбэр = үлдэгдэл» шалгалт. Цаг тутмын автомат шалгалтын үр дүнг (1 цаг) харуулна; «Дахин шалгах» нь шууд ажиллуулна (зөвхөн админ). */
 export async function reconcile(actor: UserActor, opts: { fresh?: boolean } = {}) {
   requireRole(canView(actor.roles, 'warehouse'));
   if (opts.fresh) requireRole(canApproveStock(actor.roles));
-  if (!opts.fresh && reconcileCache && Date.now() - reconcileCache.at < 5 * 60_000) return reconcileCache.data;
+  if (!opts.fresh && reconcileCache && Date.now() - reconcileCache.at < 60 * 60_000) return reconcileCache.data; // #143: цаг тутмын автомат шалгалтын үр дүн
   if (opts.fresh) { await autoReconcile({ force: true }); return reconcileCache!.data; }
-  const data = await runReconcile();
-  reconcileCache = { at: Date.now(), data };
-  return data;
+  // Аудит #143: хуудас нээх бүрт бүх журналыг дахин уншихгүй — нэг л хүсэлт тооцоолж, зэрэг ирсэн нь түүнийг хүлээнэ
+  // (single-flight); хүнд хүсэлтийн хязгаар дотор
+  if (!reconcileInflight) {
+    const { withHeavy } = await import('../../heavy');
+    reconcileInflight = withHeavy(runReconcile).then((data) => { reconcileCache = { at: Date.now(), data }; return data; }).finally(() => { reconcileInflight = null; });
+  }
+  return reconcileInflight;
 }
+let reconcileInflight: Promise<Awaited<ReturnType<typeof runReconcile>>> | null = null;
 
 // ───────────────────────── цаг тутмын автомат тулгалт (B2/R2) ─────────────────────────
 

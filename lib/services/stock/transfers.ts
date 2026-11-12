@@ -1,10 +1,10 @@
 import type { Prisma, TransferStatus } from '@prisma/client';
 import { db } from '../../db';
-import { badRequest, conflict, notFound } from '../../errors';
+import { AppError, badRequest, conflict, notFound } from '../../errors';
 import { writeAudit } from '../../audit';
 import { canApproveStock, canOperateStock, canView } from '../../permissions';
 import {
-  applyMoves, assertNotReserved, lockReservedVariants, cleanId, cleanIdemKey, cleanLines, cleanNote, inTx, requireRole, transitLocationId, uniqueViolation, warehouseLocation, type UserActor,
+  applyMoves, assertNotReserved, lockActiveVariants, lockReservedVariants, cleanId, cleanIdemKey, cleanLines, cleanNote, inTx, requireRole, transitLocationId, uniqueViolation, warehouseLocation, type UserActor,
 } from './core';
 import { variantInfo } from './info';
 
@@ -25,13 +25,14 @@ export async function sendTransfer(actor: UserActor, input: { fromWarehouseId?: 
   const toWarehouseId = cleanId(input.toWarehouseId, 'Хүлээн авах агуулах');
   if (fromWarehouseId === toWarehouseId) throw badRequest('Илгээх, хүлээн авах агуулах өөр байх ёстой');
   const note = cleanNote(input.note);
-  const { lines, labels } = await cleanLines(input.lines);
+  const { lines, labels } = await cleanLines(input.lines, { activeOnly: true });
   try {
     const transfer = await inTx(async (tx) => {
       const from = await warehouseLocation(tx, fromWarehouseId);
       const to = await warehouseLocation(tx, toWarehouseId);
       const transit = await transitLocationId(tx);
       // Б10: үндсэн агуулах руу (дүүргэлт) биш бол захиалгад түгжигдсэн барааг шилжүүлэхгүй
+      await lockActiveVariants(tx, lines.map((l) => l.variantId), labels);
       if (!to.warehouse.isPrimary) await lockReservedVariants(tx, lines);
       const t = await tx.stockTransfer.create({
         data: {
@@ -77,6 +78,8 @@ export async function receiveTransfer(actor: UserActor, idInput: unknown, input:
       if (t.status === 'CANCELLED') throw conflict('Энэ шилжүүлэг цуцлагдсан байна', 'transfer_cancelled');
       return { transfer: t, duplicate: true };
     }
+    // Аудит #143 (эзний шийдвэр): илгээсэн хүн өөрөө хүлээн авахгүй — «10 илгээж 0 ирсэн» гэж нэг хүн дутагдал үүсгэхгүй
+    if (t.sentById === actor.id) throw new AppError(403, 'Шилжүүлгийг илгээсэн хүн өөрөө хүлээн авахгүй — хүлээн авах агуулахын өөр ажилтан тоолж авна', 'self_receive');
     for (const l of t.lines) {
       const q = given.get(l.variantId);
       if (q === undefined) throw badRequest('Бүх барааны ирсэн тоог оруулна уу', 'missing_lines');

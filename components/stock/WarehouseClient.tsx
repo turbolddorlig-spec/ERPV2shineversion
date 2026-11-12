@@ -16,7 +16,7 @@ interface Row {
   byWarehouse: Record<string, number>; transit: number; staff: number; driver: number; drivers: { name: string; qty: number }[]; total: number; reserved: number; reservedPending: number; available: number;
 }
 interface StockResp { items: Row[]; page: number; pageSize: number; hasMore: boolean; warehouses: Wh[]; canOperate: boolean }
-interface Today { refill: number; incoming: number; discrepancy: number; loanRequests: number; countsToApprove: number; openCounts: number; returns: number; approver: boolean }
+interface Today { refill: number; incoming: number; discrepancy: number; loanRequests: number; countsToApprove: number; openCounts: number; returns: number; issuesToReview?: number; approver: boolean }
 interface Rec { ok: boolean; mismatches: unknown[]; moves: number; checkedAt: string }
 
 /** «Өнөөдрийн ажил» карт — дарахад тэр ажил руу шууд орно */
@@ -134,6 +134,7 @@ export function WarehouseClient({ canOperate, canApprove }: { canOperate: boolea
           {today?.approver || canApprove ? (
             <>
               <WorkCard n={today?.countsToApprove ?? 0} label="Батлах тооллого" href="/warehouse/counts?status=SUBMITTED" />
+              <WorkCard n={today?.issuesToReview ?? 0} label="Хянаагүй зарлага" href="/warehouse/issues" />
               <WorkCard n={today?.discrepancy ?? 0} label="Дутуу ирсэн шилжүүлэг" hint="Шийдэх" href="/warehouse/transfers?status=DISCREPANCY" tone="bad" />
             </>
           ) : <WorkCard n={today?.openCounts ?? 0} label="Нээлттэй тооллого" href="/warehouse/counts?status=OPEN" />}

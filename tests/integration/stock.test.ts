@@ -43,7 +43,7 @@ async function err(p: Promise<unknown>, status: number, code?: string): Promise<
 const key = () => randomUUID();
 const N = 'Тестийн тайлбар';
 
-let sa: UserActor; let wh: UserActor; let adm: UserActor;
+let sa: UserActor; let wh: UserActor; let wh2: UserActor; let adm: UserActor;
 let main: { id: number }; let w2: { id: number }; let w3: { id: number };
 let v1: number; let v2: number; let shoeId: number;
 
@@ -61,6 +61,7 @@ beforeEach(async () => {
   sa = await actor(['SUPER_ADMIN']);
   adm = await actor(['ADMIN']);
   wh = await actor(['WAREHOUSE']);
+  wh2 = await actor(['WAREHOUSE']); // #143: шилжүүлгийг илгээсэн хүн өөрөө хүлээн авахгүй
   main = await W.createWarehouse(sa, { name: 'Төв агуулах' });
   w2 = await W.createWarehouse(sa, { name: 'Агуулах 2' });
   w3 = await W.createWarehouse(sa, { name: 'Агуулах 3' });
@@ -158,8 +159,8 @@ describe('шилжүүлэг 2 алхам (#38)', () => {
     expect(await transitQty(v1)).toBe(30);
     expect(await qty(main.id, v1)).toBe(0);
     const [a, b] = await Promise.all([
-      T.receiveTransfer(wh, transfer.id, { lines: [{ variantId: v1, receivedQty: 30 }] }),
-      T.receiveTransfer(wh, transfer.id, { lines: [{ variantId: v1, receivedQty: 30 }] }),
+      T.receiveTransfer(wh2, transfer.id, { lines: [{ variantId: v1, receivedQty: 30 }] }),
+      T.receiveTransfer(wh2, transfer.id, { lines: [{ variantId: v1, receivedQty: 30 }] }),
     ]);
     expect([a.duplicate, b.duplicate].sort()).toEqual([false, true]);
     expect(await qty(main.id, v1)).toBe(30);
@@ -168,9 +169,9 @@ describe('шилжүүлэг 2 алхам (#38)', () => {
   });
   it('дутуу ирвэл DISCREPANCY → админ: нэгийг нь буцаах, нөгөөг нь хорогдол', async () => {
     const { transfer } = await T.sendTransfer(wh, { fromWarehouseId: w2.id, toWarehouseId: main.id, lines: [{ variantId: v1, qty: 10 }, { variantId: v2, qty: 5 }], idemKey: key() });
-    await err(T.receiveTransfer(wh, transfer.id, { lines: [{ variantId: v1, receivedQty: 11 }, { variantId: v2, receivedQty: 5 }] }), 400, 'bad_qty');
-    await err(T.receiveTransfer(wh, transfer.id, { lines: [{ variantId: v1, receivedQty: 10 }] }), 400, 'missing_lines');
-    const r = await T.receiveTransfer(wh, transfer.id, { lines: [{ variantId: v1, receivedQty: 8 }, { variantId: v2, receivedQty: 4 }] });
+    await err(T.receiveTransfer(wh2, transfer.id, { lines: [{ variantId: v1, receivedQty: 11 }, { variantId: v2, receivedQty: 5 }] }), 400, 'bad_qty');
+    await err(T.receiveTransfer(wh2, transfer.id, { lines: [{ variantId: v1, receivedQty: 10 }] }), 400, 'missing_lines');
+    const r = await T.receiveTransfer(wh2, transfer.id, { lines: [{ variantId: v1, receivedQty: 8 }, { variantId: v2, receivedQty: 4 }] });
     expect(r.transfer.status).toBe('DISCREPANCY');
     expect(await transitQty(v1)).toBe(2);
     await err(T.resolveTransfer(wh, transfer.id, { decisions: 'loss', note: N }), 403);
@@ -186,7 +187,7 @@ describe('шилжүүлэг 2 алхам (#38)', () => {
     const { transfer } = await T.sendTransfer(wh, { fromWarehouseId: w2.id, toWarehouseId: w3.id, lines: [{ variantId: v1, qty: 7 }], idemKey: key() });
     await T.cancelTransfer(wh, transfer.id, { note: 'Буруу агуулах сонгосон' });
     expect(await qty(w2.id, v1)).toBe(50);
-    await err(T.receiveTransfer(wh, transfer.id, { lines: [{ variantId: v1, receivedQty: 7 }] }), 409, 'transfer_cancelled');
+    await err(T.receiveTransfer(wh2, transfer.id, { lines: [{ variantId: v1, receivedQty: 7 }] }), 409, 'transfer_cancelled');
     await err(T.sendTransfer(wh, { fromWarehouseId: w2.id, toWarehouseId: main.id, lines: [{ variantId: v1, qty: 51 }], idemKey: key() }), 409, 'insufficient_stock');
     await err(T.sendTransfer(wh, { fromWarehouseId: w2.id, toWarehouseId: w2.id, lines: [{ variantId: v1, qty: 1 }], idemKey: key() }), 400);
   });
@@ -212,7 +213,11 @@ describe('тооллого (#38)', () => {
     const l2 = detail.lines.find((l) => l.variantId === v2)!;
     await K.decideCount(adm, c.id, { lineIds: [l2.id], action: 'approve' });
     expect(await qty(main.id, v2)).toBe(13);
-    const r = await K.decideCount(adm, c.id, { lineIds: 'all', action: 'approve' });
+    // #143: «бүгдийг» нь тооллогын үеэр хөдөлсөн мөрийг алгасна — админ нэг бүрчлэн шалгаж батална
+    const r0 = await K.decideCount(adm, c.id, { lineIds: 'all', action: 'approve' });
+    expect([r0.closed, (r0 as { skippedMoved?: number }).skippedMoved]).toEqual([false, 1]);
+    expect(await qty(main.id, v1)).toBe(10 - 1);
+    const r = await K.decideCount(adm, c.id, { lineIds: [detail.lines.find((l) => l.variantId === v1)!.id], action: 'approve' });
     expect(r.closed).toBe(true);
     expect(await qty(main.id, v1)).toBe(10 - 1 - 3);
     await K.decideCount(adm, c.id, { lineIds: 'all', action: 'approve' }).catch(() => undefined);
@@ -331,7 +336,7 @@ describe('дүүргэлт, өнөөдрийн ажил, түүх, тулгал�
     expect(t.incoming).toBe(2);
     for (const s of sent) {
       const d = await T.getTransfer(wh, s.id);
-      await T.receiveTransfer(wh, s.id, { lines: d.lines.map((l) => ({ variantId: l.variantId, receivedQty: l.sentQty })) });
+      await T.receiveTransfer(wh2, s.id, { lines: d.lines.map((l) => ({ variantId: l.variantId, receivedQty: l.sentQty })) });
     }
     expect((await V.refillList(wh)).items).toHaveLength(0);
     expect(await qty(main.id, v1)).toBe(70);

@@ -99,7 +99,9 @@ export async function issueLoan(actor: UserActor, idInput: unknown, input: { war
     if (!ok.count) return { loan: await loadLoan(tx, id), duplicate: true };
     const { warehouse, locationId } = await warehouseLocation(tx, warehouseId);
     const staffLoc = await staffLocationId(tx, { id: l.staffId, name: l.staffName });
-    const variants = await tx.productVariant.findMany({ where: { id: { in: l.lines.map((x) => x.variantId) } }, select: { id: true, priceOverride: true, product: { select: { price: true } } } });
+    const variants = await tx.productVariant.findMany({ where: { id: { in: l.lines.map((x) => x.variantId) } }, select: { id: true, isActive: true, priceOverride: true, product: { select: { price: true, status: true } } } });
+    // Аудит #143: хүсэлтээс хойш идэвхгүй / архивласан болсон бол олгохгүй
+    if (variants.some((v) => !v.isActive || v.product.status === 'ARCHIVED')) throw badRequest('Идэвхгүй / архивласан бараа зээлэх боломжгүй', 'inactive_variant');
     const price = new Map(variants.map((v) => [v.id, v.priceOverride ?? v.product.price]));
     const moves = [];
     for (const line of l.lines) {

@@ -343,6 +343,9 @@ model StockIssue {
   createdById   String      @db.Uuid
   createdByName String
   createdAt     DateTime    @default(now())
+  /// Аудит #143: админ хянасан (зарлага шууд гарна, дараа нь хянана)
+  reviewedAt     DateTime?
+  reviewedByName String?
 
   @@index([createdAt])
   @@index([reason, createdAt])

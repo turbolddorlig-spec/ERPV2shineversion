@@ -460,6 +460,17 @@ export async function setProductStatus(actor: UserActor, id: number, input: { st
     if (open) throw conflict(`Энэ барааны ${open} нээлттэй захиалга байна — дуусгасны дараа архивлана уу`, 'has_orders');
   }
   const updated = await db.$transaction(async (tx) => {
+    if (status === 'ARCHIVED') {
+      // Аудит #143: орлого / захиалгатай зэрэг ирвэл — хувилбарын түгжээ аваад гүйлгээ дотор дахин шалгана
+      const ids = p.variants.map((v) => v.id).sort((a, b) => a - b);
+      for (const vid of ids) await tx.$executeRaw`SELECT pg_advisory_xact_lock(2::int4, ${vid}::int4)`;
+      const [bal, open] = await Promise.all([
+        tx.stockBalance.aggregate({ where: { variantId: { in: ids }, qty: { gt: 0 } }, _sum: { qty: true } }),
+        tx.orderLine.count({ where: { variantId: { in: ids }, order: { status: { in: ['NEW', 'PENDING_PAYMENT', 'ASSIGNED', 'OUT_FOR_DELIVERY'] } } } }),
+      ]);
+      if ((bal._sum.qty ?? 0) > 0) throw conflict(`Энэ бараа ${bal._sum.qty} ширхэг үлдэгдэлтэй — эхлээд зарж / зарлагадаж дуусгаад архивлана уу`, 'has_stock');
+      if (open) throw conflict(`Энэ барааны ${open} нээлттэй захиалга байна — дуусгасны дараа архивлана уу`, 'has_orders');
+    }
     const ok = await tx.product.updateMany({ where: { id, version }, data: { version: { increment: 1 }, status, statusNote: reason, updatedById: actor.id } });
     if (ok.count === 0) throw conflict('Энэ барааг өөр хүн дөнгөж сая засчихсан байна. Хуудсаа дахин ачаална уу.', 'stale');
     await writeAudit(actor, 'product.status', 'Product', String(id), {

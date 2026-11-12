@@ -129,9 +129,11 @@ export function CountDetail({ id, canOperate, canApprove }: { id: number; canOpe
   async function act(path: string, body: unknown = {}) {
     setError(null); setBusy(true);
     try {
-      const r = await api<{ reservedShort?: { variantId: number; total: number; reserved: number }[] }>(`/api/stock/counts/${id}/${path}`, { method: 'POST', json: body });
+      const r = await api<{ reservedShort?: { variantId: number; total: number; reserved: number }[]; skippedMoved?: number }>(`/api/stock/counts/${id}/${path}`, { method: 'POST', json: body });
       setSel(new Set()); router.refresh(); await load();
       // Аудит #142: тооллогоор дутаад захиалгад түгжигдсэнээс бага үлдсэн бол анхааруулна (оператор / ахлах шийднэ)
+      // Аудит #143: тооллого эхэлснээс хойш хөдөлсөн мөрүүд «бүгдийг»-д ороогүй — нэг бүрчлэн шалгаж батална
+      if (r?.skippedMoved) setError(`${r.skippedMoved} мөр тооллого эхэлснээс хойш хөдөлсөн тул алгаслаа — «хөдөлсөн» тэмдэгтэй мөрийг шалгаад тус бүр батална уу`);
       if (r?.reservedShort?.length) setError(`Анхаар: ${r.reservedShort.length} бараа захиалгад түгжигдсэнээс бага үлдлээ (${r.reservedShort.map((x) => `#${x.variantId}: байгаа ${x.total}, захиалгад ${x.reserved}`).join('; ')}) — захиалгуудыг шалгана уу`);
     }
     catch (e) { setError(e instanceof ApiError ? e.message : 'Алдаа'); } finally { setBusy(false); }
@@ -216,7 +218,7 @@ export function CountDetail({ id, canOperate, canApprove }: { id: number; canOpe
               </span>
               <span className="flex w-full flex-wrap gap-1.5 sm:w-auto">
                 {l.status === 'APPROVED' ? <Badge tone="ok">Батлагдсан · {l.decidedBy}</Badge> : l.status === 'REJECTED' ? <Badge tone="neutral">Татгалзсан</Badge> : null}
-                {l.movedSince ? <Badge tone="warn">Тоолсны дараа хөдөлсөн (одоо {l.currentQty})</Badge> : null}
+                {l.movedSince ? <Badge tone="warn">Тооллогын үеэр хөдөлсөн (одоо {l.currentQty}) — шалгаж батална</Badge> : null}
               </span>
             </li>
           ))}

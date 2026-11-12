@@ -64,7 +64,7 @@ export function cleanId(v: unknown, label = 'Дугаар'): number {
 }
 
 /** [{variantId, qty}] — бүхэл, эерэг, давхардсан хувилбарыг нэгтгэнэ, хувилбар байгаа эсэхийг шалгана */
-export async function cleanLines(input: unknown, opts: { allowZero?: boolean } = {}): Promise<{ lines: Line[]; labels: Map<number, string> }> {
+export async function cleanLines(input: unknown, opts: { allowZero?: boolean; activeOnly?: boolean } = {}): Promise<{ lines: Line[]; labels: Map<number, string> }> {
   if (!Array.isArray(input) || input.length === 0) throw badRequest('Дор хаяж нэг бараа нэмнэ үү', 'no_lines');
   if (input.length > MAX_LINES) throw badRequest(`Нэг баримтад ${MAX_LINES} хүртэл мөр`);
   const merged = new Map<number, number>();
@@ -77,6 +77,11 @@ export async function cleanLines(input: unknown, opts: { allowZero?: boolean } =
   const ids = [...merged.keys()];
   const labels = await variantLabels(ids);
   if (labels.size !== ids.length) throw badRequest('Бараа олдсонгүй', 'variant_not_found');
+  // Аудит #143: архивласан / идэвхгүй бараанд орлого, шилжүүлэг хийхгүй (жагсаалтаас нуугдсан «далд нөөц» үүсэхээс сэргийлнэ)
+  if (opts.activeOnly) {
+    const bad = await db.productVariant.findMany({ where: { id: { in: ids }, OR: [{ isActive: false }, { product: { status: 'ARCHIVED' } }] }, select: { id: true } });
+    if (bad.length) throw badRequest(`Идэвхгүй / архивласан бараа: ${bad.map((b) => labels.get(b.id)).join(', ')} — орлого, шилжүүлэг хийхгүй`, 'inactive_variant');
+  }
   return { lines: ids.sort((a, b) => a - b).map((variantId) => ({ variantId, qty: merged.get(variantId)! })), labels };
 }
 
@@ -127,6 +132,13 @@ export async function staffLocationId(tx: Tx, staff: { id: string; name: string 
  */
 export async function applyMoves(tx: Tx, actor: { id: string; name: string }, doc: { type: string; id: number }, moves: MoveSpec[], labels?: Map<number, string>) {
   const list = moves.filter((m) => m.qty > 0).sort((a, b) => a.variantId - b.variantId || (a.fromId ?? 0) - (b.fromId ?? 0));
+  // Аудит #143: хөдлөх бүх (байршил, бараа) мөрийг нэг дор, тогтмол дарааллаар түгжинэ — эсрэг чиглэлийн хоёр гүйлгээ
+  // (жишээ нь шилжүүлэг илгээх ба хүлээн авах) бие биеэ хүлээж deadlock болохгүй
+  const keys = [...new Set(list.flatMap((m) => [m.fromId, m.toId].filter((x): x is number => x !== null).map((l) => `${l}:${m.variantId}`)))];
+  if (keys.length > 1) {
+    const pairs = keys.map((k) => { const [l, v] = k.split(':').map(Number); return Prisma.sql`(${l}::int, ${v}::int)`; });
+    await tx.$queryRaw`SELECT 1 FROM "StockBalance" WHERE ("locationId", "variantId") IN (${Prisma.join(pairs)}) ORDER BY "locationId", "variantId" FOR UPDATE`;
+  }
   for (const m of list) {
     if (m.fromId !== null) {
       const n = await tx.$executeRaw`
@@ -159,6 +171,17 @@ export async function applyMoves(tx: Tx, actor: { id: string; name: string }, do
  * Аудит Б10 (эзний шийдвэр): захиалгад түгжигдсэн (нөөцлөгдсөн) барааг зарлагадах / өөр агуулах руу шилжүүлэхийг хориглоно.
  * Захиалах боломжтой = агуулахуудын нийт − бүх нөөцлөлт (захиалгатай ижил томьёо). Захиалга үүсгэхтэй ижил түгжээ (2, variant).
  */
+/**
+ * Аудит #143: орлого / шилжүүлэг — хувилбарын түгжээ (advisory 2) аваад идэвхтэй эсэхийг гүйлгээ дотор дахин шалгана
+ * (архивлах үйлдэлтэй зэрэг ирвэл архивласан бараанд үлдэгдэл үүсэхгүй; архивлах ч мөн энэ түгжээг авна)
+ */
+export async function lockActiveVariants(tx: Tx, ids: number[], labels?: Map<number, string>) {
+  const sorted = [...new Set(ids)].sort((a, b) => a - b);
+  for (const id of sorted) await tx.$executeRaw`SELECT pg_advisory_xact_lock(2::int4, ${id}::int4)`;
+  const bad = await tx.productVariant.findMany({ where: { id: { in: sorted }, OR: [{ isActive: false }, { product: { status: 'ARCHIVED' } }] }, select: { id: true } });
+  if (bad.length) throw badRequest(`Идэвхгүй / архивласан бараа: ${bad.map((b) => labels?.get(b.id) ?? `#${b.id}`).join(', ')} — орлого, шилжүүлэг хийхгүй`, 'inactive_variant');
+}
+
 /** Б10: бараа (advisory 2) түгжээг хөдөлгөөний ӨМНӨ авна — захиалгын урсгалтай ижил дараалал (deadlock гарахгүй) */
 export async function lockReservedVariants(tx: Tx, lines: { variantId: number }[]) {
   for (const id of [...new Set(lines.map((l) => l.variantId))].sort((a, b) => a - b)) await tx.$executeRaw`SELECT pg_advisory_xact_lock(2::int4, ${id}::int4)`;

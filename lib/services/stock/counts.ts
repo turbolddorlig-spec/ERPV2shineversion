@@ -66,6 +66,9 @@ export async function setCountLine(actor: UserActor, countIdInput: unknown, inpu
     if (c.status !== 'OPEN') throw conflict('Тооллого илгээгдсэн байна. Шинэ тооллого эхлүүлнэ үү.', 'count_locked');
     const v = await tx.productVariant.findUnique({ where: { id: variantId }, select: { id: true } });
     if (!v) throw badRequest('Бараа олдсонгүй', 'variant_not_found');
+    // Аудит #143: нэг тооллогод MAX_COUNT_LINES хүртэл — их бол хэд хэдэн тооллогоор (батлах, дэлгэрэнгүй гацахгүй)
+    const exists = await tx.stockCountLine.findUnique({ where: { countId_variantId: { countId, variantId } }, select: { id: true } });
+    if (!exists && (await tx.stockCountLine.count({ where: { countId } })) >= MAX_COUNT_LINES) throw badRequest(`Нэг тооллогод ${MAX_COUNT_LINES} хүртэл бараа — илгээгээд дараагийн тооллогоор үргэлжлүүлнэ үү`, 'count_too_large');
     const { locationId } = await warehouseLocation(tx, c.warehouseId, { allowInactive: true });
     const systemQty = (await tx.stockBalance.findUnique({ where: { locationId_variantId: { locationId, variantId } } }))?.qty ?? 0;
     const data = { systemQty, countedQty, countedAt: new Date(), countedById: actor.id, countedByName: actor.name };
@@ -107,6 +110,35 @@ export async function decideCount(actor: UserActor, idInput: unknown, input: { l
   const all = input.lineIds === 'all';
   const ids = all ? [] : Array.isArray(input.lineIds) ? (input.lineIds as unknown[]).map((x) => cleanId(x, 'Мөр')) : null;
   if (!all && (!ids || !ids.length)) throw badRequest('Мөр сонгоно уу');
+  if (!all) return decideChunk(actor, id, action, ids!);
+  // Аудит #143: «Бүгдийг батлах» — тооллого ЭХЭЛСНЭЭС хойш хөдөлсөн мөрийг алгасна (хуурамч үлдэгдэл үүсэхээс сэргийлж
+  // админ нэг бүрчлэн шалгаж батална); үлдсэнийг 500-аар хэсэгчилж тус бүр богино гүйлгээгээр
+  const c0 = await loadCount(id);
+  const loc = (await db.warehouse.findUnique({ where: { id: c0.warehouseId }, include: { location: true } }))?.location?.id ?? 0;
+  const pend = await db.stockCountLine.findMany({ where: { countId: id, status: 'PENDING' }, select: { id: true, variantId: true }, orderBy: { variantId: 'asc' } });
+  const moved = action === 'approve' ? await movedSinceStart(id, loc, c0.createdAt) : new Set<number>();
+  const todo = pend.filter((l) => !moved.has(l.variantId)).map((l) => l.id);
+  const out = { decided: 0, plus: 0, minus: 0, closed: false, reservedShort: [] as { variantId: number; total: number; reserved: number }[], skippedMoved: pend.length - todo.length };
+  if (!todo.length && !out.skippedMoved) return decideChunk(actor, id, action, []);
+  for (let i = 0; i < todo.length; i += 500) {
+    const r = await decideChunk(actor, id, action, todo.slice(i, i + 500));
+    out.decided += r.decided; out.plus += r.plus; out.minus += r.minus; out.closed = r.closed; out.reservedShort.push(...r.reservedShort);
+  }
+  return out;
+}
+
+const MAX_COUNT_LINES = 3000;
+
+/** Тооллого эхэлснээс хойш (энэ тооллогын засвараас бусад) хөдөлсөн хувилбарууд */
+async function movedSinceStart(countId: number, locationId: number, startedAt: Date): Promise<Set<number>> {
+  const rows = await db.$queryRaw<{ variantId: number }[]>`
+    SELECT DISTINCT m."variantId" FROM "StockMove" m JOIN "StockCountLine" l ON l."variantId" = m."variantId" AND l."countId" = ${countId}
+    WHERE (m."fromId" = ${locationId} OR m."toId" = ${locationId}) AND m."at" > ${startedAt} AND NOT (m."docType" = 'count' AND m."docId" = ${countId})`;
+  return new Set(rows.map((r) => r.variantId));
+}
+
+async function decideChunk(actor: UserActor, id: number, action: 'approve' | 'reject', ids: number[]) {
+  const all = false;
   return inTx(async (tx) => {
     const c = await lockCount(tx, id);
     if (c.status !== 'SUBMITTED') throw conflict(c.status === 'OPEN' ? 'Тооллого хараахан илгээгдээгүй байна' : 'Тооллого дууссан байна', 'count_not_submitted');
@@ -185,10 +217,10 @@ export async function getCount(actor: UserActor, idInput: unknown) {
   const [info, bals, moved] = await Promise.all([
     variantInfo(vids),
     vids.length ? db.stockBalance.findMany({ where: { locationId, variantId: { in: vids } } }) : [],
-    // Тоолсны дараах хөдөлгөөн (энэ тооллогын засвараас бусад)
+    // Аудит #143: тооллого ЭХЭЛСНЭЭС хойших хөдөлгөөн (энэ тооллогын засвараас бусад) — цаасан дээр тоолсон хойно хөдөлсөн ч илэрнэ
     vids.length ? db.$queryRaw<{ variantId: number }[]>`
       SELECT DISTINCT m."variantId" FROM "StockMove" m JOIN "StockCountLine" l ON l."variantId" = m."variantId" AND l."countId" = ${id}
-      WHERE (m."fromId" = ${locationId} OR m."toId" = ${locationId}) AND m."at" > l."countedAt" AND NOT (m."docType" = 'count' AND m."docId" = ${id})` : [],
+      WHERE (m."fromId" = ${locationId} OR m."toId" = ${locationId}) AND m."at" > ${c.createdAt} AND NOT (m."docType" = 'count' AND m."docId" = ${id})` : [],
   ]);
   const bm = new Map(bals.map((b) => [b.variantId, b.qty]));
   const mv = new Set(moved.map((m) => m.variantId));
