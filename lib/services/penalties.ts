@@ -38,6 +38,8 @@ const DEFAULT_CONFIG: PenaltyConfig = {
 const ISSUE_TEXT: Record<string, string> = { WRONG_PRODUCT: 'Бараа буруу', WRONG_NUMBER: 'Дугаар буруу', UNCLEAR_ADDRESS: 'Хаяг тодорхойгүй' };
 
 const canManage = (r: Role[]) => canEdit(r, 'penalties');
+/** Торгууль цуцлах — хуучин шиг зөвхөн Супер админ, Админ (аудит Б21) */
+const canCancel = (r: Role[]) => r.includes('SUPER_ADMIN') || r.includes('ADMIN');
 const canDeduct = (r: Role[]) => r.some((x) => ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTING'].includes(x));
 const canAutoAmount = (r: Role[]) => canEdit(r, 'settings');
 /** Ролоос торгуулийн анхдагч төрөл */
@@ -134,7 +136,7 @@ export async function createPenalty(actor: UserActor, input: { userId?: unknown;
 }
 
 export async function cancelPenalty(actor: UserActor, idIn: unknown, input: { note?: unknown }) {
-  if (!canManage(actor.roles)) throw forbidden();
+  if (!canCancel(actor.roles)) throw forbidden('Торгуулийг зөвхөн Супер админ, Админ цуцална');
   const id = Number(idIn);
   const note = String(input.note ?? '').trim().slice(0, 300);
   if (note.length < 3) throw badRequest('Цуцлах шалтгаанаа бичнэ үү', 'reason_required');
@@ -219,7 +221,7 @@ export async function listPenalties(actor: UserActor, f: PenaltyFilter) {
   ]);
   return {
     page, total, pages: Math.max(1, Math.ceil(total / 50)), summary,
-    canManage: canManage(actor.roles), canDeduct: canDeduct(actor.roles),
+    canManage: canManage(actor.roles), canDeduct: canDeduct(actor.roles), canCancel: canCancel(actor.roles),
     items: items.map(serialize),
     staff: staff.map((s) => ({ ...s, defaultType: typeForRoles(s.roles) })),
   };

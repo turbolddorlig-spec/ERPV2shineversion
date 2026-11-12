@@ -372,6 +372,23 @@ describe('дуудлагын бүртгэл — бөөнөөр шилжүүлэ�
     expect((await C.decideTransfers(op2, { ids: 'all', accept: true })).decided).toBe(3);
     expect(await db.callNote.count({ where: { ownerId: op2.id } })).toBe(4);
   });
+  it('аудит А2: оператор бусдын (гуравдагчийн) бүртгэлийг өөр рүүгээ ч, өөр хүнд ч шилжүүлэхгүй; үйлдэл бүр түүхэнд; хаагдсаныг хүлээн авахгүй', async () => {
+    const op3 = await actor(['OPERATOR']);
+    await C.createCallNotes(op3, { phones: '88000011 88000012' });
+    const theirs = await db.callNote.findMany({ where: { ownerId: op3.id } });
+    expect(await C.requestTransfers(op, { ids: theirs.map((n) => n.id), toUserId: op.id })).toEqual({ requested: 0, skipped: 2 });
+    expect(await C.requestTransfers(op, { ids: theirs.map((n) => n.id), toUserId: op2.id })).toEqual({ requested: 0, skipped: 2 });
+    expect(await db.callNote.count({ where: { ownerId: op3.id } })).toBe(2);
+    // ахлах оператор бусдынхыг шилжүүлж болно
+    const lead = await actor(['OPERATOR_LEAD']);
+    expect((await C.requestTransfers(lead, { ids: [theirs[0]!.id], toUserId: op.id })).requested).toBe(1);
+    // хүсэлтийн хооронд эзэн нь хаасан → хүлээн авахад эзэн солигдохгүй
+    await C.closeCallNote(op3, theirs[0]!.id, { reason: 'NO_ANSWER' });
+    await C.decideTransfers(op, { ids: 'all', accept: true });
+    expect((await db.callNote.findUniqueOrThrow({ where: { id: theirs[0]!.id } })).ownerId).toBe(op3.id);
+    const acts = (await db.auditLog.findMany({ where: { entityType: 'CallNote' }, select: { action: true } })).map((a) => a.action);
+    for (const a of ['calls.created', 'calls.closed', 'calls.transfer_requested', 'calls.transfer_accepted']) expect(acts).toContain(a);
+  });
 });
 
 describe('Meta CAPI (#43 5)', () => {

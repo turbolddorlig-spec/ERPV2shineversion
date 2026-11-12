@@ -35,7 +35,11 @@ export async function createCallNotes(actor: UserActor, input: { phones?: unknow
   if (pageId && !(await db.page.findUnique({ where: { id: pageId } }))) throw badRequest('Пэйж олдсонгүй');
   const productText = String(input.productText ?? '').trim().slice(0, 120) || null;
   const note = String(input.note ?? '').trim().slice(0, 500) || null;
-  const r = await db.callNote.createMany({ data: phones.map((phone) => ({ phone, variantId, productText, pageId, note, ownerId: actor.id, ownerName: actor.name, createdById: actor.id })) });
+  const r = await db.$transaction(async (tx) => {
+    const r = await tx.callNote.createMany({ data: phones.map((phone) => ({ phone, variantId, productText, pageId, note, ownerId: actor.id, ownerName: actor.name, createdById: actor.id })) });
+    await writeAudit(actor, 'calls.created', 'CallNote', null, { count: r.count, phones: phones.slice(0, 20), productText, variantId, pageId }, tx, ['order']);
+    return r;
+  });
   return { created: r.count };
 }
 
@@ -111,6 +115,7 @@ export async function attemptCall(actor: UserActor, idInput: unknown) {
   if (n.lastAttemptAt && Date.now() - n.lastAttemptAt.getTime() < ATTEMPT_GAP_MIN * 60_000) throw conflict(`Дахин залгахад ${ATTEMPT_GAP_MIN} минут хүлээнэ`, 'too_soon');
   // Давхар даралтаас: attempts тоогоор нөхцөлтэй
   const r = await db.callNote.updateMany({ where: { id: n.id, attempts: n.attempts }, data: { attempts: { increment: 1 }, lastAttemptAt: new Date(), status: 'CONTACTED' } });
+  if (r.count) await writeAudit(actor, 'calls.attempt', 'CallNote', String(n.id), { phone: n.phone, attempt: n.attempts + 1 }, db, ['order']);
   return { updated: r.count };
 }
 
@@ -135,7 +140,12 @@ export async function closeCallNote(actor: UserActor, idInput: unknown, input: {
   if (!REASONS.includes(reason)) throw badRequest('Шалтгаанаа сонгоно уу', 'reason_required');
   const note = String(input.note ?? '').trim().slice(0, 300) || null;
   if (reason === 'OTHER' && (!note || note.replace(/\s/g, '').length < 3)) throw badRequest('«Бусад» шалтгааныг бичнэ үү', 'reason_required');
-  return db.callNote.update({ where: { id: n.id }, data: { status: 'CANCELLED', closeReason: reason, closeNote: note, closedAt: new Date() } });
+  // Зэрэг «Захиалга үүссэн» болсон бол дарж бичихгүй (аудит)
+  return db.$transaction(async (tx) => {
+    const u = await tx.callNote.updateMany({ where: { id: n.id, status: { in: ['PENDING', 'CONTACTED'] } }, data: { status: 'CANCELLED', closeReason: reason, closeNote: note, closedAt: new Date() } });
+    if (u.count) await writeAudit(actor, 'calls.closed', 'CallNote', String(n.id), { phone: n.phone, reason: CLOSE_LABEL[reason], note }, tx, ['order']);
+    return tx.callNote.findUniqueOrThrow({ where: { id: n.id } });
+  });
 }
 
 /** Өөр операторт шилжүүлэх хүсэлт (хуучин логик) */
@@ -148,7 +158,11 @@ export async function requestTransfer(actor: UserActor, idInput: unknown, input:
   if (to.id === n.ownerId) throw badRequest('Өөрт нь шилжүүлэх боломжгүй');
   const open = await db.callNoteTransfer.findFirst({ where: { noteId: n.id, status: 'PENDING' } });
   if (open) throw conflict('Энэ тэмдэглэлийн шилжүүлэх хүсэлт хүлээгдэж байна');
-  return db.callNoteTransfer.create({ data: { noteId: n.id, fromId: actor.id, fromName: actor.name, toId: to.id, toName: to.name } });
+  return db.$transaction(async (tx) => {
+    const t = await tx.callNoteTransfer.create({ data: { noteId: n.id, fromId: actor.id, fromName: actor.name, toId: to.id, toName: to.name } });
+    await writeAudit(actor, 'calls.transfer_requested', 'CallNote', String(n.id), { phone: n.phone, from: n.ownerName, to: to.name }, tx, ['order']);
+    return t;
+  });
 }
 
 export async function decideTransfer(actor: UserActor, transferIdInput: unknown, input: { accept?: unknown }) {
@@ -160,7 +174,9 @@ export async function decideTransfer(actor: UserActor, transferIdInput: unknown,
   const accept = input.accept === true;
   return db.$transaction(async (tx) => {
     const ok = await tx.callNoteTransfer.updateMany({ where: { id: t.id, status: 'PENDING' }, data: { status: accept ? 'ACCEPTED' : 'REJECTED', decidedAt: new Date() } });
-    if (ok.count && accept) await tx.callNote.update({ where: { id: t.noteId }, data: { ownerId: actor.id, ownerName: actor.name } });
+    // Хаагдсан / захиалга болсон тэмдэглэлийн эзнийг солихгүй
+    if (ok.count && accept) await tx.callNote.updateMany({ where: { id: t.noteId, status: { in: ['PENDING', 'CONTACTED'] } }, data: { ownerId: actor.id, ownerName: actor.name } });
+    if (ok.count) await writeAudit(actor, accept ? 'calls.transfer_accepted' : 'calls.transfer_rejected', 'CallNote', String(t.noteId), { from: t.fromName, to: t.toName }, tx, ['order']);
     return tx.callNoteTransfer.findUniqueOrThrow({ where: { id: t.id } });
   });
 }
@@ -194,10 +210,14 @@ export async function requestTransfers(actor: UserActor, input: { ids?: unknown;
   if (!to || !to.isActive || !canEditOrders(to.roles)) throw badRequest('Оператор олдсонгүй');
   const sup = canSuperviseOperators(actor.roles);
   return db.$transaction(async (tx) => {
-    const notes = await tx.callNote.findMany({ where: { id: { in: ids }, status: { in: ['PENDING', 'CONTACTED'] }, ...(sup ? {} : { ownerId: actor.id }), ownerId: { not: to.id } } });
+    // Аудит А2 (#70): энгийн оператор зөвхөн ӨӨРИЙН тэмдэглэлийг (өмнө нь ownerId түлхүүр дарагдаж бусдынх ч орж байв)
+    const notes = await tx.callNote.findMany({ where: { id: { in: ids }, status: { in: ['PENDING', 'CONTACTED'] }, AND: [{ ownerId: { not: to.id } }, ...(sup ? [] : [{ ownerId: actor.id }])] } });
     const pending = new Set((await tx.callNoteTransfer.findMany({ where: { noteId: { in: notes.map((n) => n.id) }, status: 'PENDING' }, select: { noteId: true } })).map((t) => t.noteId));
     const ok = notes.filter((n) => !pending.has(n.id));
-    if (ok.length) await tx.callNoteTransfer.createMany({ data: ok.map((n) => ({ noteId: n.id, fromId: actor.id, fromName: actor.name, toId: to.id, toName: to.name })) });
+    if (ok.length) {
+      await tx.callNoteTransfer.createMany({ data: ok.map((n) => ({ noteId: n.id, fromId: actor.id, fromName: actor.name, toId: to.id, toName: to.name })) });
+      await writeAudit(actor, 'calls.transfer_requested', 'CallNote', null, { to: to.name, count: ok.length, ids: ok.slice(0, 50).map((n) => n.id) }, tx, ['order']);
+    }
     return { requested: ok.length, skipped: ids.length - ok.length };
   });
 }
@@ -213,7 +233,8 @@ export async function decideTransfers(actor: UserActor, input: { ids?: unknown; 
     const ts = await tx.callNoteTransfer.findMany({ where, select: { id: true, noteId: true }, take: 1000 });
     if (!ts.length) return { decided: 0 };
     const r = await tx.callNoteTransfer.updateMany({ where: { id: { in: ts.map((t) => t.id) }, status: 'PENDING' }, data: { status: accept ? 'ACCEPTED' : 'REJECTED', decidedAt: new Date() } });
-    if (accept) await tx.callNote.updateMany({ where: { id: { in: ts.map((t) => t.noteId) } }, data: { ownerId: actor.id, ownerName: actor.name } });
+    if (accept) await tx.callNote.updateMany({ where: { id: { in: ts.map((t) => t.noteId) }, status: { in: ['PENDING', 'CONTACTED'] } }, data: { ownerId: actor.id, ownerName: actor.name } });
+    if (r.count) await writeAudit(actor, accept ? 'calls.transfer_accepted' : 'calls.transfer_rejected', 'CallNote', null, { count: r.count }, tx, ['order']);
     return { decided: r.count };
   });
 }

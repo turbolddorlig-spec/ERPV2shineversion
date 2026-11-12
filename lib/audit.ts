@@ -33,6 +33,13 @@ export const getDiscountTick = () => discountTick;
 
 export const AUDIT_LABEL: Record<string, string> = {
   'auth.login': 'Нэвтэрсэн',
+  'calls.created': 'Залгах тэмдэглэл үүсгэсэн',
+  'calls.attempt': 'Залгасан (оролдлого)',
+  'calls.closed': 'Залгах тэмдэглэл хаасан',
+  'calls.transfer_requested': 'Залгах тэмдэглэл шилжүүлэх хүсэлт',
+  'calls.transfer_accepted': 'Шилжүүлэлт хүлээн авсан',
+  'calls.transfer_rejected': 'Шилжүүлэлт татгалзсан',
+  'calls.reassigned': 'Залгах тэмдэглэл шууд шилжүүлсэн',
   'driver.return': 'Жолоочоос буцаалт хүлээн авсан',
   'driver.extra_take': 'Нэмэлт бараа авсан',
   'driver.extra_sale': 'Нэмэлт бараа зарсан',

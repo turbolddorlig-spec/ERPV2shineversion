@@ -307,7 +307,13 @@ interface Applied { penalties: { id: number; amount: number }[]; loansCharged: n
 export async function lockSalary(actor: UserActor, idIn: unknown) {
   assert(actor);
   const id = Number(idIn);
+  const pre = Number.isInteger(id) && id > 0 ? await db.staffSalaryRecord.findUnique({ where: { id }, select: { staffKey: true, periodStart: true } }) : null;
+  if (!pre) throw notFound('Цалин олдсонгүй');
   return db.$transaction(async (tx) => {
+    // Аудит А4: хадгалахтай ижил түгжээ (хадгалах ба түгжих зэрэг ирэхэд нэг нь нөгөөгөө хүлээнэ), дараа нь мөрийн түгжээ
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(8::int4, hashtext(${pre.staffKey + ymdOf(pre.periodStart)}))`;
+    // Нэг ажилтны торгууль хоёр хагас сард давхар суутгагдахгүй — ажилтан тус бүрийн түгжээ
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(9::int4, hashtext(${pre.staffKey}))`;
     const rows = await tx.$queryRaw<{ id: number }[]>`SELECT id FROM "StaffSalaryRecord" WHERE id = ${id} FOR UPDATE`;
     if (!rows.length) throw notFound('Цалин олдсонгүй');
     const r = await tx.staffSalaryRecord.findUniqueOrThrow({ where: { id } });
@@ -325,7 +331,10 @@ export async function lockSalary(actor: UserActor, idIn: unknown) {
       if (left <= 0) break;
       const a = Math.min(left, x.remaining);
       const full = a === x.remaining;
-      await tx.penalty.update({ where: { id: x.id }, data: { deductedAmount: { increment: a }, ...(full ? { deducted: true, deductedAt: new Date(), deductedByName: `${actor.name} (цалин ${r.periodLabel})` } : {}), version: { increment: 1 } } });
+      // Үлдэгдлээс хэтрүүлэхгүй (давхар суутгалаас) — нөхцөлтэй
+      const g = await tx.$executeRaw`UPDATE "Penalty" SET "deductedAmount" = "deductedAmount" + ${a}, version = version + 1 WHERE id = ${x.id} AND status = 'ACTIVE' AND deducted = false AND "deductedAmount" + ${a} <= amount`;
+      if (!g) throw conflict('Торгуулийн үлдэгдэл өөрчлөгдсөн — цалинг дахин хадгална уу', 'stale');
+      if (full) await tx.penalty.update({ where: { id: x.id }, data: { deducted: true, deductedAt: new Date(), deductedByName: `${actor.name} (цалин ${r.periodLabel})` } });
       penApplied.push({ id: x.id, amount: a });
       left -= a;
     }
@@ -367,7 +376,11 @@ export async function unlockSalary(actor: UserActor, idIn: unknown, input: { cod
   const code = String(input.code ?? '');
   if (s) { if (!(await verifyPassword(code, String(s.value)))) throw forbidden('Буруу код'); }
   else if (!isSA(actor)) throw forbidden('Цоожны код тохируулаагүй — Супер админ тайлна (эсвэл кодоо тохируулна)');
+  const pre = Number.isInteger(id) && id > 0 ? await db.staffSalaryRecord.findUnique({ where: { id }, select: { staffKey: true, periodStart: true } }) : null;
+  if (!pre) throw notFound('Цалин олдсонгүй');
   return db.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(8::int4, hashtext(${pre.staffKey + ymdOf(pre.periodStart)}))`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(9::int4, hashtext(${pre.staffKey}))`;
     const rows = await tx.$queryRaw<{ id: number }[]>`SELECT id FROM "StaffSalaryRecord" WHERE id = ${id} FOR UPDATE`;
     if (!rows.length) throw notFound('Цалин олдсонгүй');
     const r = await tx.staffSalaryRecord.findUniqueOrThrow({ where: { id } });
@@ -375,8 +388,11 @@ export async function unlockSalary(actor: UserActor, idIn: unknown, input: { cod
     const a = (r.applied as Applied | null) ?? { penalties: [], loansCharged: [], debtPaymentIds: [] };
     // Зөвхөн энэ цалингаар хассан дүн буцна; гараар «Цалингаас хассан» гэсэн тэмдэг хэвээр (#124-Е2)
     for (const x of a.penalties) {
-      await tx.penalty.update({ where: { id: x.id }, data: { deductedAmount: { decrement: x.amount }, version: { increment: 1 } } });
-      await tx.penalty.updateMany({ where: { id: x.id, deductedByName: { endsWith: `(цалин ${r.periodLabel})` } }, data: { deducted: false, deductedAt: null, deductedByName: null } });
+      const p = await tx.penalty.update({ where: { id: x.id }, data: { deductedAmount: { decrement: x.amount }, version: { increment: 1 } } });
+      // Аудит А4: цалингаар (аль ч хугацаа) эсвэл «үлдэгдэл цуцалсан»-аар хаагдсан тэмдэг — бүрэн хасагдаагүй болсон бол буцна.
+      // Гараар «Цалингаас хассан» гэсэн тэмдэг хэвээр (#124-Е2).
+      const sys = !!p.deductedByName && (/\(цалин .+\)$/.test(p.deductedByName) || p.deductedByName.includes('(үлдэгдэл цуцалсан)'));
+      if (p.deducted && sys && p.deductedAmount < p.amount) await tx.penalty.update({ where: { id: x.id }, data: { deducted: false, deductedAt: null, deductedByName: null } });
     }
     for (const pid of a.debtPaymentIds) {
       const pm = await tx.staffDebtPayment.findUnique({ where: { id: pid } });

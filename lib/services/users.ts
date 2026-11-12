@@ -5,6 +5,7 @@ import { ALL_ROLES, isAdmin, isRole, manageableRoles } from '../roles';
 import { isValidPhone, normalizePhone } from '../phone';
 import { generateTempPassword, hashPassword, passwordProblem } from '../password';
 import { revokeAllSessions } from '../session';
+import { clearLoginThrottle } from './auth';
 import { badRequest, conflict, forbidden, notFound } from '../errors';
 
 export interface UserActor {
@@ -249,6 +250,7 @@ export async function resetPassword(actor: UserActor, id: string) {
     const n = await revokeAllSessions(id, tx);
     await writeAudit(actor, 'user.password_reset', 'User', id, { sessionsClosed: n }, tx);
   });
+  clearLoginThrottle(id);
   return { temporaryPassword };
 }
 
@@ -259,6 +261,7 @@ export async function unlockUser(actor: UserActor, id: string) {
   return db.$transaction(async (tx) => {
     const u = await tx.user.update({ where: { id }, data: { failedLoginCount: 0, lockedUntil: null }, select: PUBLIC_SELECT });
     await writeAudit(actor, 'user.unlocked', 'User', id, undefined, tx);
+    clearLoginThrottle(id);
     return u;
   });
 }

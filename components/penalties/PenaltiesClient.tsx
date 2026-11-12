@@ -19,7 +19,7 @@ export interface PenaltyRow {
 }
 export type Summary = { total: number; count: number; pending: number; deducted: number; cancelled: number; byType: Record<string, { count: number; amount: number }> };
 interface Staff { id: string; name: string; phone: string; roles: string[]; defaultType: string | null }
-interface ListResp { page: number; total: number; pages: number; summary: Summary; canManage: boolean; canDeduct: boolean; items: PenaltyRow[]; staff: Staff[] }
+interface ListResp { page: number; total: number; pages: number; summary: Summary; canManage: boolean; canDeduct: boolean; canCancel?: boolean; items: PenaltyRow[]; staff: Staff[] }
 interface Cat { id: string; type: string; name: string; defaultAmount: number; active: boolean; lateMinutes?: boolean }
 interface Config { autoAmount: Record<string, number>; categories: Cat[]; types: { type: string; label: string }[]; canManage: boolean; canAutoAmount: boolean }
 
@@ -100,7 +100,7 @@ export function PenaltiesClient() {
               <option value="">Бүх төлөв</option><option value="PENDING">Хасагдаагүй</option><option value="DEDUCTED">Цалингаас хассан</option><option value="CANCELLED">Цуцлагдсан</option>
             </select>
           </div>
-          <PenaltyList items={d?.items ?? []} showUser canManage={!!d?.canManage} canDeduct={!!d?.canDeduct} onDeduct={deduct} onCancel={setCancel} />
+          <PenaltyList items={d?.items ?? []} showUser canManage={!!d?.canCancel} canDeduct={!!d?.canDeduct} onDeduct={deduct} onCancel={setCancel} />
           {d && d.pages > 1 ? (
             <div className="flex items-center justify-end gap-2 text-[13px]"><span className="text-muted">{d.total} торгууль</span><Button size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>‹</Button><span>{page} / {d.pages}</span><Button size="sm" disabled={page >= d.pages} onClick={() => setPage(page + 1)}>›</Button></div>
           ) : null}

@@ -132,7 +132,9 @@ async function boostSegments(productIds: number[], fromMs: number, toMs: number)
   const evs = await db.$queryRaw<{ productId: number; at: Date; dollar: number; zones: number }[]>`
     SELECT "productId", at, dollar, zones FROM "BoostEvent" WHERE "productId" IN (${Prisma.join(productIds)}) AND at >= ${new Date(fromMs)} AND at < ${new Date(toMs)}
     UNION ALL
-    SELECT DISTINCT ON ("productId") "productId", at, dollar, zones FROM "BoostEvent" WHERE "productId" IN (${Prisma.join(productIds)}) AND at < ${new Date(fromMs)}
+    -- Цонхны өмнөх ХАМГИЙН СҮҮЛИЙН төлөв (аудит А1: өмнө нь дэд асуулгад ORDER BY байгаагүй тул хамгийн эхнийх нь сонгогддог байв)
+    (SELECT DISTINCT ON ("productId") "productId", at, dollar, zones FROM "BoostEvent" WHERE "productId" IN (${Prisma.join(productIds)}) AND at < ${new Date(fromMs)}
+     ORDER BY "productId", at DESC, id DESC)
     ORDER BY 1, 2`;
   const by = new Map<number, typeof evs>();
   for (const e of evs) { const a = by.get(e.productId) ?? []; a.push(e); by.set(e.productId, a); }

@@ -140,6 +140,43 @@ describe('цоож: торгууль, зээл, өр — давхардахгү�
     expect((await db.penalty.aggregate({ _sum: { deductedAmount: true } }))._sum.deductedAmount).toBe(7000);
   });
 
+  it('аудит А4: хоёр хагас сарыг зэрэг түгжихэд нэг торгууль давхар суутгагдахгүй; хадгалах ба түгжих зэрэг — тоо зөрөхгүй; тайлсны дараа «үлдэгдэл цуцалсан» тэмдэг зөв', async () => {
+    const key = `u:${op.id}`;
+    await S.setConfig(acc, { staffKey: key, baseSalary: 1_000_000 });
+    const p1 = await PN.createPenalty(pen, { userId: op.id, customName: 'Коммент шүүгээгүй', amount: 5000 });
+    const [y, m] = U.ubDay().slice(0, 7).split('-').map(Number) as [number, number];
+    const prev = `${m === 1 ? y - 1 : y}-${String(m === 1 ? 12 : m - 1).padStart(2, '0')}`;
+    // өмнөх сарын хоёр хагаст хоёуланд торгууль (5,000₮) — «өмнөхөөс үлдсэн»
+    const r1 = await S.saveSalary(acc, { staffKey: key, ym: prev, half: 1, baseSalary: 500_000, penaltyDeducted: 0 });
+    void r1;
+    const a = await S.saveSalary(acc, { staffKey: key, ym, half: 1, baseSalary: 500_000, penaltyDeducted: 5000 });
+    const b = await S.saveSalary(acc, { staffKey: key, ym, half: 2, baseSalary: 500_000, penaltyDeducted: 5000 });
+    const rs = await Promise.allSettled([S.lockSalary(adm, a.id), S.lockSalary(acc, b.id)]);
+    expect(rs.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const pp = await db.penalty.findUniqueOrThrow({ where: { id: p1.id } });
+    expect([pp.deductedAmount, pp.deducted]).toEqual([5000, true]);
+    // хадгалах ба түгжих зэрэг: түгжигдсэн цалингийн тоо = торгуулийн бодит суутгал
+    const unl = rs[0]!.status === 'fulfilled' ? a : b;
+    await S.unlockSalary(sa, unl.id, {});
+    const [sv, lk] = await Promise.allSettled([S.saveSalary(acc, { staffKey: key, ym, half: unl === a ? 1 : 2, baseSalary: 500_000, penaltyDeducted: 0 }), S.lockSalary(adm, unl.id)]);
+    void sv; void lk;
+    const rec = await db.staffSalaryRecord.findUniqueOrThrow({ where: { id: unl.id } });
+    const pen2 = await db.penalty.findUniqueOrThrow({ where: { id: p1.id } });
+    if (rec.isLocked) expect(pen2.deductedAmount).toBe(rec.penaltyDeducted);
+    else expect(pen2.deductedAmount).toBe(0);
+    // «үлдэгдэл цуцалсан»: 3,000 суутгаж түгжинэ → үлдсэн 2,000-ыг цуцална → тайлахад дахин суутгах ёстой болно (тэмдэг худал үлдэхгүй)
+    if (rec.isLocked) await S.unlockSalary(sa, unl.id, {});
+    const p2 = await PN.createPenalty(pen, { userId: op.id, customName: 'Чат шүүгээгүй', amount: 5000 });
+    await db.penalty.update({ where: { id: p1.id }, data: { status: 'CANCELLED' } });
+    const c = await S.saveSalary(acc, { staffKey: key, ym, half: unl === a ? 1 : 2, baseSalary: 500_000, penaltyDeducted: 3000 });
+    await S.lockSalary(adm, c.id);
+    await PN.cancelPenalty(adm, p2.id, { note: 'Үлдэгдлийг уучлав' });
+    expect((await db.penalty.findUniqueOrThrow({ where: { id: p2.id } }))).toMatchObject({ amount: 3000, deducted: true });
+    await S.unlockSalary(sa, c.id, {});
+    expect((await db.penalty.findUniqueOrThrow({ where: { id: p2.id } }))).toMatchObject({ amount: 3000, deductedAmount: 0, deducted: false });
+    expect((await S.prepareSalary(acc, key, ym, unl === a ? 1 : 2)).auto.penaltyTotal).toBe(3000);
+  });
+
   it('аудит №6: хадгалсны дараа зээлийн бараа буцаасан / суутгал өөрчилсөн бол түгжихгүй — дахин хадгалахад зөв дүнгээр суутгана', async () => {
     const key = `u:${op.id}`;
     await S.setConfig(acc, { staffKey: key, baseSalary: 1_000_000 });

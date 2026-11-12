@@ -412,6 +412,19 @@ describe('бүүстийн ашиг ба анхааруулга (#105–#110)', 
     await db.boostEvent.deleteMany();
     await db.boostEvent.create({ data: { productId: prod, at: new Date(U.ubDayStart(yest).getTime() + 18 * H), dollar: 5, zones: 1, byName: 'x' } });
     expect((await OF.profitDetail(sa, prod)).days.find((x) => x.day === yest)!.boost).toBe(18000);
+    // Аудит А1: цонхны өмнө олон үйл явдал — ХАМГИЙН СҮҮЛИЙН төлөвөөс эхэлнэ (11/01 асаасан → 11/03 унтраасан → цонхонд бүүстгүй)
+    await db.boostEvent.deleteMany();
+    const d = (n: number) => new Date(U.ubDayStart(U.ubDay(new Date(), -n)).getTime() + 10 * H);
+    await db.boostEvent.createMany({ data: [
+      { productId: prod, at: d(11), dollar: 5, zones: 1, byName: 'x' },
+      { productId: prod, at: d(10), dollar: 5, zones: 3, byName: 'x' },
+      { productId: prod, at: d(9), dollar: 5, zones: 0, byName: 'x' },
+    ] });
+    const days = (await OF.profitDetail(sa, prod)).days;
+    expect(days.every((x) => x.boost === 0)).toBe(true);
+    // сүүлийн төлөв асаалттай (2 бүс) бол цонхны эхнээс тэр төлөвөөр
+    await db.boostEvent.create({ data: { productId: prod, at: d(8), dollar: 5, zones: 2, byName: 'x' } });
+    expect((await OF.profitDetail(sa, prod)).days.find((x) => x.day === yest)!.boost).toBe(2 * 18000);
     await err(OF.setConfig(lead, { oppCost: 1 }), 403);
     await OF.setConfig(lead, { claimTarget: 3 });
     await OF.setConfig(sa, { lowProfit: 2000, costPct: 35 });

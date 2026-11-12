@@ -83,6 +83,20 @@ describe('агуулах (#38)', () => {
     await W.updateWarehouse(sa, main.id, { isActive: false });
     expect((await W.listWarehouses(sa)).map((w) => w.id)).not.toContain(main.id);
   });
+  it('аудит А4: хаах ба орлогодох зэрэг — хаалттай агуулахад бараа үлдэхгүй; нээлттэй падаантай бол үндсэнийг солихгүй, тэр агуулахыг хаахгүй', async () => {
+    for (let i = 0; i < 6; i++) {
+      const w = await W.createWarehouse(sa, { name: `Түр ${i}` });
+      await Promise.allSettled([W.updateWarehouse(sa, w.id, { isActive: false }), D.createReceipt(wh, { warehouseId: w.id, lines: [{ variantId: v1, qty: 3 }], idemKey: key() })]);
+      const row = await db.warehouse.findUniqueOrThrow({ where: { id: w.id }, include: { location: true } });
+      const bal = await db.stockBalance.aggregate({ where: { locationId: row.location!.id }, _sum: { qty: true } });
+      expect(!row.isActive && (bal._sum.qty ?? 0) > 0).toBe(false);
+    }
+    const drv = await actor(['DRIVER']);
+    await db.handover.create({ data: { number: 'П-T1', date: new Date(), driverId: drv.id, driverName: drv.name, warehouseId: w3.id, createdById: sa.id, createdByName: sa.name } });
+    await err(W.updateWarehouse(sa, w3.id, { isPrimary: true }), 400, 'handover_open');
+    await D.createIssue(wh, { warehouseId: w3.id, reason: 'SAMPLE', lines: [{ variantId: v1, qty: await qty(w3.id, v1) }], note: N, idemKey: key() }).catch(() => null);
+    await err(W.updateWarehouse(sa, w3.id, { isActive: false }), 400);
+  });
 });
 
 describe('орлого, зарлага', () => {

@@ -100,6 +100,8 @@ export async function transitLocationId(tx: Tx | typeof db = db): Promise<number
 
 /** Идэвхтэй агуулахын газар */
 export async function warehouseLocation(tx: Tx | typeof db, warehouseId: number, opts: { allowInactive?: boolean } = {}) {
+  // Гүйлгээн дотор: агуулахыг хаах (FOR UPDATE) дуусахыг хүлээнэ — хаагдаж буй агуулахад бараа орохгүй (аудит А4)
+  if (tx !== db) await tx.$queryRaw`SELECT id FROM "Warehouse" WHERE id = ${warehouseId} FOR SHARE`;
   const w = await tx.warehouse.findUnique({ where: { id: warehouseId }, include: { location: true } });
   if (!w || !w.location) throw notFound('Агуулах олдсонгүй');
   if (!w.isActive && !opts.allowInactive) throw badRequest(`«${w.name}» агуулах хаагдсан байна`);

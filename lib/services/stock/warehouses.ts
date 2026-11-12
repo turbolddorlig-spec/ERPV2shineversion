@@ -51,15 +51,9 @@ export async function updateWarehouse(actor: UserActor, idInput: unknown, input:
   if (input.name !== undefined) { const n = cleanName(input.name); if (n !== w.name) { data.name = n; changes.name = { from: w.name, to: n }; } }
   if (input.address !== undefined) { const a = cleanAddress(input.address); if (a !== w.address) { data.address = a; changes.address = { from: w.address, to: a }; } }
   if (input.sortOrder !== undefined) { const n = Number(input.sortOrder); if (Number.isInteger(n) && n !== w.sortOrder) data.sortOrder = n; }
-  if (input.isActive === false && w.isActive) {
+  const closing = input.isActive === false && w.isActive;
+  if (closing) {
     if (w.isPrimary) throw badRequest('Үндсэн агуулахыг хаахгүй. Эхлээд өөр агуулахыг үндсэн болгоно уу.');
-    // Үлдэгдэлтэй, нээлттэй шилжүүлэг/тооллоготой агуулахыг хаахгүй — эхлээд шилжүүлнэ (хуучин "алга болох" алдааг хаана)
-    const stock = await db.stockBalance.aggregate({ where: { locationId: w.location.id, qty: { gt: 0 } }, _sum: { qty: true } });
-    if ((stock._sum.qty ?? 0) > 0) throw badRequest(`«${w.name}»-д ${stock._sum.qty} ширхэг бараа байна. Эхлээд өөр агуулах руу шилжүүлнэ үү.`, 'warehouse_not_empty');
-    const open = await db.stockTransfer.count({ where: { status: { in: ['SENT', 'DISCREPANCY'] }, OR: [{ fromWarehouseId: id }, { toWarehouseId: id }] } });
-    if (open) throw badRequest('Энэ агуулахын дуусаагүй шилжүүлэг байна', 'warehouse_busy');
-    const counts = await db.stockCount.count({ where: { warehouseId: id, status: { in: ['OPEN', 'SUBMITTED'] } } });
-    if (counts) throw badRequest('Энэ агуулахад дуусаагүй тооллого байна', 'warehouse_busy');
     data.isActive = false; changes.isActive = { from: true, to: false };
   }
   if (input.isActive === true && !w.isActive) { data.isActive = true; changes.isActive = { from: false, to: true }; }
@@ -67,7 +61,23 @@ export async function updateWarehouse(actor: UserActor, idInput: unknown, input:
   if (makePrimary && !(data.isActive ?? w.isActive)) throw badRequest('Хаагдсан агуулахыг үндсэн болгохгүй');
   try {
     return await db.$transaction(async (tx) => {
+      // Аудит А4: агуулахыг түгжиж (бараа орлогодох / шилжүүлэх нь FOR SHARE-ээр хүлээнэ) шалгалтыг гүйлгээн дотор хийнэ
+      await tx.$queryRaw`SELECT id FROM "Warehouse" WHERE id = ${id} FOR UPDATE`;
+      if (closing) {
+        // Үлдэгдэлтэй, нээлттэй шилжүүлэг/тооллого/падаантай агуулахыг хаахгүй — эхлээд шилжүүлнэ (хуучин "алга болох" алдааг хаана)
+        const stock = await tx.stockBalance.aggregate({ where: { locationId: w.location!.id, qty: { gt: 0 } }, _sum: { qty: true } });
+        if ((stock._sum.qty ?? 0) > 0) throw badRequest(`«${w.name}»-д ${stock._sum.qty} ширхэг бараа байна. Эхлээд өөр агуулах руу шилжүүлнэ үү.`, 'warehouse_not_empty');
+        const open = await tx.stockTransfer.count({ where: { status: { in: ['SENT', 'DISCREPANCY'] }, OR: [{ fromWarehouseId: id }, { toWarehouseId: id }] } });
+        if (open) throw badRequest('Энэ агуулахын дуусаагүй шилжүүлэг байна', 'warehouse_busy');
+        const counts = await tx.stockCount.count({ where: { warehouseId: id, status: { in: ['OPEN', 'SUBMITTED'] } } });
+        if (counts) throw badRequest('Энэ агуулахад дуусаагүй тооллого байна', 'warehouse_busy');
+        const hos = await tx.handover.count({ where: { warehouseId: id, status: { in: ['DRAFT', 'PREPARED', 'HANDED_OVER'] } } });
+        if (hos) throw badRequest('Энэ агуулахын дуусаагүй падаан байна', 'warehouse_busy');
+      }
       if (makePrimary) {
+        // Аудит А4: нээлттэй падаантай үед үндсэн агуулахыг солихгүй (бараа хоёр агуулахад хуваагдахаас)
+        const hos = await tx.handover.count({ where: { status: { in: ['DRAFT', 'PREPARED', 'HANDED_OVER'] } } });
+        if (hos) throw badRequest(`Дуусаагүй ${hos} падаан байна — бүгд жолоочид хүлээлгэн өгөгдсөний дараа (эсвэл өглөө падаан үүсгэхээс өмнө) үндсэн агуулахыг солино уу`, 'handover_open');
         await tx.warehouse.updateMany({ where: { isPrimary: true }, data: { isPrimary: false } });
         changes.isPrimary = { from: false, to: true };
       }

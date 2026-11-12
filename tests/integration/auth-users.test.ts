@@ -4,7 +4,7 @@ import { db } from '@/lib/db';
 import { hashPassword } from '@/lib/password';
 import { resolveSession } from '@/lib/session';
 import { AppError } from '@/lib/errors';
-import { changeOwnPassword, login, logoutEverywhere } from '@/lib/services/auth';
+import { changeOwnPassword, login, logoutEverywhere, _resetLoginThrottle, MAX_FAILED_GLOBAL } from '@/lib/services/auth';
 import {
   activateUser, createUser, deactivateUser, listUsers, resetPassword, unlockUser, updateUser, userHistory, type UserActor,
 } from '@/lib/services/users';
@@ -34,6 +34,7 @@ async function expectErr(p: Promise<unknown>, status: number, code?: string) {
 }
 
 beforeEach(async () => {
+  _resetLoginThrottle();
   await db.$executeRawUnsafe('TRUNCATE "Session", "User" CASCADE');
 });
 
@@ -85,11 +86,33 @@ describe('нэвтрэх', () => {
     await db.user.update({ where: { id: u.id }, data: { lockedUntil: new Date(Date.now() - 1000) } });
     expect((await login(u.phone, PW, meta)).token).toBeTruthy();
   });
-  it('зэрэг 10 буруу оролдлого — тоо алдагдахгүй, түгжигдэнэ', async () => {
+  it('аудит А3: зэрэг 29 буруу + 1 зөв — 5-аас олон нууц үг шалгагдахгүй, зөв нь ч нэвтрэхгүй (тойрох боломжгүй)', async () => {
     const u = await mk(['OPERATOR']);
-    await Promise.allSettled(Array.from({ length: 10 }, () => login(u.phone, 'bad-pass', meta)));
+    const rs = await Promise.allSettled([...Array.from({ length: 29 }, () => login(u.phone, 'bad-pass', meta)), login(u.phone, PW, meta)]);
+    const codes = rs.map((r) => (r.status === 'rejected' ? (r.reason as AppError).status : 200));
+    expect(codes.filter((c) => c === 401).length).toBeLessThanOrEqual(5);
+    expect(codes.filter((c) => c === 200).length).toBeLessThanOrEqual(1);
+    await expectErr(login(u.phone, PW, meta), 423, 'locked');
+  });
+  it('аудит А3: өөр IP-аас 5 удаа буруу оролдсон халдагч таныг ажлын IP-аас түгжихгүй; бүх IP нийлээд 20 буруу → бүрэн түгжинэ', async () => {
+    const u = await mk(['OPERATOR']);
+    const bad = { ip: '203.0.113.9', userAgent: 'x' };
+    for (let i = 0; i < 4; i++) await expectErr(login(u.phone, 'bad-pass', bad), 401);
+    await expectErr(login(u.phone, 'bad-pass', bad), 423, 'locked');
+    await expectErr(login(u.phone, PW, bad), 423, 'locked');
+    expect((await login(u.phone, PW, meta)).token).toBeTruthy(); // ажлын IP-аас нэвтэрнэ
+    _resetLoginThrottle();
+    for (let i = 0; i < MAX_FAILED_GLOBAL; i++) await login(u.phone, 'bad-pass', { ip: `198.51.100.${i}`, userAgent: 'x' }).catch(() => null);
     const fresh = await db.user.findUniqueOrThrow({ where: { id: u.id } });
     expect(fresh.lockedUntil && fresh.lockedUntil.getTime() > Date.now()).toBe(true);
+    await expectErr(login(u.phone, PW, meta), 423, 'locked');
+  });
+  it('аудит А3: нэг IP-аас 15 минутад 30 буруу (ямар ч дугаараар) → тэр IP түр хаагдана, бусад IP хэвийн', async () => {
+    const u = await mk(['OPERATOR']);
+    const atk = { ip: '192.0.2.77', userAgent: 'x' };
+    for (let i = 0; i < 30; i++) await login(String(70000000 + i), 'bad-pass', atk).catch(() => null);
+    await expectErr(login(u.phone, PW, atk), 429, 'too_many_attempts');
+    expect((await login(u.phone, PW, meta)).token).toBeTruthy();
   });
 });
 

@@ -53,7 +53,7 @@ describe('гараар торгууль', () => {
   it('#124-Е1: хэсэгчлэн суутгасан торгуулийг бүхэлд нь цуцлахгүй — зөвхөн үлдэгдлийг', async () => {
     const p = await PN.createPenalty(pen, { userId: op.id, customName: 'Хоцролт', amount: 5000 });
     await db.penalty.update({ where: { id: p.id }, data: { deductedAmount: 2000 } }); // цалингаар 2,000₮ суутгагдсан мэт
-    const r = await PN.cancelPenalty(pen, p.id, { note: 'Үлдэгдлийг уучлав' });
+    const r = await PN.cancelPenalty(adm, p.id, { note: 'Үлдэгдлийг уучлав' });
     const row = await db.penalty.findUniqueOrThrow({ where: { id: p.id } });
     expect([row.status, row.amount, row.deductedAmount, row.deducted]).toEqual(['ACTIVE', 2000, 2000, true]);
     expect(r.duplicate).toBe(false);
@@ -80,9 +80,12 @@ describe('гараар торгууль', () => {
     await err(PN.setDeducted(pen, p1.id), 403);
     await PN.setDeducted(acc, p1.id);
     expect((await PN.setDeducted(acc, p1.id)).duplicate).toBe(true);
-    await err(PN.cancelPenalty(pen, p1.id, { note: 'буруу тавьсан' }), 409, 'deducted');
-    await err(PN.cancelPenalty(pen, p3.id, { note: '' }), 400, 'reason_required');
-    await PN.cancelPenalty(pen, p3.id, { note: 'Буруу хүнд тавьсан' });
+    await err(PN.cancelPenalty(adm, p1.id, { note: 'буруу тавьсан' }), 409, 'deducted');
+    await err(PN.cancelPenalty(adm, p3.id, { note: '' }), 400, 'reason_required');
+    await PN.cancelPenalty(adm, p3.id, { note: 'Буруу хүнд тавьсан' });
+    // Аудит Б21: зөвхөн Супер админ, Админ цуцална
+    await err(PN.cancelPenalty(pen, p1.id, { note: 'Торгуулийн ажилтан' }), 403);
+    await err(PN.cancelPenalty(olead, p1.id, { note: 'Ахлах оператор' }), 403);
     expect(await db.penalty.count()).toBe(3); // устгаагүй
     const l = await PN.listPenalties(acc, {});
     expect([l.summary.total, l.summary.pending, l.summary.deducted, l.summary.cancelled, l.summary.byType.OPP_ERROR.amount]).toEqual([13000, 10000, 3000, 1, 3000]);

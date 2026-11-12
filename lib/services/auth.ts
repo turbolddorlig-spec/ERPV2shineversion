@@ -22,41 +22,93 @@ function lockMessage(until: Date): string {
   return `Олон удаа буруу оролдсон тул ${hhmm} хүртэл түгжигдлээ. Яаралтай бол админд хандаж түгжээг тайлуулна уу.`;
 }
 
+/**
+ * Аудит А3 — нэвтрэлтийн хамгаалалт:
+ *  - Түгжээг тойрохгүй: оролдлого бүр нууц үг шалгахаас ӨМНӨ «суудал» авна (нэг дор хэдэн зуун хүсэлт илгээсэн ч 5-аас олныг шалгахгүй).
+ *  - Хэрэглэгч × IP: нэг IP-аас 5 буруу → тэр IP-аас 15 мин түгжинэ (бусад хүн таны утсаар таныг ажлын байрнаас тань түгжиж чадахгүй).
+ *  - Хэрэглэгч (бүх IP нийлээд) 20 буруу → бүрэн түгжинэ (тархсан халдлагаас). Админ «Түгжээ тайлах» хоёуланг цэвэрлэнэ.
+ *  - IP: 15 минутад 30 буруу оролдлого (ямар ч дугаараар) → тэр IP-г түр хаана.
+ */
+export const MAX_FAILED_GLOBAL = 20;
+export const MAX_FAILED_IP = 30;
+const WINDOW_MS = LOCK_MINUTES * 60_000;
+interface Slot { fails: number[]; inflight: number; lockedUntil: number }
+const byUserIp = new Map<string, Slot>();
+const byIp = new Map<string, Slot>();
+const slot = (m: Map<string, Slot>, k: string) => { let x = m.get(k); if (!x) { x = { fails: [], inflight: 0, lockedUntil: 0 }; m.set(k, x); } return x; };
+const recent = (x: Slot, now: number) => { x.fails = x.fails.filter((t) => now - t < WINDOW_MS); return x.fails.length; };
+function prune(now: number) {
+  if (byUserIp.size + byIp.size < 5000) return;
+  for (const m of [byUserIp, byIp]) for (const [k, x] of m) if (!x.inflight && x.lockedUntil < now && !recent(x, now)) m.delete(k);
+}
+/** Админ түгжээ тайлахад (users.ts) */
+export function clearLoginThrottle(userId: string) { for (const k of byUserIp.keys()) if (k.startsWith(`${userId}|`)) byUserIp.delete(k); }
+/** Тестэд */
+export function _resetLoginThrottle() { byUserIp.clear(); byIp.clear(); }
+
+const ipBlocked = () => new AppError(429, 'Энэ сүлжээнээс хэт олон буруу оролдлого хийгдлээ. 15 минутын дараа дахин оролдоно уу.', 'too_many_attempts');
+
 export async function login(phoneInput: string, password: string, meta: ClientMeta) {
   const phone = normalizePhone(phoneInput);
   if (!phone || typeof password !== 'string' || !password) throw badRequest('Утас болон нууц үгээ оруулна уу');
+  const now = Date.now();
+  prune(now);
+  const ipKey = meta.ip ?? 'unknown';
+  const ipS = slot(byIp, ipKey);
+  if (ipS.lockedUntil > now || recent(ipS, now) + ipS.inflight >= MAX_FAILED_IP) throw ipBlocked();
 
   const user = await db.user.findUnique({ where: { phone } });
   if (!user || !user.isActive) {
-    await dummyVerify(password);
+    ipS.inflight++;
+    try { await dummyVerify(password); } finally { ipS.inflight--; }
+    ipS.fails.push(Date.now());
     throw new AppError(401, GENERIC_FAIL, 'invalid_credentials');
   }
 
-  if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
+  if (user.lockedUntil && user.lockedUntil.getTime() > now) {
     throw new AppError(423, lockMessage(user.lockedUntil), 'locked');
   }
-
-  // Хуулж буулгахад өмнө/ард зай орсон бол (утсан дээр түгээмэл) тайрсан хувилбараар дахин шалгана
-  const ok = (await verifyPassword(password, user.passwordHash)) || (password.trim() !== password && password.trim().length > 0 && (await verifyPassword(password.trim(), user.passwordHash)));
+  const uS = slot(byUserIp, `${user.id}|${ipKey}`);
+  if (uS.lockedUntil > now) throw new AppError(423, lockMessage(new Date(uS.lockedUntil)), 'locked');
+  // Суудал (синхрон — await-аас өмнө): энэ IP-аас шалгагдаж буй + сүүлийн буруу < 5
+  if (recent(uS, now) + uS.inflight >= MAX_FAILED) {
+    uS.lockedUntil = Math.max(uS.lockedUntil, now + WINDOW_MS);
+    throw new AppError(423, lockMessage(new Date(uS.lockedUntil)), 'locked');
+  }
+  uS.inflight++; ipS.inflight++;
   const actor = { id: user.id, name: user.name, ip: meta.ip ?? null };
+  let ok = false;
+  try {
+    // Хуулж буулгахад өмнө/ард зай орсон бол (утсан дээр түгээмэл) тайрсан хувилбараар дахин шалгана
+    ok = (await verifyPassword(password, user.passwordHash)) || (password.trim() !== password && password.trim().length > 0 && (await verifyPassword(password.trim(), user.passwordHash)));
+  } finally { uS.inflight--; ipS.inflight--; }
 
   if (!ok) {
-    // Атомаар нэмэгдүүлнэ — зэрэг оролдлогод тоо алдагдахгүй
+    const t = Date.now();
+    uS.fails.push(t); ipS.fails.push(t);
+    if (recent(ipS, t) >= MAX_FAILED_IP) ipS.lockedUntil = t + WINDOW_MS;
+    // Атомаар нэмэгдүүлнэ — бүх IP нийлсэн тоо (тархсан халдлага)
     const rows = await db.$queryRaw<{ failedLoginCount: number }[]>`
       UPDATE "User" SET "failedLoginCount" = "failedLoginCount" + 1, "updatedAt" = now()
       WHERE id = ${user.id}::uuid RETURNING "failedLoginCount"`;
     const count = rows[0]?.failedLoginCount ?? 0;
-    if (count >= MAX_FAILED) {
-      const until = new Date(Date.now() + LOCK_MINUTES * 60 * 1000);
+    if (count >= MAX_FAILED_GLOBAL) {
+      const until = new Date(t + WINDOW_MS);
       await db.$transaction(async (tx) => {
         await tx.user.update({ where: { id: user.id }, data: { lockedUntil: until, failedLoginCount: 0 } });
-        await writeAudit(actor, 'auth.locked', 'User', user.id, { until: until.toISOString() }, tx);
+        await writeAudit(actor, 'auth.locked', 'User', user.id, { until: until.toISOString(), scope: 'all' }, tx);
       });
       throw new AppError(423, lockMessage(until), 'locked');
     }
-    await writeAudit(actor, 'auth.login_failed', 'User', user.id, { attempt: count });
+    if (recent(uS, t) >= MAX_FAILED) {
+      uS.lockedUntil = t + WINDOW_MS;
+      await writeAudit(actor, 'auth.locked', 'User', user.id, { until: new Date(uS.lockedUntil).toISOString(), scope: 'ip', ip: meta.ip ?? null });
+      throw new AppError(423, lockMessage(new Date(uS.lockedUntil)), 'locked');
+    }
+    await writeAudit(actor, 'auth.login_failed', 'User', user.id, { attempt: recent(uS, t) });
     throw new AppError(401, GENERIC_FAIL, 'invalid_credentials');
   }
+  uS.fails = []; uS.lockedUntil = 0;
 
   // «Зөвхөн ажлын байрнаас» (#86): сонгосон ролтой бол ажлын IP-аас л
   const office = await officeBlock(user.roles, meta.ip);
