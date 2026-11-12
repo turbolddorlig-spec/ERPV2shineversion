@@ -3,7 +3,7 @@ import { db } from '../../db';
 import { badRequest, conflict, notFound } from '../../errors';
 import { writeAudit } from '../../audit';
 import { canApproveStock, canOperateStock, canView } from '../../permissions';
-import { applyMoves, cleanId, cleanNote, inTx, MAX_QTY, requireRole, warehouseLocation, type UserActor } from './core';
+import { applyMoves, cleanId, cleanNote, inTx, MAX_QTY, requireRole, uniqueViolation, warehouseLocation, type UserActor } from './core';
 import { bustTodayCache } from './views';
 import { variantInfo } from './info';
 
@@ -18,12 +18,25 @@ export async function startCount(actor: UserActor, input: { warehouseId?: unknow
   const warehouseId = cleanId(input.warehouseId, 'Агуулах');
   const note = cleanNote(input.note, { required: true });
   await warehouseLocation(db, warehouseId);
-  const open = await db.stockCount.findFirst({ where: { warehouseId, status: { in: ['OPEN', 'SUBMITTED'] } } });
-  if (open) throw conflict(`Энэ агуулахад дуусаагүй тооллого (№${open.id}) байна`, 'count_open');
-  const c = await db.stockCount.create({ data: { warehouseId, note, createdById: actor.id, createdByName: actor.name } });
-  bustTodayCache();
-  await writeAudit(actor, 'stock.count_started', 'StockCount', String(c.id), { warehouseId, note }, db, ['stock']);
-  return c;
+  const openErr = async () => {
+    const open = await db.stockCount.findFirst({ where: { warehouseId, status: { in: ['OPEN', 'SUBMITTED'] } } });
+    return conflict(`Энэ агуулахад дуусаагүй тооллого (№${open?.id ?? '?'}) явагдаж байна — түүнийг үргэлжлүүлнэ үү`, 'count_open');
+  };
+  if (await db.stockCount.findFirst({ where: { warehouseId, status: { in: ['OPEN', 'SUBMITTED'] } }, select: { id: true } })) throw await openErr();
+  // Аудит №5: нэг агуулахад нэг л идэвхтэй тооллого — database-ийн хэсэгчилсэн unique индекс (StockCount_one_active_per_warehouse)
+  // хоёр таблет зэрэг дарсан ч хоёр дахийг нь татгалзана (өмнө нь давхар үүсч залруулга 2 удаа хийгддэг байв)
+  try {
+    const c = await inTx(async (tx) => {
+      const c = await tx.stockCount.create({ data: { warehouseId, note, createdById: actor.id, createdByName: actor.name } });
+      await writeAudit(actor, 'stock.count_started', 'StockCount', String(c.id), { warehouseId, note }, tx, ['stock']);
+      return c;
+    });
+    bustTodayCache();
+    return c;
+  } catch (e) {
+    if (uniqueViolation(e)) throw await openErr();
+    throw e;
+  }
 }
 
 async function loadCount(id: number) {

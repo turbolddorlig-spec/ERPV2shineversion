@@ -192,6 +192,24 @@ describe('тооллого (#38)', () => {
     const moves = await db.stockMove.findMany({ where: { docType: 'count', docId: c.id }, orderBy: { id: 'asc' } });
     expect(moves.map((m) => [m.type, m.qty])).toEqual([['COUNT_PLUS', 3], ['COUNT_MINUS', 3]]);
   });
+  it('аудит №5: зэрэг 6 «Тооллого эхлүүлэх» — нэг л тооллого үүснэ, бусад нь «явагдаж байна»; залруулга нэг удаа', async () => {
+    await D.createReceipt(wh, { warehouseId: main.id, lines: [{ variantId: v1, qty: 10 }], idemKey: key() });
+    for (let round = 0; round < 4; round++) {
+      const rs = await Promise.allSettled(Array.from({ length: 6 }, () => K.startCount(wh, { warehouseId: main.id, note: 'Зэрэг эхлүүлсэн' })));
+      const ok = rs.filter((r) => r.status === 'fulfilled');
+      expect(ok).toHaveLength(1);
+      for (const r of rs) if (r.status === 'rejected') expect((r.reason as AppError).code).toBe('count_open');
+      expect(await db.stockCount.count({ where: { warehouseId: main.id, status: { in: ['OPEN', 'SUBMITTED'] } } })).toBe(1);
+      const c = (ok[0] as PromiseFulfilledResult<{ id: number }>).value;
+      if (round < 3) { await K.cancelCount(wh, c.id); continue; }
+      await K.setCountLine(wh, c.id, { variantId: v1, countedQty: 7 });
+      await K.submitCount(wh, c.id);
+      await K.decideCount(adm, c.id, { lineIds: 'all', action: 'approve' });
+    }
+    expect(await qty(main.id, v1)).toBe(7);
+    // Өөр агуулахад зэрэг тооллого болно
+    expect((await K.startCount(wh, { warehouseId: w2.id, note: 'Нөгөө агуулах' })).id).toBeGreaterThan(0);
+  });
   it('#124-Б: цуцлах ба батлах зэрэг — цуцлагдсан тооллого батлагдахгүй, үлдэгдэл хөдлөхгүй; илгээх үед мөр нэмэгдэхгүй', async () => {
     await D.createReceipt(wh, { warehouseId: main.id, lines: [{ variantId: v1, qty: 10 }], idemKey: key() });
     const c = await K.startCount(wh, { warehouseId: main.id, note: 'Шалгах тооллого' });
