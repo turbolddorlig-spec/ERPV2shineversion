@@ -1,5 +1,6 @@
 import { Prisma, type OrderStatus } from '@prisma/client';
 import { db } from '../../db';
+import { getDiscountTick } from '../../audit';
 import { badRequest, forbidden, notFound } from '../../errors';
 import { canEditOrders, canMarkPaid, canReviewDiscounts, canSuperviseOperators, canView } from '../../permissions';
 import { fullAddress, PROVINCES, UB_DISTRICTS } from '../../geo';
@@ -268,7 +269,7 @@ export async function discountReviewList(actor: UserActor, p: { unreviewed?: boo
   const page = Math.max(1, Math.floor(p.page ?? 1));
   const where: Prisma.AuditLogWhereInput = { entityType: 'Order', tags: { has: 'discount' } };
   const rows = await db.$queryRaw<{ id: bigint }[]>`
-    SELECT a.id FROM "AuditLog" a WHERE a."entityType" = 'Order' AND 'discount' = ANY(a.tags)
+    SELECT a.id FROM "AuditLog" a WHERE a.tags @> ARRAY['discount']::text[] AND a."entityType" = 'Order'
     ${p.unreviewed ? Prisma.sql`AND NOT EXISTS (SELECT 1 FROM "AuditReview" r WHERE r."auditLogId" = a.id)` : Prisma.empty}
     ORDER BY a.id DESC LIMIT 31 OFFSET ${(page - 1) * 30}`;
   const logs = await db.auditLog.findMany({ where: { ...where, id: { in: rows.map((r) => r.id) } }, orderBy: { id: 'desc' } });
@@ -280,11 +281,17 @@ export async function discountReviewList(actor: UserActor, p: { unreviewed?: boo
   };
 }
 
+/** Шалгаагүй хөнгөлөлтийн тоо — Супер админы хуудас бүрт (30 сек кэш). `tags @> ...` нь GIN индекс ашиглана (аудит №3; `= ANY` бүх захиалгын түүхийг уншдаг байсан). */
+let discCache: { at: number; tick: number; n: number } | null = null;
 export async function unreviewedDiscounts(): Promise<number> {
+  const tick = getDiscountTick();
+  if (discCache && discCache.tick === tick && Date.now() - discCache.at < 30_000) return discCache.n;
   const r = await db.$queryRaw<{ n: number }[]>`
-    SELECT count(*)::int AS n FROM "AuditLog" a WHERE a."entityType" = 'Order' AND 'discount' = ANY(a.tags)
+    SELECT count(*)::int AS n FROM "AuditLog" a WHERE a.tags @> ARRAY['discount']::text[] AND a."entityType" = 'Order'
     AND NOT EXISTS (SELECT 1 FROM "AuditReview" r WHERE r."auditLogId" = a.id)`;
-  return r[0]?.n ?? 0;
+  const n = r[0]?.n ?? 0;
+  discCache = { at: Date.now(), tick, n };
+  return n;
 }
 
 export async function reviewDiscounts(actor: UserActor, ids: unknown) {
@@ -292,7 +299,7 @@ export async function reviewDiscounts(actor: UserActor, ids: unknown) {
   let target: bigint[];
   if (ids === 'all') {
     target = (await db.$queryRaw<{ id: bigint }[]>`
-      SELECT a.id FROM "AuditLog" a WHERE a."entityType" = 'Order' AND 'discount' = ANY(a.tags)
+      SELECT a.id FROM "AuditLog" a WHERE a.tags @> ARRAY['discount']::text[] AND a."entityType" = 'Order'
       AND NOT EXISTS (SELECT 1 FROM "AuditReview" r WHERE r."auditLogId" = a.id) LIMIT 5000`).map((r) => r.id);
   } else if (Array.isArray(ids) && ids.length && ids.length <= 500) {
     target = ids.map((x) => { if (!/^\d+$/.test(String(x))) throw badRequest('Мөр буруу'); return BigInt(String(x)); });
@@ -300,5 +307,6 @@ export async function reviewDiscounts(actor: UserActor, ids: unknown) {
     if (ok !== target.length) throw badRequest('Мөр буруу');
   } else throw badRequest('Мөр сонгоно уу');
   const r = await db.auditReview.createMany({ data: target.map((id) => ({ auditLogId: id, reviewedById: actor.id, reviewedByName: actor.name })), skipDuplicates: true });
+  discCache = null;
   return { reviewed: r.count };
 }

@@ -93,7 +93,7 @@ export async function setConfig(actor: UserActor, b: Record<string, unknown>) {
     await tx.appSetting.upsert({ where: { key: KEY_CFG }, create: { key: KEY_CFG, value: json, updatedById: actor.id }, update: { value: json, updatedById: actor.id } });
     await writeAudit(actor, 'outflow.config', 'AppSetting', KEY_CFG, { before: cur, after: next } as unknown as Prisma.InputJsonValue, tx, ['money']);
   });
-  cfgCache = null; reorderCache = null;
+  cfgCache = null; bustReorder();
   return next;
 }
 
@@ -196,7 +196,7 @@ export interface BoostAlert {
   watchedUntil: Date | null; watchedBy: string | null; boostOnAt: Date | null; zones: number; dollar: number; ownerName: string | null;
 }
 let alertCache: { at: number; list: BoostAlert[] } | null = null;
-export function bustOutflowCache() { alertCache = null; reorderCache = null; shortCache = null; cfgCache = null; }
+export function bustOutflowCache() { alertCache = null; bustReorder(); shortCache = null; cfgCache = null; }
 
 /** Одоо бүүст асаалттай бараануудын анхааруулга (60 сек кэш) */
 export async function computeAlerts(fresh = false): Promise<BoostAlert[]> {
@@ -219,12 +219,16 @@ export async function computeAlerts(fresh = false): Promise<BoostAlert[]> {
   const aggMap = new Map(aggs.map((a) => [`${a.productId}|${a.day}`, a]));
   const watchMap = new Map<number, (typeof watches)[number]>(); for (const w of watches) if (!watchMap.has(w.productId)) watchMap.set(w.productId, w);
   // Өнөөдөр бүүст асаасан цагаас хойшх захиалга (амьд тоолол), пэйжээр
+  // since ≥ min(24 цагийн өмнө, өнөөдрийн эхлэл) үргэлж — тиймээс захиалгыг тэр хугацаагаар хязгаарлана
+  // (өмнө нь захиалгын бүх мөрийг (2 сая) уншдаг байсан — 0.7 сек, аудит №3). Үр дүн ижил.
+  const sinceLb = new Date(Math.min(now - 24 * HOUR, todayStart));
   const sinceRows = await db.$queryRaw<{ productId: number; since: Date; orders: number }[]>`
-    SELECT x."productId", x.since, count(DISTINCT o.id)::int AS orders
-    FROM (SELECT "productId", CASE WHEN "boostOnAt" > ${new Date(now - 24 * HOUR)} THEN "boostOnAt" ELSE GREATEST("boostOnAt", ${new Date(todayStart)}) END AS since
-          FROM "ProductMarketing" WHERE zones > 0 AND "boostOnAt" IS NOT NULL) x
-    LEFT JOIN "OrderLine" l ON l."productId" = x."productId"
-    LEFT JOIN "Order" o ON o.id = l."orderId" AND o."confirmedAt" >= x.since AND ${LIVE}
+    WITH x AS (SELECT "productId", CASE WHEN "boostOnAt" > ${new Date(now - 24 * HOUR)} THEN "boostOnAt" ELSE GREATEST("boostOnAt", ${new Date(todayStart)}) END AS since
+          FROM "ProductMarketing" WHERE zones > 0 AND "boostOnAt" IS NOT NULL),
+    c AS (SELECT l."productId", o.id, o."confirmedAt" FROM "Order" o JOIN "OrderLine" l ON l."orderId" = o.id
+          WHERE o."confirmedAt" >= ${sinceLb} AND ${LIVE} AND l."productId" IN (SELECT "productId" FROM x))
+    SELECT x."productId", x.since, count(DISTINCT c.id) FILTER (WHERE c."confirmedAt" >= x.since)::int AS orders
+    FROM x LEFT JOIN c ON c."productId" = x."productId"
     GROUP BY 1, 2`;
   const since = new Map(sinceRows.map((r) => [r.productId, r]));
   const list: BoostAlert[] = [];
@@ -665,11 +669,14 @@ export async function syncClaims() {
   const cfg = await getConfig();
   const active = await db.workClaim.findMany({ where: { status: 'ACTIVE' } });
   if (!active.length) return 0;
+  // Захиалгыг хамгийн эртний идэвхтэй ажлын эхлэлээр хязгаарлана (өмнө нь бүх мөрийг уншдаг байсан — аудит №3). Үр дүн ижил.
+  const claimLb = new Date(Math.min(...active.map((c) => c.claimedAt.getTime())));
   const prog = await db.$queryRaw<{ id: number; n: number }[]>`
-    SELECT c.id, count(DISTINCT o.id)::int AS n FROM "WorkClaim" c
-    LEFT JOIN "OrderLine" l ON l."productId" = c."productId"
-    LEFT JOIN "Order" o ON o.id = l."orderId" AND o."confirmedAt" >= c."claimedAt" AND ${LIVE}
-    WHERE c.status = 'ACTIVE' GROUP BY 1`;
+    WITH c AS (SELECT id, "productId", "claimedAt" FROM "WorkClaim" WHERE status = 'ACTIVE'),
+    x AS (SELECT l."productId", o.id, o."confirmedAt" FROM "Order" o JOIN "OrderLine" l ON l."orderId" = o.id
+          WHERE o."confirmedAt" >= ${claimLb} AND ${LIVE} AND l."productId" IN (SELECT "productId" FROM c))
+    SELECT c.id, count(DISTINCT x.id) FILTER (WHERE x."confirmedAt" >= c."claimedAt")::int AS n
+    FROM c LEFT JOIN x ON x."productId" = c."productId" GROUP BY 1`;
   const pm = new Map(prog.map((r) => [r.id, r.n]));
   let changed = 0;
   for (const c of active) {
@@ -969,6 +976,12 @@ export interface VariantCover {
 }
 export type ReorderScope = 'OWNER' | 'SUPPLIER';
 let reorderCache: { at: number; map: Map<number, ReorderInfo> } | null = null;
+/** Кэш хүчингүй болох бүрт нэмэгдэнэ — өмнө эхэлсэн тооцоо хуучин үр дүнгээ кэшлэхгүй */
+let reorderGen = 0;
+let reorderInflight: { gen: number; p: Promise<Map<number, ReorderInfo>> } | null = null;
+function bustReorder() { reorderCache = null; reorderGen++; }
+const REORDER_FRESH_MS = 60_000;
+const REORDER_STALE_MS = 10 * 60_000;
 /** Супер админы «Бараа татах»: тохиргоогоор нийлүүлэгчийн барааг хасна */
 async function ownerReorder(): Promise<Map<number, ReorderInfo>> {
   const [m, cfg] = await Promise.all([computeReorder(), getConfig()]);
@@ -976,9 +989,36 @@ async function ownerReorder(): Promise<Map<number, ReorderInfo>> {
   return new Map([...m].filter(([, x]) => x.shopId === null));
 }
 const r1 = (n: number) => Math.round(n * 10) / 10;
+function groupBy<T, K>(xs: T[], key: (x: T) => K): Map<K, T[]> {
+  const m = new Map<K, T[]>();
+  for (const x of xs) { const k = key(x); const a = m.get(k); if (a) a.push(x); else m.set(k, [x]); }
+  return m;
+}
 
+/**
+ * Аудит №3: тооцоо ар талд (арын ажил минут тутам) шинэчлэгдэнэ; хуудас нээхэд бэлэн кэшийг уншина.
+ * Кэш 1 минутаас хуучирсан (10 мин дотор) бол хуучнаа шууд буцааж, ар талд нэг л удаа шинэчилнэ (зэрэг хүсэлтүүд давхар бодохгүй).
+ */
 export async function computeReorder(fresh = false): Promise<Map<number, ReorderInfo>> {
-  if (!fresh && reorderCache && Date.now() - reorderCache.at < 60_000) return reorderCache.map;
+  const c = reorderCache;
+  if (!fresh && c) {
+    const age = Date.now() - c.at;
+    if (age < REORDER_FRESH_MS) return c.map;
+    if (age < REORDER_STALE_MS) { refreshReorder().catch((e) => console.error('[reorder]', (e as Error).message)); return c.map; }
+  }
+  return refreshReorder();
+}
+function refreshReorder(): Promise<Map<number, ReorderInfo>> {
+  if (reorderInflight && reorderInflight.gen === reorderGen) return reorderInflight.p;
+  const gen = reorderGen;
+  const p = computeReorderNow(gen).finally(() => { if (reorderInflight?.p === p) reorderInflight = null; });
+  reorderInflight = { gen, p };
+  return p;
+}
+/** Арын ажил: кэшийг дулаан байлгана */
+export async function warmReorder() { await refreshReorder(); }
+
+async function computeReorderNow(gen: number): Promise<Map<number, ReorderInfo>> {
   const cfg = await getConfig();
   const today = ubDay();
   const full = Array.from({ length: 7 }, (_, i) => addDays(today, -7 + i)); // хуучнаас шинэ рүү, өчигдөр хүртэл
@@ -989,8 +1029,9 @@ export async function computeReorder(fresh = false): Promise<Map<number, Reorder
     const rec = await db.$queryRaw<{ productId: number; variantId: number; at: Date }[]>`
       SELECT v."productId", m."variantId", max(m.at) AS at FROM "StockMove" m JOIN "ProductVariant" v ON v.id = m."variantId"
       WHERE m.type = 'RECEIPT' AND m.at > ${since} AND v."productId" IN (${Prisma.join([...new Set(orders.map((o) => o.productId))])}) GROUP BY 1, 2`;
+    const recBy = groupBy(rec, (r) => r.productId);
     const recAt = (o: (typeof orders)[number]) => {
-      const xs = rec.filter((r) => r.productId === o.productId && (o.variantId === null || r.variantId === o.variantId) && r.at > o.orderedAt);
+      const xs = (recBy.get(o.productId) ?? []).filter((r) => (o.variantId === null || r.variantId === o.variantId) && r.at > o.orderedAt);
       return xs.length ? new Date(Math.max(...xs.map((r) => r.at.getTime()))) : null;
     };
     const done = orders.map((o) => ({ o, at: recAt(o) })).filter((x) => x.at);
@@ -1006,8 +1047,15 @@ export async function computeReorder(fresh = false): Promise<Map<number, Reorder
       WHERE o."confirmedAt" >= ${ubDayStart(full[0]!)} AND o."confirmedAt" < ${ubDayStart(addDays(today, 1))} AND ${COUNTED}
       GROUP BY 1, 2, 3, 4) x
     WHERE x.pq < ${cfg.bulkMin} GROUP BY 1, 2, 3`;
-  const vnet = new Map<string, number>();
-  for (const r of vrows) vnet.set(`${r.variantId}|${ymdOf(r.day)}`, (vnet.get(`${r.variantId}|${ymdOf(r.day)}`) ?? 0) + r.qty);
+  // Хувилбар бүрийн өдрийн ширхэг: [7 бүтэн өдөр (хуучнаас), өнөөдөр] — массиваар (өмнө нь «id|өдөр» тэмдэгт түлхүүр, аудит №3)
+  const dayIdx = new Map<string, number>(full.map((d, i) => [d, i])); dayIdx.set(today, 7);
+  const vday = new Map<number, number[]>();
+  for (const r of vrows) {
+    const i = dayIdx.get(ymdOf(r.day)); if (i === undefined) continue;
+    let a = vday.get(r.variantId); if (!a) { a = [0, 0, 0, 0, 0, 0, 0, 0]; vday.set(r.variantId, a); }
+    a[i] = a[i]! + r.qty;
+  }
+  const ZERO = [0, 0, 0, 0, 0, 0, 0, 0];
   const ids = [...new Set([...vrows.filter((r) => r.qty > 0).map((r) => r.productId), ...orders.map((o) => o.productId)])];
   const [stock, variants] = await Promise.all([
     productStockTotals(ids),
@@ -1015,14 +1063,14 @@ export async function computeReorder(fresh = false): Promise<Map<number, Reorder
   ]);
   const sp = ids.length ? await db.supplierProduct.findMany({ where: { productId: { in: ids }, OR: [{ toDate: null }, { toDate: { gt: dateOnly(today) } }] }, select: { productId: true, shopId: true } }) : [];
   const shopOf = new Map(sp.map((x) => [x.productId, x.shopId]));
-  const paceOf = (get: (d: string) => number) => {
-    const v = full.map(get);
+  const paceOf = (a: number[]) => {
+    const v = a.slice(0, 7);
     const first = v.findIndex((n) => n > 0);
     const fullDays = first < 0 ? 0 : 7 - first;
     const avg7 = fullDays ? v.slice(first).reduce((s, n) => s + n, 0) / fullDays : 0;
     const k3 = Math.min(3, fullDays);
     const avg3 = k3 ? v.slice(-k3).reduce((s, n) => s + n, 0) / k3 : 0;
-    const td = get(today);
+    const td = a[7]!;
     return { pace: Math.max(avg7, avg3, td), avg7, avg3, td, fullDays };
   };
   type O = (typeof orders)[number];
@@ -1031,13 +1079,17 @@ export async function computeReorder(fresh = false): Promise<Map<number, Reorder
     : days !== null && days <= cfg.urgentDays ? 'URGENT' : days !== null && days <= cfg.leadDays ? 'ORDER' : 'OK';
   const RANK: Record<ReorderLevel, number> = { URGENT: 5, LATE: 4, ORDER: 3, ORDERED: 2, OK: 1 };
   const map = new Map<number, ReorderInfo>();
+  // Бараа бүрээр урьдчилан бүлэглэнэ (өмнө нь бараа бүрт бүх хувилбар / захиалгыг шүүдэг байсан — 7 мянган бараанд 3.7 сек, аудит №3)
+  const varBy = groupBy(variants, (v) => v.productId);
+  const ordBy = groupBy(orders, (o) => o.productId);
   for (const id of ids) {
-    const vs = variants.filter((v) => v.productId === id);
+    const vs = varBy.get(id) ?? [];
     const byV = stock.get(id)?.byVariant;
-    const mine = (scope: 'OWNER' | 'SUPPLIER') => orders.filter((o) => o.productId === id && (o.scope === 'SUPPLIER') === (scope === 'SUPPLIER'));
+    const pord = ordBy.get(id) ?? [];
+    const mine = (scope: 'OWNER' | 'SUPPLIER') => pord.filter((o) => (o.scope === 'SUPPLIER') === (scope === 'SUPPLIER'));
     const whole = (scope: 'OWNER' | 'SUPPLIER') => mine(scope).find((o) => o.variantId === null);
     const vcov: VariantCover[] = vs.map((v) => {
-      const p = paceOf((d) => vnet.get(`${v.id}|${d}`) ?? 0);
+      const p = paceOf(vday.get(v.id) ?? ZERO);
       const available = byV?.get(v.id)?.available ?? 0;
       const days = p.pace > 0 ? Math.max(0, Math.floor(available / p.pace)) : null;
       const vo = (scope: 'OWNER' | 'SUPPLIER') => mine(scope).find((o) => o.variantId === v.id) ?? whole(scope);
@@ -1045,7 +1097,7 @@ export async function computeReorder(fresh = false): Promise<Map<number, Reorder
         level: levelOf(vo('OWNER'), days), order: view(vo('OWNER')), supLevel: levelOf(vo('SUPPLIER'), days), supOrder: view(vo('SUPPLIER')) };
     }).filter((v) => v.days !== null || v.order || v.supOrder);
     // Бараа бүхэлдээ (нийлбэр) — тайлбарт
-    const tp = paceOf((d) => vs.reduce((s, v) => s + (vnet.get(`${v.id}|${d}`) ?? 0), 0));
+    const tp = paceOf(ZERO.map((_, i) => vs.reduce((s, v) => s + (vday.get(v.id) ?? ZERO)[i]!, 0)));
     const available = stock.get(id)?.available ?? 0;
     const tdays = tp.pace > 0 ? Math.max(0, Math.floor(available / tp.pace)) : null;
     // Үндсэн мөр = хамгийн яаралтай өнгө (#128): нэг өнгө дуусахад л сануулна
@@ -1063,7 +1115,7 @@ export async function computeReorder(fresh = false): Promise<Map<number, Reorder
       sup: { level: sw.level, order: sw.order, days: sw.days, worstLabel: sw.label },
     });
   }
-  reorderCache = { at: Date.now(), map };
+  if (gen === reorderGen) reorderCache = { at: Date.now(), map };
   return map;
 }
 
@@ -1108,7 +1160,7 @@ export async function createReorder(actor: UserActor, b: { productId?: unknown; 
     await writeAudit(actor, 'outflow.reorder', 'ReorderOrder', String(r.id), { productId, name: product.name, variant: label || null, qty, expectedDay, note, scope }, tx);
     return r;
   });
-  reorderCache = null;
+  bustReorder();
   return row;
 }
 
@@ -1127,7 +1179,7 @@ export async function cancelReorderOf(actor: UserActor, idIn: unknown, productId
     await tx.reorderOrder.update({ where: { id }, data: { cancelledAt: new Date() } });
     await writeAudit(actor, 'outflow.reorder-cancel', 'ReorderOrder', String(id), { productId: cur.productId, qty: cur.qty, expectedDay: cur.expectedDay }, tx);
   });
-  reorderCache = null;
+  bustReorder();
   return { ok: true };
 }
 

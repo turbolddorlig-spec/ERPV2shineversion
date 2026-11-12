@@ -24,7 +24,12 @@ export async function writeAudit(
   await tx.auditLog.create({
     data: { actorId: actor.id, actorName: actor.name, action, entityType, entityId, details, ip: actor.ip ?? null, tags },
   });
+  if (tags.includes('discount')) discountTick++;
 }
+
+/** Хөнгөлөлтийн түүх бичигдэх бүрт нэмэгдэнэ — «шалгаагүй хөнгөлөлт»-ийн кэшийг хүчингүй болгоно */
+let discountTick = 0;
+export const getDiscountTick = () => discountTick;
 
 export const AUDIT_LABEL: Record<string, string> = {
   'auth.login': 'Нэвтэрсэн',

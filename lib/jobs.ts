@@ -7,6 +7,7 @@ import { closeDayShortages } from './services/accounting/debts';
 import { autoGmailSync } from './services/accounting/gmail';
 import { rescanUnmatched } from './services/accounting/bank';
 import { expireExtraRequests } from './services/delivery/goods';
+import { warmReorder } from './services/outflow';
 
 /**
  * Арын ажил (минут тутам): Meta Purchase илгээх / дахин оролдох, хугацаа нь дууссан «Төлбөр хүлээж буй» захиалгыг цуцлах,
@@ -66,6 +67,8 @@ export async function runJobsOnce(opts: { owner?: string } = {}): Promise<JobRes
       // #124-9: падаанд ороогүй нэмэлт барааны хүсэлт өдөр дуусахад цуцлагдана
       const exp = await safe('extra', expireExtraRequests);
       if (exp) console.log(`[jobs] нэмэлт барааны хүсэлт автоматаар цуцлагдсан: ${exp}`);
+      // Аудит №3: «Бараа татах» тооцоог ар талд — хуудас нээхэд бэлэн байна
+      await safe('reorder', warmReorder);
       const hb = JSON.stringify({ at: new Date().toISOString(), failed });
       await db.$executeRaw`INSERT INTO "AppSetting" (key, value, "updatedAt") VALUES (${HEARTBEAT_KEY}, ${hb}::jsonb, now())
         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, "updatedAt" = now()`;

@@ -103,3 +103,19 @@ describe('шөнийн дутуу барааны өр — хоцорвол ал�
     expect(await DB.shortageSkipAlert(['SUPER_ADMIN'])).toBeNull();
   });
 });
+
+describe('«Бараа татах» тооцооны кэш (аудит №3)', () => {
+  it('зэрэг хүсэлтүүд нэг л тооцоо хийнэ; кэш хуучирвал хуучнаа шууд буцааж ар талд шинэчилнэ; өөрчлөлтийн дараа шинээр бодно', async () => {
+    const O = await import('@/lib/services/outflow');
+    O.bustOutflowCache();
+    const [a, b, c] = await Promise.all([O.computeReorder(), O.computeReorder(), O.computeReorder()]);
+    expect(b).toBe(a); expect(c).toBe(a);
+    expect(await O.computeReorder()).toBe(a); // 1 минутын дотор — кэш
+    O.bustOutflowCache();
+    const d = await O.computeReorder();
+    expect(d).not.toBe(a);
+    // арын ажил кэшийг шинэчилнэ
+    await J.runJobsOnce();
+    expect(await O.computeReorder()).not.toBe(d);
+  });
+});

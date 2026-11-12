@@ -90,13 +90,19 @@ export async function stockList(actor: UserActor, params: { q?: string; category
 export async function productStockTotals(productIds: number[]) {
   const m = new Map<number, { total: number; available: number; driver: number; byVariant: Map<number, { total: number; available: number; driver: number }> }>();
   if (!productIds.length) return m;
+  // Нэг удаа бүлэглэсэн нийлбэр (өмнө нь хувилбар бүрт 3 дэд асуулга — 56 мянган хувилбарт ~1 сек, аудит №3). Үр дүн ижил.
   const rows = await db.$queryRaw<{ productId: number; variantId: number; total: number; reserved: number; driver: number }[]>`
-    SELECT v."productId", v.id AS "variantId",
-      COALESCE((SELECT sum(b.qty) FROM "StockBalance" b JOIN "StockLocation" l ON l.id = b."locationId" AND l.kind = 'WAREHOUSE' WHERE b."variantId" = v.id), 0)::int AS total,
-      COALESCE((SELECT sum(r.qty) FROM "StockReservation" r WHERE r."variantId" = v.id), 0)::int AS reserved,
-      -- Жолоочийн гарт (падаанаар хүргэлтэд гарсан) — агуулахын нийт/боломжтойд ОРОХГҮЙ, тусад нь харагдана
-      COALESCE((SELECT sum(b.qty) FROM "StockBalance" b JOIN "StockLocation" l ON l.id = b."locationId" AND l.kind = 'DRIVER' WHERE b."variantId" = v.id), 0)::int AS driver
-    FROM "ProductVariant" v WHERE v."productId" IN (${Prisma.join(productIds)})`;
+    WITH v AS (SELECT id, "productId" FROM "ProductVariant" WHERE "productId" IN (${Prisma.join(productIds)})),
+    b AS (
+      SELECT b."variantId",
+        sum(b.qty) FILTER (WHERE l.kind = 'WAREHOUSE') AS total,
+        -- Жолоочийн гарт (падаанаар хүргэлтэд гарсан) — агуулахын нийт/боломжтойд ОРОХГҮЙ, тусад нь харагдана
+        sum(b.qty) FILTER (WHERE l.kind = 'DRIVER') AS driver
+      FROM "StockBalance" b JOIN "StockLocation" l ON l.id = b."locationId"
+      WHERE b."variantId" IN (SELECT id FROM v) AND l.kind IN ('WAREHOUSE', 'DRIVER') GROUP BY 1),
+    r AS (SELECT "variantId", sum(qty) AS q FROM "StockReservation" WHERE "variantId" IN (SELECT id FROM v) GROUP BY 1)
+    SELECT v."productId", v.id AS "variantId", COALESCE(b.total, 0)::int AS total, COALESCE(r.q, 0)::int AS reserved, COALESCE(b.driver, 0)::int AS driver
+    FROM v LEFT JOIN b ON b."variantId" = v.id LEFT JOIN r ON r."variantId" = v.id`;
   for (const r of rows) {
     const p = m.get(r.productId) ?? { total: 0, available: 0, driver: 0, byVariant: new Map() };
     p.total += r.total; p.available += r.total - r.reserved; p.driver += r.driver;
