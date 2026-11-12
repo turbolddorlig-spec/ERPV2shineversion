@@ -34,9 +34,10 @@ export function extractPhones(text: string): string[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) if (!out.includes(m[1]!)) out.push(m[1]!);
   // Зай / зураас / цэгтэй бичсэн (#126): «9988-7711», «9988 7711», «9988.7711», «99 88 77 11» — урт тооны хэсэг бол авахгүй
+  // (аудит Б9: «5000 1234 5678 9012», «99 88 77 11 22» шиг урт дугаарын дундаас тасдаж авахгүй — өмнө нь цифр+тусгаарлагч байвал)
   const sep = [
-    /(?<![\d*])([5-9]\d{3})[ \-.](\d{4})(?![ \-.]?\d)/g,
-    /(?<![\d*])([5-9]\d)[ \-.](\d{2})[ \-.](\d{2})[ \-.](\d{2})(?![ \-.]?\d)/g,
+    /(?<![\d*])(?<!\d[ \-.])([5-9]\d{3})[ \-.](\d{4})(?![ \-.]?\d)/g,
+    /(?<![\d*])(?<!\d[ \-.])([5-9]\d)[ \-.](\d{2})[ \-.](\d{2})[ \-.](\d{2})(?![ \-.]?\d)/g,
   ];
   for (const r of sep) while ((m = r.exec(text)) !== null) { const p = m.slice(1).join(''); if (!out.includes(p)) out.push(p); }
   return out;
@@ -156,6 +157,30 @@ export async function restatusOrder(orderId: number) {
   });
 }
 
+/**
+ * Аудит Б1 (эзний шийдвэр): цуцлагдсан захиалгад таарсан мөнгө «Таараагүй» руу буцна — тэр утсаар шинэ захиалга
+ * («Төлбөр хүлээж буй») байвал автоматаар түүнд таарна, үгүй бол нягтлан «Буцаасан» гэж тэмдэглэнэ / гараар тааруулна.
+ */
+export async function releaseCancelledOrderPayments(orderId: number): Promise<number> {
+  const released = await inTx(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(6::int4, 0::int4)`;
+    const o = await tx.order.findUnique({ where: { id: orderId }, select: { status: true, number: true } });
+    if (!o || o.status !== 'CANCELLED') return [];
+    const txs = await tx.bankTransaction.findMany({ where: { orderId, status: { in: LINKED }, isDuplicate: false, refunded: false } });
+    if (!txs.length) return [];
+    await tx.bankTransaction.updateMany({ where: { id: { in: txs.map((t) => t.id) } }, data: { orderId: null, status: 'UNMATCHED', matchedAt: null, matchedByName: null } });
+    await writeAudit(SYSTEM_ACTOR, 'bank.released_on_cancel', 'Order', String(orderId), { number: o.number, transactions: txs.map((t) => ({ id: t.id, amount: t.amount - t.excessRefunded, phone: t.phone })) }, tx, ['money', 'bank']);
+    return txs;
+  });
+  // Тэр утсаар хүлээж буй шинэ захиалга байвал шууд тааруулна
+  const phones = [...new Set(released.map((t) => t.phone).filter((x): x is string => !!x))];
+  if (phones.length) {
+    const pend = await db.order.findMany({ where: { status: 'PENDING_PAYMENT', OR: [{ phone: { in: phones } }, { extraPhone: { in: phones } }] }, select: { id: true }, orderBy: { id: 'asc' }, take: 20 });
+    for (const p of pend) await matchOrderWithTransactions(p.id).catch((e) => console.error('[bank] release rematch', (e as Error).message));
+  }
+  return released.length;
+}
+
 /** Утсаар «Төлбөр хүлээж буй» захиалга хайж тааруулах (хуучин matchTransaction) */
 async function autoMatch(tx: Tx, actor: Actor, txId: number, phones: string[]): Promise<'MATCHED' | 'PARTIAL' | null> {
   const t = await tx.bankTransaction.findUniqueOrThrow({ where: { id: txId } });
@@ -207,7 +232,8 @@ export async function importTransactions(actor: Actor, list: TxIn[], source: 'CS
         const description = String(raw.description ?? '').trim().slice(0, 500) || 'Хаан банк гүйлгээ';
         const amount = Math.round(Number(raw.amount));
         if (!Number.isFinite(amount) || amount <= 0) throw badRequest('Дүн буруу');
-        const phones = raw.phone ? [raw.phone] : extractPhones(description);
+        // Аудит А9: Gmail ч CSV шиг тайлбар дахь БҮХ утсыг шалгана (өмнө нь Gmail зөвхөн эхнийхийг)
+        const phones = [...new Set([...(raw.phone ? [raw.phone] : []), ...extractPhones(description)])];
         const phone = phones[0] ?? null;
         if (raw.emailMessageId && (await tx.bankTransaction.findUnique({ where: { emailMessageId: raw.emailMessageId } }))) { res.duplicates++; return; }
         const day = ubDay(raw.date);
@@ -287,9 +313,12 @@ export async function manualMatch(actor: UserActor, idIn: unknown, input: { orde
     if (t.refunded) throw conflict('Буцаасан гүйлгээг тааруулахгүй', 'refunded');
     // Таарсан бол таарсан (#127, эзний шийдвэр): захиалгатай холбогдсон гүйлгээг өөр захиалгад шилжүүлэхгүй
     if (t.orderId) throw conflict('Захиалгатай таарсан гүйлгээг өөрчлөхгүй', 'already_matched');
-    const o = await tx.order.findUnique({ where: { number }, select: { id: true, number: true, status: true, total: true, prepaid: true } });
-    if (!o) throw notFound('Захиалга олдсонгүй');
-    await lockOrder(tx, o.id);
+    const o0 = await tx.order.findUnique({ where: { number }, select: { id: true } });
+    if (!o0) throw notFound('Захиалга олдсонгүй');
+    await lockOrder(tx, o0.id);
+    const o = await tx.order.findUniqueOrThrow({ where: { id: o0.id }, select: { id: true, number: true, status: true, total: true, prepaid: true } });
+    // Аудит Б8 (эзний шийдвэр): зөвхөн «Төлбөр хүлээж буй» — «Шинэ», хүргэсэн, цуцлагдсанд тааруулахгүй (буцаах арга байхгүй тул)
+    if (o.status !== 'PENDING_PAYMENT') throw conflict(`№${o.number} «Төлбөр хүлээж буй» биш — зөвхөн төлбөр хүлээж буй захиалгад тааруулна`, 'not_pending');
     const prev = t.orderId;
     await tx.bankTransaction.update({ where: { id }, data: { orderId: o.id, isDuplicate: false, status: 'MATCHED', matchedAt: new Date(), matchedByName: actor.name } });
     if (prev && prev !== o.id) {
@@ -332,8 +361,18 @@ export async function refundExcess(actor: UserActor, idIn: unknown) {
     const o = await tx.order.findUniqueOrThrow({ where: { id: t.orderId }, select: { id: true, number: true, total: true, paidAmount: true, prepaid: true, phone: true } });
     const excess = (await paidFor(tx, o.id)) - o.total;
     if (excess <= 0) throw conflict('Илүү төлөлт алга', 'not_excess');
-    if (excess > t.amount - t.excessRefunded) throw conflict('Илүү дүн энэ гүйлгээнээс их — нягтлан шалгана уу', 'excess_split');
-    await tx.bankTransaction.update({ where: { id }, data: { excessRefunded: { increment: excess }, excessRefundedAt: new Date(), excessRefundedByName: actor.name } });
+    // Аудит Б7: илүү нь хэд хэдэн гүйлгээнд хуваагдсан бол сүүлийнхээс нь эхлэн хуваарилна (өмнө нь «excess_split» гэж зогсдог байв)
+    const linked = await tx.bankTransaction.findMany({ where: { orderId: o.id, status: { in: LINKED }, isDuplicate: false, refunded: false }, orderBy: [{ id: 'asc' }] });
+    const order = [t, ...linked.filter((x) => x.id !== t.id).reverse()];
+    let left = excess;
+    for (const x of order) {
+      if (left <= 0) break;
+      const can = Math.min(left, x.amount - x.excessRefunded);
+      if (can <= 0) continue;
+      await tx.bankTransaction.update({ where: { id: x.id }, data: { excessRefunded: { increment: can }, excessRefundedAt: new Date(), excessRefundedByName: actor.name } });
+      left -= can;
+    }
+    if (left > 0) throw conflict('Илүү дүн гүйлгээнүүдээс их — нягтлан шалгана уу', 'excess_split');
     if (o.prepaid && o.paidAmount > o.total) await tx.order.update({ where: { id: o.id }, data: { paidAmount: o.total } });
     await restatus(tx, o.id);
     await writeAudit(actor, 'bank.excess_refunded', 'BankTransaction', String(id), { order: o.number, phone: o.phone, amount: excess, txAmount: t.amount, total: o.total }, tx, ['money', 'bank']);
@@ -393,7 +432,7 @@ export async function listTransactions(actor: UserActor, f: BankFilter) {
     db.bankTransaction.findMany({ where: w, orderBy: [{ txDate: 'desc' }, { id: 'desc' }], skip: (page - 1) * 50, take: 50 }),
     db.bankTransaction.count({ where: w }),
   ]);
-  const orders = await db.order.findMany({ where: { id: { in: items.map((t) => t.orderId).filter((x): x is number => !!x) } }, select: { id: true, number: true, total: true, phone: true, status: true, prepaid: true } });
+  const orders = await db.order.findMany({ where: { id: { in: items.map((t) => t.orderId).filter((x): x is number => !!x) } }, select: { id: true, number: true, total: true, phone: true, status: true, prepaid: true, originalTotal: true } });
   const om = new Map(orders.map((o) => [o.id, o]));
   // «Илүү» гүйлгээний буцаах дүн (#129) = тэр захиалгын төлсөн − нийт дүн
   const exIds = [...new Set(items.filter((t) => t.status === 'EXCESS_AMOUNT' && t.orderId && !t.refunded).map((t) => t.orderId!))];
@@ -401,11 +440,46 @@ export async function listTransactions(actor: UserActor, f: BankFilter) {
     SELECT "orderId", sum(amount - "excessRefunded")::int AS paid FROM "BankTransaction"
     WHERE "orderId" IN (${Prisma.join(exIds)}) AND "isDuplicate" = false AND refunded = false AND status IN ('MATCHED','EXCESS_AMOUNT','PARTIAL_PAYMENT') GROUP BY 1` : [];
   const pm = new Map(paid.map((x) => [x.orderId, x.paid]));
+  // Аудит Б7: банкгүй (гараар «Мөнгө орсон» болгосон г.м.) илүү төлөлт — «Илүү» табд тайлбартай нь
+  const manualExcess = f.tab === 'EXCESS_AMOUNT' && page === 1 ? await db.$queryRaw<{ id: number; number: string; phone: string; total: number; paidAmount: number; status: string; originalTotal: number | null }[]>`
+    SELECT o.id, o.number, o.phone, o.total, o."paidAmount", o.status::text AS status, o."originalTotal" FROM "Order" o
+    WHERE o.prepaid AND o."paidAmount" > o.total AND o.status <> 'CANCELLED'
+      AND NOT EXISTS (SELECT 1 FROM "BankTransaction" t WHERE t."orderId" = o.id AND t.status = 'EXCESS_AMOUNT' AND NOT t.refunded AND NOT t."isDuplicate")
+    ORDER BY o.id DESC LIMIT 200` : [];
   return {
     page, total, pages: Math.max(1, Math.ceil(total / 50)), canEdit: canBankImport(actor.roles),
-    items: items.map((t) => ({ ...t, statusLabel: t.refunded ? BANK_STATUS_LABEL.REFUNDED : t.isDuplicate ? BANK_STATUS_LABEL.DUPLICATE : BANK_STATUS_LABEL[t.status] ?? t.status, order: t.orderId ? om.get(t.orderId) ?? null : null,
+    manualExcess: manualExcess.map((o) => ({ ...o, excess: o.paidAmount - o.total, why: excessWhy(o) })),
+    items: items.map((t) => ({ ...t, why: t.status === 'EXCESS_AMOUNT' && t.orderId ? excessWhy(om.get(t.orderId)) : null, statusLabel: t.refunded ? BANK_STATUS_LABEL.REFUNDED : t.isDuplicate ? BANK_STATUS_LABEL.DUPLICATE : BANK_STATUS_LABEL[t.status] ?? t.status, order: t.orderId ? om.get(t.orderId) ?? null : null,
       excess: t.status === 'EXCESS_AMOUNT' && t.orderId && !t.refunded ? Math.max(0, (pm.get(t.orderId) ?? 0) - (om.get(t.orderId)?.total ?? 0)) : 0 })),
   };
+}
+
+/** Илүү үүссэн шалтгааны тайлбар (Б7) */
+function excessWhy(o: { status: string; total: number; originalTotal: number | null } | undefined): string {
+  if (!o) return '';
+  if (o.status === 'DELIVERED' && o.originalTotal !== null && o.originalTotal > o.total) return `Хэсэгчлэн хүргэсэн: ${o.originalTotal.toLocaleString('en-US')}₮ → ${o.total.toLocaleString('en-US')}₮ — үлдсэнийг үйлчлүүлэгчид буцаана`;
+  return 'Төлсөн дүн захиалгын дүнгээс их (дүн буурсан эсвэл илүү шилжүүлсэн) — үйлчлүүлэгчид буцаана';
+}
+
+/** Банкгүй илүү төлөлт (гараар «Мөнгө орсон») — нягтлан буцааж өгсний дараа тэмдэглэнэ (Б7). Эцсийн. */
+export async function refundManualExcess(actor: UserActor, orderIdIn: unknown) {
+  assertEdit(actor);
+  const id = Number(orderIdIn);
+  if (!Number.isInteger(id) || id <= 0) throw notFound('Захиалга олдсонгүй');
+  const r = await inTx(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(6::int4, 0::int4)`;
+    if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
+    const o = await tx.order.findUniqueOrThrow({ where: { id }, select: { id: true, number: true, phone: true, total: true, paidAmount: true, prepaid: true, status: true } });
+    const excess = o.paidAmount - o.total;
+    if (!o.prepaid || excess <= 0 || o.status === 'CANCELLED') throw conflict('Илүү төлөлт алга', 'not_excess');
+    const bankEx = await tx.bankTransaction.count({ where: { orderId: id, status: 'EXCESS_AMOUNT', refunded: false, isDuplicate: false } });
+    if (bankEx) throw conflict('Банкны гүйлгээтэй илүү — гүйлгээн дээрх «Илүүг буцаасан»-аар', 'bank_excess');
+    await tx.order.update({ where: { id }, data: { paidAmount: o.total, version: { increment: 1 } } });
+    await writeAudit(actor, 'order.excess_refunded', 'Order', String(id), { number: o.number, phone: o.phone, amount: excess, total: o.total }, tx, ['money', 'bank', 'order']);
+    return { refunded: excess, order: o.number };
+  });
+  bustCounts();
+  return r;
 }
 
 export async function bankStats(actor: UserActor, f: { from?: string; to?: string }) {
@@ -421,7 +495,8 @@ export async function bankStats(actor: UserActor, f: { from?: string; to?: strin
   return { total: v(all), matched: v(matched), unmatched: v(unmatched), partial: v(partial), excess: v(excess), duplicate: v(dup), refunded: v(refunded) };
 }
 
-const csvCell = (v: unknown) => { const s = v === null || v === undefined ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+// Excel томьёо болж ажиллахаас сэргийлнэ (= + - @ эхэлсэн гүйлгээний утга) — аудит
+const csvCell = (v: unknown) => { let s = v === null || v === undefined ? '' : String(v); if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = `'${s}`; return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 
 export async function exportCsv(actor: UserActor, f: BankFilter) {
   assertView(actor);
@@ -453,7 +528,8 @@ export async function searchOrdersForMatch(actor: UserActor, qIn: unknown) {
   const q = String(qIn ?? '').replace(/\D/g, '').slice(0, 12);
   if (q.length < 4) return { items: [] };
   const items = await db.order.findMany({
-    where: { OR: [{ number: q }, { phone: q }, { extraPhone: q }] }, orderBy: { createdAt: 'desc' }, take: 20,
+    // Аудит Б8 (эзний шийдвэр): зөвхөн «Төлбөр хүлээж буй» захиалгад тааруулна
+    where: { status: 'PENDING_PAYMENT', OR: [{ number: q }, { phone: q }, { extraPhone: q }] }, orderBy: { createdAt: 'desc' }, take: 20,
     select: { id: true, number: true, phone: true, total: true, status: true, prepaid: true, createdAt: true },
   });
   const paid = await db.bankTransaction.groupBy({ by: ['orderId'], where: { orderId: { in: items.map((i) => i.id) }, status: { in: LINKED }, isDuplicate: false, refunded: false }, _sum: { amount: true } });

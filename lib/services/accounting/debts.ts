@@ -113,14 +113,19 @@ export async function dailyDebts(actor: UserActor, dateIn?: string) {
   assertAccount(actor);
   const date = dateIn && isYmd(dateIn) ? dateIn : ubDay();
   const from = ubDayStart(date); const to = ubDayStart(addDays(date, 1));
-  const [created, resolved] = await Promise.all([
-    db.companyDebt.findMany({ where: { createdAt: { gte: from, lt: to } }, orderBy: { createdAt: 'desc' }, take: 300 }),
-    db.companyDebt.findMany({ where: { resolvedAt: { gte: from, lt: to }, status: 'RESOLVED' }, orderBy: { resolvedAt: 'desc' }, take: 300 }),
+  const cw = { createdAt: { gte: from, lt: to } };
+  const rw = { resolvedAt: { gte: from, lt: to }, status: 'RESOLVED' as const };
+  // Аудит А6: жагсаалт 300 хүртэл, НИЙЛБЭР ба тоо бүх мөрөөр (өмнө нь 300-аас олон бол дутуу гардаг байв)
+  const [created, resolved, ca, ra] = await Promise.all([
+    db.companyDebt.findMany({ where: cw, orderBy: { createdAt: 'desc' }, take: 300 }),
+    db.companyDebt.findMany({ where: rw, orderBy: { resolvedAt: 'desc' }, take: 300 }),
+    db.companyDebt.aggregate({ where: cw, _sum: { amount: true }, _count: true }),
+    db.companyDebt.aggregate({ where: rw, _sum: { amount: true }, _count: true }),
   ]);
   return {
     date,
     created: created.map(serialize), resolved: resolved.map(serialize),
-    createdTotal: created.reduce((s, d) => s + d.amount, 0), resolvedTotal: resolved.reduce((s, d) => s + d.amount, 0),
+    createdTotal: ca._sum.amount ?? 0, resolvedTotal: ra._sum.amount ?? 0, createdCount: ca._count, resolvedCount: ra._count,
   };
 }
 

@@ -137,6 +137,7 @@ export async function assignCore(actor: UserActor, ids: number[], driver: { id: 
     await lockDelivery(tx);
     await lockOrders(tx, ids);
     const orders = await tx.order.findMany({ where: { id: { in: ids } }, orderBy: { id: 'asc' } });
+    const given = await givenHandovers(tx, orders);
     const today = ubDay(); const tomorrow = ubDay(new Date(), 1);
     const done: { id: number; number: string; date: string; movedNextDay: boolean }[] = [];
     const skipped: { id: number; number: string; reason: string }[] = [];
@@ -146,7 +147,9 @@ export async function assignCore(actor: UserActor, ids: number[], driver: { id: 
         : o.status === 'NEW' && d0 > tomorrow ? 'Он сар өдөртэй захиалга хуваарилах боломжгүй'
         : !['NEW', 'ASSIGNED'].includes(o.status) ? 'Хүргэлтэд гарсан / дууссан / цуцлагдсан'
         : o.status === 'ASSIGNED' && o.driverId === driver.id ? 'Аль хэдийн энэ жолоочид'
-        : opts.pickup && (o.status !== 'NEW' || o.driverId) ? 'Өөр жолоочид хуваарилагдсан' : null;
+        : opts.pickup && (o.status !== 'NEW' || o.driverId) ? 'Өөр жолоочид хуваарилагдсан'
+        // Аудит А5 (хуучин шиг): агуулахаас өгөгдсөн падаантай захиалгыг алгасаад бусдыг онооно
+        : o.handoverId && given.has(o.handoverId) ? `Падаан (${given.get(o.handoverId)}) агуулахаас өгөгдсөн` : null;
       if (reason) { skipped.push({ id: o.id, number: o.number, reason }); continue; }
       if (o.handoverId) await removeFromHandover(tx, o.id, `Өөр жолоочид (${driver.name}) шилжсэн`);
       const placed = await placeForDriver(tx, o.id, driver, d0 < today ? today : d0);
@@ -160,6 +163,13 @@ export async function assignCore(actor: UserActor, ids: number[], driver: { id: 
   });
   bustCounts(); kpiCache = null;
   return res;
+}
+
+/** Агуулахаас өгөгдсөн (өөрчлөх боломжгүй) падаанууд: id → дугаар */
+async function givenHandovers(tx: Tx, orders: { handoverId: number | null }[]) {
+  const hids = [...new Set(orders.map((o) => o.handoverId).filter((x): x is number => !!x))];
+  const hs = hids.length ? await tx.handover.findMany({ where: { id: { in: hids } }, select: { id: true, number: true, status: true } }) : [];
+  return new Map(hs.filter((h) => isGiven(h.status)).map((h) => [h.id, h.number]));
 }
 
 /** Огноог тогтоож, тэр өдрийн падаанд (өгөхөөс өмнө) нэмнэ; өгөгдсөн бол дараагийн өдөр (#65) */
@@ -187,9 +197,11 @@ export async function setDeliveryDate(actor: UserActor, input: { ids?: unknown; 
     await lockDelivery(tx);
     await lockOrders(tx, ids);
     const orders = await tx.order.findMany({ where: { id: { in: ids } }, orderBy: { id: 'asc' } });
+    const given = await givenHandovers(tx, orders);
     const done: number[] = []; const skipped: { id: number; number: string; reason: string }[] = [];
     for (const o of orders) {
       if (!['NEW', 'ASSIGNED'].includes(o.status)) { skipped.push({ id: o.id, number: o.number, reason: 'Хүргэлтэд гарсан / дууссан / цуцлагдсан' }); continue; }
+      if (o.handoverId && given.has(o.handoverId)) { skipped.push({ id: o.id, number: o.number, reason: `Падаан (${given.get(o.handoverId)}) агуулахаас өгөгдсөн` }); continue; }
       const from = ymdOf(o.deliveryDate);
       if (from === date) { done.push(o.id); continue; }
       if (o.status === 'ASSIGNED' && o.driverId) {

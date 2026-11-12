@@ -168,7 +168,13 @@ export async function deliverOrder(actor: UserActor, idIn: unknown, input: { tak
     return { order: u, duplicate: false };
   });
   bust();
+  // Аудит Б7: урьдчилж төлсөн захиалгыг хэсэгчлэн хүргэвэл банкны гүйлгээ «Илүү» болж «Банк импорт → Илүү»-д гарна
+  if (!r.duplicate && r.order.prepaid) await bankRestatus(r.order.id);
   return r;
+}
+
+async function bankRestatus(orderId: number) {
+  try { const { restatusOrder } = await import('../accounting/bank'); await restatusOrder(orderId); } catch (e) { console.error('[bank] restatus', (e as Error).message); }
 }
 
 /** «Цуцлах (буцаах)» хүргэсэн захиалгыг: бараа үйлчлүүлэгчээс жолоочид буцна (DELIVERY_BACK), дүн анхны хэмжээнд */
@@ -205,6 +211,7 @@ export async function undoDelivery(actor: UserActor, idIn: unknown, input: { not
     return { order: u, duplicate: false };
   });
   bust();
+  if (!r.duplicate && r.order.prepaid) await bankRestatus(r.order.id);
   return r;
 }
 

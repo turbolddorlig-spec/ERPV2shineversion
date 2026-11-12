@@ -34,7 +34,7 @@ export interface RulesText { key: string; title: string; lines: string[] }
 type Totals = Record<string, number> & { settled: { count: number; cash: number; bank: number; debt: number; total: number } };
 interface Board { date: string; canManagePay: boolean; rulesText: RulesText[]; kpi: Totals; filteredTotals: Totals; items: Day[]; payments: Payment[]; approvals: { driverId: string; approved: boolean; note: string | null }[] }
 interface DailyDebt { id: number; driverName: string; kindLabel: string; description: string; amount: number; createdAt: string; resolvedAt: string | null; resolvedNote: string | null }
-interface Daily { created: DailyDebt[]; resolved: DailyDebt[]; createdTotal: number; resolvedTotal: number }
+interface Daily { created: DailyDebt[]; resolved: DailyDebt[]; createdTotal: number; resolvedTotal: number; createdCount?: number; resolvedCount?: number }
 
 export const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа гарлаа');
 const ubToday = (add = 0) => new Date(Date.now() + 8 * 3600_000 + add * 86_400_000).toISOString().slice(0, 10);
@@ -167,8 +167,8 @@ export function AccountingClient() {
                 <div className="mt-1 text-[12.5px] text-muted">Урьдчилгаа {money(advTotal)} · Нэмэлт бараа {money(extraTotal)}</div>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <DebtCard title="Өнөөдөр өр тавьсан" tone="bad" total={daily?.createdTotal ?? 0} list={daily?.created ?? []} />
-                <DebtCard title="Өнөөдөр өр төлсөн" tone="ok" total={daily?.resolvedTotal ?? 0} list={daily?.resolved ?? []} resolved />
+                <DebtCard title="Өнөөдөр өр тавьсан" tone="bad" total={daily?.createdTotal ?? 0} count={daily?.createdCount} list={daily?.created ?? []} />
+                <DebtCard title="Өнөөдөр өр төлсөн" tone="ok" total={daily?.resolvedTotal ?? 0} count={daily?.resolvedCount} list={daily?.resolved ?? []} resolved />
               </div>
             </div>
           ) : null}
@@ -233,13 +233,13 @@ export function Row({ l, v, strong, tone }: { l: string; v: string | number; str
   );
 }
 
-function DebtCard({ title, tone, total, list, resolved }: { title: string; tone: 'bad' | 'ok'; total: number; list: DailyDebt[]; resolved?: boolean }) {
+function DebtCard({ title, tone, total, list, resolved, count }: { title: string; tone: 'bad' | 'ok'; total: number; list: DailyDebt[]; resolved?: boolean; count?: number }) {
   const [more, setMore] = useState(false);
   return (
     <div className="min-w-0 rounded-[14px] border border-line p-3">
       <div className="text-[12px] font-bold text-subtle">{title}</div>
       <div className={clsx('text-[18px] font-extrabold', tone === 'bad' ? 'text-bad-ink' : 'text-ok-ink')}>{money(total)}</div>
-      <div className="text-[12px] text-muted">{list.length} бичлэг</div>
+      <div className="text-[12px] text-muted">{count ?? list.length} бичлэг{count && count > list.length ? ` (сүүлийн ${list.length}-г харуулав)` : ''}</div>
       {list.length ? <button onClick={() => setMore(!more)} className="mt-1 text-[12px] font-semibold text-accent-ink">{more ? 'Хураах' : 'Харах'}</button> : null}
       {more ? (
         <ul className="mt-1 max-h-[180px] space-y-1 overflow-y-auto text-[12px]">

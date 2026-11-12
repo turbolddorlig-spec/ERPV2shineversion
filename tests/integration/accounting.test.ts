@@ -463,6 +463,32 @@ describe('урьдчилгаа, нэмэлт барааны тооцоо', () =>
 });
 
 describe('банкны импорт (хуучнаар нь)', () => {
+  it('аудит Б1: хэсэгчлэн төлсөн захиалгыг цуцлахад мөнгө «Таараагүй» руу буцаж, тэр утсаар шинэ захиалгад автоматаар таарна', async () => {
+    const o = (await O.createOrder(op, ub({ prepaidWait: true }))).order;
+    await B.importCsv(acc, { text: `Огноо,Утга,Дүн\n${today},${o.phone} урьдчилгаа,10000` });
+    const t0 = await db.bankTransaction.findFirstOrThrow({ where: { phone: o.phone } });
+    expect([t0.orderId, t0.status]).toEqual([o.id, 'PARTIAL_PAYMENT']);
+    await O.cancelOrder(op, o.id, { reason: 'CUSTOMER_CANCELLED', note: 'Бараагаа солино' });
+    const t1 = await db.bankTransaction.findUniqueOrThrow({ where: { id: t0.id } });
+    expect([t1.orderId, t1.status]).toEqual([null, 'UNMATCHED']);
+    expect(await db.auditLog.count({ where: { action: 'bank.released_on_cancel' } })).toBe(1);
+    // тэр утсаар шинэ захиалга → мөнгө автоматаар шинэд
+    const n = (await O.createOrder(op, ub({ phone: o.phone, prepaidWait: true, idemKey: key() }))).order;
+    const t2 = await db.bankTransaction.findUniqueOrThrow({ where: { id: t0.id } });
+    expect([t2.orderId, t2.status]).toEqual([n.id, 'PARTIAL_PAYMENT']);
+    // нөгөө дараалал: шинийг эхлээд үүсгэж, хуучныг дараа нь цуцалбал ч таарна
+    const o3 = (await O.createOrder(op, ub({ prepaidWait: true }))).order;
+    await B.importCsv(acc, { text: `Огноо,Утга,Дүн\n${today},${o3.phone} төлбөр,7000` });
+    await O.cancelOrder(op, n.id, { reason: 'CUSTOMER_CANCELLED', note: 'Дахин солино' });
+    void o3;
+    const n2 = (await O.createOrder(op, ub({ phone: o.phone, prepaidWait: true, idemKey: key() }))).order;
+    expect((await db.bankTransaction.findUniqueOrThrow({ where: { id: t0.id } })).orderId).toBe(n2.id);
+    // таарсан мөнгөгүй захиалгыг цуцлахад юу ч хийхгүй; «Таараагүй» гүйлгээг «Буцаасан» болгож болно
+    await O.cancelOrder(op, n2.id, { reason: 'CUSTOMER_CANCELLED', note: 'Болилоо' });
+    await B.setRefunded(acc, t0.id, { refunded: true });
+    expect((await db.bankTransaction.findUniqueOrThrow({ where: { id: t0.id } })).refunded).toBe(true);
+  });
+
   it('задлагч: Хаан банкны SMS, утас, CSV (зарлага алгасна)', () => {
     const p = B.parseKhanMessage('Khan Bank: 2026/11/11 14:30 5102xxxx dansand 35,000.00 MNT orlogo orson. Guilgeenii utga: 99112233 Bat. Uldegdel: 1,000,000.00 MNT');
     expect([p?.amount, p?.phone, p?.income, p?.description]).toEqual([35000, '99112233', true, '99112233 Bat']);
@@ -483,6 +509,10 @@ describe('банкны импорт (хуучнаар нь)', () => {
     expect(B.parseKhanMessage('Таны захиалга 25,000 MNT, хямдрал 99112233')).toBe(null);
     expect(B.parseKhanMessage('Khan Bank: шинэ үйлчилгээ 99112233')).toBe(null);
     expect(B.extractPhones('5***2327 1,600,559.00 55112233 66112233 77112233')).toEqual(['55112233', '66112233', '77112233']);
+    // Аудит Б9: урт дансны дугаарын дундаас тасдаж «утас» гэж авахгүй
+    expect(B.extractPhones('dans 5000 1234 5678 9012 tulbur')).toEqual([]);
+    expect(B.extractPhones('99 88 77 11 22')).toEqual([]);
+    expect(B.extractPhones('Utga: 9988 7711 ba 8800-1122')).toEqual(['99887711', '88001122']);
     expect([c.debits, c.skipped >= 1]).toEqual([1, true]);
   });
 
@@ -504,6 +534,12 @@ describe('банкны импорт (хуучнаар нь)', () => {
     expect([st.total.count, st.matched.count, st.duplicate.count]).toEqual([3, 2, 1]);
     expect((await B.listTransactions(op, { tab: 'DUPLICATE' })).items).toHaveLength(1);
     expect((await B.exportCsv(op, {})).split('\n')).toHaveLength(4);
+    // Аудит А9: Gmail — тайлбарт 2 утас; захиалга 2 дахь утсанд → таарна (өмнө нь зөвхөн эхнийхийг шалгадаг байв)
+    const o2 = (await O.createOrder(op, ub({ prepaidWait: true }))).order;
+    const g = B.parseKhanMessage(`Khan Bank:Tany 5***2327 dansand ORLOGO:${o2.total.toLocaleString('en-US')}.00MNT orj ULDEGDEL:1,000.00MNT bolloo.Utga:88001199 ${o2.phone}`)!;
+    const rg = await B.importTransactions({ id: null, name: 'Gmail' }, [{ ...g, emailMessageId: 'gm-a9' }], 'GMAIL');
+    expect(rg.matched).toBe(1);
+    expect((await db.order.findUniqueOrThrow({ where: { id: o2.id } })).status).toBe('NEW');
   });
 
   it('гүйлгээ түрүүлж орсон бол шинэ «Төлбөр хүлээж буй» захиалга автоматаар таарна; гараар тааруулах; буцаасан; дүн өөрчлөгдсөн', async () => {
@@ -514,6 +550,10 @@ describe('банкны импорт (хуучнаар нь)', () => {
     const other = (await O.createOrder(op, ub({ prepaidWait: true, lines: [{ variantId: v1, qty: 1 }] }))).order;
     const free = await db.bankTransaction.findFirstOrThrow({ where: { amount: 7000 } });
     await err(B.manualMatch(op, free.id, { orderNumber: other.number }), 403);
+    // Аудит Б8: «Шинэ» (төлөгдсөн) захиалгад тааруулахгүй; хайлтад зөвхөн «Төлбөр хүлээж буй»
+    await err(B.manualMatch(acc, free.id, { orderNumber: o.number }), 409, 'not_pending');
+    expect((await B.searchOrdersForMatch(acc, phone)).items).toHaveLength(0);
+    expect((await B.searchOrdersForMatch(acc, other.number)).items.map((x) => x.number)).toEqual([other.number]);
     const m = await B.manualMatch(acc, free.id, { orderNumber: other.number });
     expect([m.paid, m.total, m.paidMarked]).toEqual([7000, 10000, false]);
     const pc = await B.priceChanges(acc, {});

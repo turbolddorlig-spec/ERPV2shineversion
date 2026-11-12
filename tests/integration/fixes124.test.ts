@@ -91,6 +91,40 @@ describe('#124-1 урьдчилж төлсөн захиалгыг засах', (
   });
 });
 
+describe('аудит Б7: илүү төлөлт бүх тохиолдолд «Банк импорт → Илүү»-д, буцаахад тэмдэг арилна', () => {
+  it('гараар «Мөнгө орсон» → дүн буурсан: банкгүй илүү жагсаалтад; «Илүүг буцаасан» → тэмдэг арилна', async () => {
+    const { order } = await O.createOrder(op, ub({ prepaidWait: true }));
+    await O.markPaid(lead, order.id);
+    const o = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    await O.updateOrder(op, order.id, { lines: [{ variantId: v1, qty: 1 }], version: o.version });
+    const l = await B.listTransactions(acc, { tab: 'EXCESS_AMOUNT' });
+    expect(l.manualExcess.map((x) => [x.number, x.excess])).toEqual([[order.number, 15000]]);
+    expect(l.manualExcess[0]!.why).toContain('буцаана');
+    await err(B.refundManualExcess(op, order.id), 403);
+    expect((await B.refundManualExcess(acc, order.id)).refunded).toBe(15000);
+    expect((await db.order.findUniqueOrThrow({ where: { id: order.id } })).paidAmount).toBe(15000);
+    expect((await Q.listOrders(sa, { overpaid: true })).items).toHaveLength(0);
+    expect((await B.listTransactions(acc, { tab: 'EXCESS_AMOUNT' })).manualExcess).toHaveLength(0);
+    await err(B.refundManualExcess(acc, order.id), 409, 'not_excess');
+  });
+  it('илүү 2 гүйлгээнд хуваагдсан ч буцаана (өмнө нь «excess_split»)', async () => {
+    const { order } = await O.createOrder(op, ub({ province: 'Дархан-Уул', district: 'Дархан', khoroo: null, lines: [{ variantId: v1, qty: 4 }] }));
+    await B.importTransactions(acc, [{ date: new Date(), description: '99112233 1', amount: 40000 }], 'CSV');
+    await B.importTransactions(acc, [{ date: new Date(), description: '99112233 2', amount: order.total - 40000 }], 'CSV');
+    let o = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    expect(o.status).toBe('NEW');
+    await O.updateOrder(op, order.id, { lines: [{ variantId: v1, qty: 1 }], version: o.version });
+    o = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    const excess = order.total - o.total;
+    expect(excess).toBeGreaterThan(order.total - 40000);
+    const t = (await db.bankTransaction.findMany({ where: { orderId: order.id }, orderBy: { id: 'desc' } }))[0]!;
+    expect((await B.refundExcess(acc, t.id)).refunded).toBe(excess);
+    const txs = await db.bankTransaction.findMany({ where: { orderId: order.id } });
+    expect(txs.reduce((s2, x) => s2 + x.excessRefunded, 0)).toBe(excess);
+    expect(txs.every((x) => x.status === 'MATCHED')).toBe(true);
+  });
+});
+
 describe('#124-3 хүргэлтийн төлбөр үүссэн үеийнхээрээ', () => {
   it('тохиргоо өөрчлөгдсөн ч хаяг засахад хуучин төлбөр; бүс солигдвол шинэ бүсийн төлбөр', async () => {
     await A.setOrderSettings(sa, { feeUB: 5000, feeRural: 8000 });

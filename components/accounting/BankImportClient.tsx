@@ -13,8 +13,9 @@ import { GmailSettings } from './GmailSettings';
  * Банкны импорт (Модуль 6, хуучнаар нь, #83): Хаан банкны CSV / Gmail → утас + дүнгээр «Төлбөр хүлээж буй» захиалга «Мөнгө орсон».
  * Статистик, табууд, хайлт, «Гараар тааруулах», «Буцаасан», «Дүн өөрчлөгдсөн», CSV экспорт.
  */
-interface Tx { id: number; txDate: string; description: string; amount: number; phone: string | null; status: string; statusLabel: string; isDuplicate: boolean; refunded: boolean; excess?: number; excessRefunded: number; excessRefundedByName: string | null; source: string; matchedByName: string | null; importedByName: string; order: { id: number; number: string; total: number; status: string; prepaid: boolean } | null }
-interface ListResp { page: number; total: number; pages: number; canEdit: boolean; items: Tx[] }
+interface ManualEx { id: number; number: string; phone: string; total: number; paidAmount: number; excess: number; why: string }
+interface Tx { why?: string | null; id: number; txDate: string; description: string; amount: number; phone: string | null; status: string; statusLabel: string; isDuplicate: boolean; refunded: boolean; excess?: number; excessRefunded: number; excessRefundedByName: string | null; source: string; matchedByName: string | null; importedByName: string; order: { id: number; number: string; total: number; status: string; prepaid: boolean } | null }
+interface ListResp { page: number; total: number; pages: number; canEdit: boolean; items: Tx[]; manualExcess?: ManualEx[] }
 type Agg = { count: number; amount: number };
 interface Stats { total: Agg; matched: Agg; unmatched: Agg; partial: Agg; excess: Agg; duplicate: Agg; refunded: Agg }
 interface Gmail { configured: boolean; canEdit: boolean; settings: { email: string; sender: string; autoSync: boolean; minutes: number; days: number; lastSyncAt: string | null; lastResult: string | null; lastOk: boolean | null } }
@@ -71,6 +72,10 @@ export function BankImportClient() {
     if (!t.excess || !confirm(`№${t.order?.number} захиалгын илүү төлсөн ${t.excess.toLocaleString('en-US')}₮-ийг үйлчлүүлэгчид буцааж өгсөн үү?\n\nАнхаар: дараа нь болиулах боломжгүй.`)) return;
     try { await api(`/api/bank/${t.id}/refund-excess`, { method: 'POST', json: {} }); await load(); } catch (e) { setErr(msg(e)); }
   };
+  const refundManual = async (o: ManualEx) => {
+    if (!confirm(`№${o.number} захиалгын илүү төлсөн ${o.excess.toLocaleString('en-US')}₮-ийг үйлчлүүлэгчид буцааж өгсөн үү?\n\nАнхаар: дараа нь болиулах боломжгүй.`)) return;
+    try { await api(`/api/bank/${o.id}/order-refund-excess`, { method: 'POST', json: {} }); await load(); } catch (e) { setErr(msg(e)); }
+  };
   const refund = async (t: Tx) => {
     if (!confirm(`${t.amount.toLocaleString('en-US')}₮-ийн гүйлгээг «Буцаасан» гэж тэмдэглэх үү?\n\nАнхаар: дараа нь болиулах, захиалгад тааруулах боломжгүй.`)) return;
     try { await api(`/api/bank/${t.id}/refund`, { method: 'POST', json: { refunded: true } }); await load(); } catch (e) { setErr(msg(e)); }
@@ -119,6 +124,20 @@ export function BankImportClient() {
           {changes && !changes.items.length ? <p className="px-4 py-10 text-center text-muted">Дүн зөрсөн захиалга алга</p> : null}
         </div>
       ) : (
+        <>
+        {tab === 'EXCESS_AMOUNT' && data?.manualExcess?.length ? (
+          <div className="mb-3 rounded-[16px] border border-info/40 bg-info-soft p-3 text-[13px]" data-manual-excess>
+            <div className="mb-1 font-bold">Банкны гүйлгээгүй илүү төлөлт ({data.manualExcess.length}) — гараар «Мөнгө орсон» болгосон, дараа нь дүн буурсан</div>
+            <ul className="divide-y divide-line/60">
+              {data.manualExcess.map((o) => (
+                <li key={o.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  <span className="min-w-0 flex-1 [overflow-wrap:anywhere]"><b>№{o.number}</b> · {o.phone} · төлсөн {money(o.paidAmount)} / дүн {money(o.total)}<span className="block text-[12px] text-muted">{o.why}</span></span>
+                  {canEdit ? <Button size="sm" variant="primary" onClick={() => void refundManual(o)}>Илүүг буцаасан ({o.excess.toLocaleString('en-US')}₮)</Button> : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         <div className="overflow-hidden rounded-[16px] border border-line bg-surface shadow-card">
           <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-[13px]">
             <thead className="bg-surface2 text-[12px] text-muted"><tr><th className="px-3 py-2 text-left">Огноо</th><th className="px-3 py-2 text-left">Гүйлгээний утга</th><th className="px-3 py-2 text-right">Дүн</th><th className="px-3 py-2 text-left">Утас</th><th className="px-3 py-2 text-left">Төлөв</th><th className="px-3 py-2 text-left">Захиалга</th><th className="px-3 py-2" /></tr></thead>
@@ -129,7 +148,7 @@ export function BankImportClient() {
                 <td className="px-3 py-2 text-right font-bold whitespace-nowrap">{money(t.amount)}</td>
                 <td className="px-3 py-2">{t.phone ?? '—'}</td>
                 <td className="px-3 py-2"><Badge tone={t.refunded ? 'accent' : TONE[t.isDuplicate ? 'DUPLICATE' : t.status] ?? 'neutral'}>{t.statusLabel}</Badge>{t.matchedByName ? <span className="block text-[11px] text-subtle">{t.matchedByName}</span> : null}</td>
-                <td className="px-3 py-2">{t.order ? <><b>{t.order.number}</b><span className="block text-[11.5px] text-subtle">{money(t.order.total)} · {ST_L[t.order.status] ?? t.order.status}</span></> : '—'}</td>
+                <td className="max-w-[260px] px-3 py-2">{t.order ? <><b>{t.order.number}</b><span className="block text-[11.5px] text-subtle">{money(t.order.total)} · {ST_L[t.order.status] ?? t.order.status}</span>{t.excess && t.why ? <span className="block text-[11.5px] text-info [overflow-wrap:anywhere]">{t.why}</span> : null}</> : '—'}</td>
                 <td className="px-3 py-2 text-right">{data.canEdit ? <div className="flex justify-end gap-1.5">{t.refunded ? <span className="text-[12px] text-subtle">Буцаасан — өөрчлөхгүй</span>
                   : t.order ? (t.excess ? <Button size="sm" variant="primary" data-refund-excess onClick={() => void refundExcess(t)}>Илүүг буцаасан ({t.excess.toLocaleString('en-US')}₮)</Button>
                     : <span className="text-[12px] text-subtle">{t.excessRefunded ? `Илүү ${t.excessRefunded.toLocaleString('en-US')}₮ буцаасан${t.excessRefundedByName ? ` · ${t.excessRefundedByName}` : ''}` : 'Таарсан — өөрчлөхгүй'}</span>)
@@ -142,6 +161,7 @@ export function BankImportClient() {
               <div className="flex items-center gap-2"><Button size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>‹</Button><span>{page} / {data.pages}</span><Button size="sm" disabled={page >= data.pages} onClick={() => setPage(page + 1)}>›</Button></div></div>
           ) : null}
         </div>
+        </>
       )}
       {match ? <MatchDialog t={match} onClose={() => setMatch(null)} onDone={async (m) => { setMatch(null); setInfo(m); await load(); }} /> : null}
       {gset ? <GmailSettingsModal onClose={() => setGset(false)} onDone={() => void load()} /> : null}
@@ -154,6 +174,7 @@ function MatchDialog({ t, onClose, onDone }: { t: Tx; onClose: () => void; onDon
   const [items, setItems] = useState<{ id: number; number: string; phone: string; total: number; status: string; paid: number; createdAt: string }[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pick, setPick] = useState<(typeof items)[number] | null>(null);
   useEffect(() => {
     const h = setTimeout(async () => { try { setItems((await api<{ items: typeof items }>(`/api/bank/orders?q=${encodeURIComponent(q)}`)).items); } catch (e) { setErr(msg(e)); } }, 250);
     return () => clearTimeout(h);
@@ -171,11 +192,23 @@ function MatchDialog({ t, onClose, onDone }: { t: Tx; onClose: () => void; onDon
         {items.map((o) => (
           <div key={o.id} className="flex items-center justify-between gap-2 px-3 py-2 text-[13px]">
             <span className="min-w-0"><b>{o.number}</b> · {o.phone}<span className="block text-[12px] text-subtle">{money(o.total)} · {ST_L[o.status] ?? o.status}{o.paid ? ` · төлсөн ${money(o.paid)}` : ''} · {ubDateTime(o.createdAt)}</span></span>
-            <Button size="sm" variant="primary" loading={busy} onClick={() => void go(o.number)}>Холбох</Button>
+            <Button size="sm" variant="primary" loading={busy} onClick={() => setPick(o)}>Холбох</Button>
           </div>
         ))}
-        {!items.length ? <p className="px-3 py-4 text-center text-[13px] text-muted">Захиалга олдсонгүй</p> : null}
+        {!items.length ? <p className="px-3 py-4 text-center text-[13px] text-muted">«Төлбөр хүлээж буй» захиалга олдсонгүй</p> : null}
       </div>
+      {pick ? (
+        // Аудит Б8: тааруулахаас өмнө гүйлгээ ↔ захиалгыг зэрэгцүүлж батлуулна (таарсан бол буцаахгүй — #127)
+        <div role="dialog" aria-label="Тааруулахыг батлах" className="mt-3 rounded-[12px] border border-warn/50 bg-warn-soft p-3 text-[13px]">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="min-w-0"><div className="text-[11.5px] font-bold text-subtle">ГҮЙЛГЭЭ</div><b>{money(t.amount)}</b><span className="block [overflow-wrap:anywhere]">{t.description}</span>{t.phone ? <span className="block text-muted">Утас: {t.phone}</span> : null}</div>
+            <div className="min-w-0"><div className="text-[11.5px] font-bold text-subtle">ЗАХИАЛГА</div><b>№{pick.number}</b><span className="block">Утас: {pick.phone}</span><span className="block">Дүн {money(pick.total)}{pick.paid ? ` · өмнө төлсөн ${money(pick.paid)}` : ''}</span></div>
+          </div>
+          {t.phone && t.phone !== pick.phone ? <p className="mt-2 font-semibold text-bad-ink">Анхаар: гүйлгээний утас захиалгын утастай таарахгүй байна.</p> : null}
+          <p className="mt-2 text-muted">Тааруулсны дараа өөрчлөх боломжгүй.</p>
+          <div className="mt-2 flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => setPick(null)}>Болих</Button><Button size="sm" variant="primary" loading={busy} onClick={() => void go(pick.number)}>Тийм, тааруулах</Button></div>
+        </div>
+      ) : null}
     </Modal>
   );
 }

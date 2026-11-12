@@ -216,6 +216,14 @@ describe('падаан', () => {
     await err(L.setDeliveryDate(lead, { ids: [later.id], date: U.ubDay(new Date(), -1) }), 400, 'bad_date');
     const s = await L.setDeliveryDate(lead, { ids: [later.id], date: today });
     expect(s.skipped).toHaveLength(1); // тэр өдрийн падаан өгөгдсөн
+    // Аудит А5 (хуучин шиг): өгөгдсөн падаантай захиалга бөөнөөр оноохыг бүхэлд нь зогсоохгүй — алгасаад бусдыг онооно
+    const drv2 = await actor(['DRIVER']);
+    const fresh = (await O.createOrder(op, ub({ deliveryDate: today, lines: [{ variantId: v1, qty: 1 }] }))).order;
+    const r2 = await L.assignOrders(lead, { ids: [ids[0]!, fresh.id], driverId: drv2.id });
+    expect(r2.assigned.map((x) => x.id)).toEqual([fresh.id]);
+    expect(r2.skipped[0]).toMatchObject({ id: ids[0], reason: expect.stringContaining('өгөгдсөн') });
+    const s2 = await L.setDeliveryDate(lead, { ids: [ids[0]!, fresh.id], date: tomorrow });
+    expect([s2.updated, s2.skipped.length]).toEqual([1, 1]);
   });
 
   it('өгөхөөс өмнө цуцалбал падаанаас хасагдаж (улаанаар), нөөц суллагдана; өөр жолоочид шилжүүлбэл ч мөн', async () => {

@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   try {
     const ctx = await requireApiUser(req, { page: 'handover' });
     const sp = req.nextUrl.searchParams;
-    if (sp.get('history') === '1') return json(await handoverHistory(ctx.actor, { from: sp.get('from') ?? undefined, to: sp.get('to') ?? undefined, driverId: sp.get('driverId') || undefined }));
+    if (sp.get('history') === '1') return json(await handoverHistory(ctx.actor, { from: sp.get('from') ?? undefined, to: sp.get('to') ?? undefined, driverId: sp.get('driverId') || undefined, page: Number(sp.get('page')) || 1 }));
     if (sp.get('driverId')) return json(await driverDay(ctx.actor, { driverId: sp.get('driverId'), date: sp.get('date') }));
     return json(await handoverBoard(ctx.actor, sp.get('date') ?? undefined));
   } catch (e) { return errorResponse(e); }

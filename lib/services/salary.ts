@@ -322,6 +322,9 @@ export async function lockSalary(actor: UserActor, idIn: unknown) {
     const p = periodOf(ymdOf(r.periodStart).slice(0, 7), Number(ymdOf(r.periodStart).slice(8)) === 1 ? 1 : 2);
     const inp = await computeInputs(tx, st, p);
     const prev = (r.applied as Applied | null) ?? { penalties: [], loansCharged: [], debtPaymentIds: [] };
+    // Аудит А7: хадгалсны дараа маркетингийн үнэлгээ өөрчлөгдсөн бол хуучин дүнгээр түгжихгүй
+    const savedEval = ((r.additions as { label: string; amount: number }[] | null) ?? []).filter((x) => x.label === EVAL_LABEL).reduce((s2, x) => s2 + x.amount, 0);
+    if (savedEval !== inp.evalSalary) throw conflict(`Маркетингийн үнэлгээний цалин өөрчлөгдсөн (${money(savedEval)} → ${money(inp.evalSalary)}) — цалинг дахин хадгална уу`, 'stale');
     // Торгууль: хуучнаас нь эхлэн хассан дүнгээр (бүрэн → «Цалингаас хассан», хэсэгчилсэн → үлдэгдэлтэй)
     const pt = inp.penalties.reduce((s, x) => s + x.remaining, 0);
     if (r.penaltyDeducted > pt) throw conflict(`Торгуулийн үлдэгдэл өөрчлөгдсөн (${money(pt)}) — цалинг дахин хадгална уу`, 'stale');

@@ -428,17 +428,19 @@ export async function deleteHandover(actor: UserActor, idInput: unknown) {
   return { deleted: true };
 }
 
-/** Падааны түүх (огноо, жолоочоор), 100 хүртэл */
-export async function handoverHistory(actor: UserActor, p: { from?: string; to?: string; driverId?: string }) {
+/** Падааны түүх (огноо, жолоочоор) — хуудаслагдана (аудит А6, R1) */
+const HISTORY_PAGE = 60;
+export async function handoverHistory(actor: UserActor, p: { from?: string; to?: string; driverId?: string; page?: number }) {
   assertView(actor);
   const to = p.to && isYmd(p.to) ? p.to : ubDay();
   const from = p.from && isYmd(p.from) ? p.from : ubDay(new Date(), -7);
-  const rows = await db.handover.findMany({
-    where: { date: { gte: dateOnly(from), lte: dateOnly(to) }, ...(p.driverId ? { driverId: cleanUuid(p.driverId) } : {}) },
-    orderBy: [{ date: 'desc' }, { id: 'desc' }], take: 100, include: { _count: { select: { orders: { where: { removedAt: null } } } } },
-  });
+  const where = { date: { gte: dateOnly(from), lte: dateOnly(to) }, ...(p.driverId ? { driverId: cleanUuid(p.driverId) } : {}) };
+  const page = Math.max(1, Math.min(10_000, Math.floor(Number(p.page) || 1)));
+  const [total, rows] = await Promise.all([db.handover.count({ where }), db.handover.findMany({
+    where, orderBy: [{ date: 'desc' }, { id: 'desc' }], skip: (page - 1) * HISTORY_PAGE, take: HISTORY_PAGE, include: { _count: { select: { orders: { where: { removedAt: null } } } } },
+  })]);
   return {
-    from, to,
+    from, to, page, total, pages: Math.max(1, Math.ceil(total / HISTORY_PAGE)),
     items: rows.map((h) => ({
       id: h.id, number: h.number, date: ymdOf(h.date), driverName: h.driverName, status: h.status, statusLabel: HANDOVER_STATUS_LABEL[h.status], orders: h._count.orders,
       createdByName: h.createdByName, createdAt: h.createdAt, handedOverBy: h.handedOverBy, handedOverAt: h.handedOverAt,

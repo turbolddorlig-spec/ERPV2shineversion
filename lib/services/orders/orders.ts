@@ -366,7 +366,7 @@ export async function cancelOrder(actor: UserActor | typeof SYSTEM_ACTOR & { rol
   const reason = (opts.system ? 'PAYMENT_TIMEOUT' : String(input.reason ?? '')) as CancelReason;
   if (!opts.system && !CANCEL_REASONS.includes(reason)) throw badRequest('Цуцлах шалтгаанаа сонгоно уу', 'cancel_reason');
   const note = opts.system ? 'Төлбөрийн хугацаа дууссан (автомат)' : requireReason(input.note, 'reason_required');
-  return inTx(async (tx) => {
+  const res = await inTx(async (tx) => {
     // Модуль 4: хуваарилсан/падаанд орсон захиалгыг цуцлахад падааны түгжээг эхэлж авна (deadlock-гүй дараалал)
     const pre = await tx.order.findUnique({ where: { id }, select: { status: true } });
     const DELIV: OrderStatus[] = ['NEW', 'ASSIGNED', 'OUT_FOR_DELIVERY'];
@@ -399,6 +399,9 @@ export async function cancelOrder(actor: UserActor | typeof SYSTEM_ACTOR & { rol
     await writeAudit(actor, 'order.cancelled', 'Order', String(id), { number: o.number, from: o.status, reason, note }, tx, ['order', 'cancel']);
     return { order: u, duplicate: false };
   });
+  // Аудит Б1: цуцалсан захиалгад таарсан банкны мөнгө «Таараагүй» руу буцна (тэр утсаар хүлээж буй захиалга байвал тийш таарна)
+  if (!res.duplicate) await bankRelease(id);
+  return res;
 }
 
 /** «Мөнгө орсон» (#43 9): Төлбөр хүлээж буй → Шинэ; баталгаажсан өдөр = одоо (үүссэн огноо хэвээр); Meta илгээнэ */
@@ -474,6 +477,12 @@ async function bankRestatus(orderId: number) {
     const { restatusOrder } = await import('../accounting/bank');
     await restatusOrder(orderId);
   } catch (e) { console.error('[bank] restatus', (e as Error).message); }
+}
+async function bankRelease(orderId: number) {
+  try {
+    const { releaseCancelledOrderPayments } = await import('../accounting/bank');
+    await releaseCancelledOrderPayments(orderId);
+  } catch (e) { console.error('[bank] release', (e as Error).message); }
 }
 async function bankRematch(orderId: number) {
   try {

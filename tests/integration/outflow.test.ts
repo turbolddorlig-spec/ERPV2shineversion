@@ -491,6 +491,12 @@ describe('пэйж, статистик, үнэлгээ, цалин (#104-3, 6)',
     await S.saveSalary(acc, { staffKey: `u:${mk.id}`, ym: p.ym, half: p.half, baseSalary: 100000, bonusSalary: 0, additions: [{ label: 'Илүү цаг', amount: 5000 }] });
     const rec = await S.saveSalary(acc, { staffKey: `u:${mk.id}`, ym: p.ym, half: p.half, baseSalary: 100000, bonusSalary: 0, additions: [{ label: 'Илүү цаг', amount: 5000 }, { label: S.EVAL_LABEL, amount: 25000 }] });
     expect([rec.totalAdditions, rec.transferSalary]).toEqual([30000, 130000]);
+    // Аудит А7: хадгалсны дараа оноо өөрчлөгдвөл түгжихэд «дахин хадгална уу»; дахин хадгалахад шинэ дүнгээр
+    await OF.saveScore(lead, { userId: mk.id, date: yest, score: 9, salaryAmount: 45000, note: 'Маш сайн' });
+    await err(S.lockSalary(acc, rec.id), 409, 'stale');
+    const rec2 = await S.saveSalary(acc, { staffKey: `u:${mk.id}`, ym: p.ym, half: p.half, baseSalary: 100000, bonusSalary: 0, additions: [{ label: 'Илүү цаг', amount: 5000 }] });
+    expect(rec2.totalAdditions).toBe(50000);
+    expect((await S.lockSalary(acc, rec2.id)).record.isLocked).toBe(true);
     const dd = await OF.dailyDetail(lead, yest);
     expect(dd.rows.find((r) => r.userId === mk.id)?.items[0]?.daily[0]).toBe(11);
   });

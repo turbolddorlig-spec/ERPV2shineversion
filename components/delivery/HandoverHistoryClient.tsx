@@ -16,12 +16,17 @@ export function HandoverHistoryClient() {
   const [driverId, setDriverId] = useState('');
   const [drivers, setDrivers] = useState<{ id: string; name: string }[]>([]);
   const [rows, setRows] = useState<Row[] | null>(null);
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
+  const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { api<{ items: { id: string; name: string }[] }>('/api/driver-lead/drivers').then((r) => setDrivers(r.items)).catch(() => undefined); }, []);
   useEffect(() => {
     setRows(null);
-    api<{ items: Row[] }>(`/api/handover?history=1&from=${from}&to=${to}${driverId ? `&driverId=${driverId}` : ''}`).then((r) => setRows(r.items)).catch((e) => setError(e instanceof ApiError ? e.message : 'Алдаа'));
-  }, [from, to, driverId]);
+    api<{ items: Row[]; pages: number; total: number }>(`/api/handover?history=1&from=${from}&to=${to}&page=${page}${driverId ? `&driverId=${driverId}` : ''}`)
+      .then((r) => { setRows(r.items); setPages(r.pages); setTotal(r.total); }).catch((e) => setError(e instanceof ApiError ? e.message : 'Алдаа'));
+  }, [from, to, driverId, page]);
+  useEffect(() => { setPage(1); }, [from, to, driverId]);
   const inp = 'h-10 rounded-lg border border-line bg-surface px-2.5 text-[13px]';
   return (
     <div className="flex flex-col gap-3 text-[13px]">
@@ -36,13 +41,20 @@ export function HandoverHistoryClient() {
           {rows.map((r) => (
             <a key={r.id} href={`/print/handover/${r.id}`} target="_blank" rel="noreferrer" className="flex flex-col gap-1 rounded-xl border border-line bg-surface p-3 hover:bg-surface2/50">
               <span className="flex items-center gap-2"><b className="text-[15px]">{r.number}</b><span className={clsx('rounded-md px-1.5 text-[11.5px] font-bold', TONE[r.status])}>{r.statusLabel}</span><span className="ml-auto text-muted">{r.date}</span></span>
-              <span><b>{r.driverName}</b> · {r.orders} захиалга</span>
+              <span className="[overflow-wrap:anywhere]"><b>{r.driverName}</b> · {r.orders} захиалга</span>
               <span className="text-[12px] text-subtle">Үүсгэсэн: {r.createdByName} · {ubDateTime(r.createdAt)}</span>
               {r.handedOverAt ? <span className="text-[12px] text-ok-ink">Агуулах өгсөн: {r.handedOverBy} · {ubDateTime(r.handedOverAt)}</span> : null}
             </a>
           ))}
         </div>
       )}
+      {pages > 1 ? (
+        <div className="flex flex-wrap items-center justify-center gap-2 py-2">
+          <button type="button" disabled={page <= 1} onClick={() => setPage(page - 1)} className="h-10 rounded-lg border border-line px-3 disabled:opacity-40">← Өмнөх</button>
+          <span className="text-muted">{page} / {pages} хуудас · нийт {total}</span>
+          <button type="button" disabled={page >= pages} onClick={() => setPage(page + 1)} className="h-10 rounded-lg border border-line px-3 disabled:opacity-40">Дараах →</button>
+        </div>
+      ) : null}
     </div>
   );
 }
