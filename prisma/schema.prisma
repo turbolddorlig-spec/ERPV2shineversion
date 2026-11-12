@@ -1530,6 +1530,8 @@ model ReorderOrder {
   cancelledAt DateTime?
   /// OWNER = Супер админы «Бараа татах», SUPPLIER = нийлүүлэгчийн өөрийнх (#124-Ж — тусдаа тэмдэг)
   scope       String    @default("OWNER")
+  /// Өнгө / хэмжээ тус бүрээр «Захиалсан» (#128); null = бараа бүхэлдээ (хуучин тэмдэг)
+  variantId   Int?
 
   @@index([productId, orderedAt])
 }

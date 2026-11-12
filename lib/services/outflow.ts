@@ -955,9 +955,17 @@ export interface ReorderInfo {
   /** Нийлүүлэгчийн дэлгүүрт оноогдсон бол тэр дэлгүүр (#120) */
   shopId: number | null;
   basis: { avg7: number; avg3: number; today: number; fullDays: number };
-  order: { id: number; qty: number; expectedDay: string; orderedAt: Date; byName: string; note: string } | null;
+  order: { id: number; qty: number; expectedDay: string; orderedAt: Date; byName: string; note: string; variantId: number | null } | null;
+  /** Хамгийн яаралтай өнгө / хэмжээ (#128) — олон өнгөтэй бол */
+  worstLabel: string | null;
+  /** Өнгө / хэмжээ тус бүрийн нөөц ба «Захиалсан» (#128) */
+  variants: VariantCover[];
   /** Нийлүүлэгчийн өөрийн «Захиалсан» тэмдэг ба төлөв (#124-Ж — таных тусдаа) */
-  sup: { level: ReorderLevel; order: ReorderInfo['order'] };
+  sup: { level: ReorderLevel; order: ReorderInfo['order']; days: number | null; worstLabel: string | null };
+}
+export interface VariantCover {
+  variantId: number; label: string; available: number; pace: number; days: number | null; runOutDay: string | null;
+  level: ReorderLevel; order: ReorderInfo['order']; supLevel: ReorderLevel; supOrder: ReorderInfo['order'];
 }
 export type ReorderScope = 'OWNER' | 'SUPPLIER';
 let reorderCache: { at: number; map: Map<number, ReorderInfo> } | null = null;
@@ -975,46 +983,84 @@ export async function computeReorder(fresh = false): Promise<Map<number, Reorder
   const today = ubDay();
   const full = Array.from({ length: 7 }, (_, i) => addDays(today, -7 + i)); // хуучнаас шинэ рүү, өчигдөр хүртэл
   let orders = await db.reorderOrder.findMany({ where: { receivedAt: null, cancelledAt: null } });
-  // Агуулахад орлого орсон бол «Захиалсан» хаагдана — нөөц дахин эхэлнэ
+  // Агуулахад орлого орсон бол «Захиалсан» хаагдана — өнгө тус бүрээр бол тэр өнгөний орлогоор (#128), бүхэлд нь бол аль ч өнгөний орлогоор
   if (orders.length) {
     const since = new Date(Math.min(...orders.map((o) => o.orderedAt.getTime())));
-    const rec = await db.$queryRaw<{ productId: number; at: Date }[]>`
-      SELECT v."productId", max(m.at) AS at FROM "StockMove" m JOIN "ProductVariant" v ON v.id = m."variantId"
-      WHERE m.type = 'RECEIPT' AND m.at > ${since} AND v."productId" IN (${Prisma.join(orders.map((o) => o.productId))}) GROUP BY 1`;
-    const rm = new Map(rec.map((x) => [x.productId, x.at]));
-    const done = orders.filter((o) => { const at = rm.get(o.productId); return at && at > o.orderedAt; });
-    for (const o of done) await db.reorderOrder.updateMany({ where: { id: o.id, receivedAt: null }, data: { receivedAt: rm.get(o.productId)! } });
-    if (done.length) { const ids = new Set(done.map((o) => o.id)); orders = orders.filter((o) => !ids.has(o.id)); }
+    const rec = await db.$queryRaw<{ productId: number; variantId: number; at: Date }[]>`
+      SELECT v."productId", m."variantId", max(m.at) AS at FROM "StockMove" m JOIN "ProductVariant" v ON v.id = m."variantId"
+      WHERE m.type = 'RECEIPT' AND m.at > ${since} AND v."productId" IN (${Prisma.join([...new Set(orders.map((o) => o.productId))])}) GROUP BY 1, 2`;
+    const recAt = (o: (typeof orders)[number]) => {
+      const xs = rec.filter((r) => r.productId === o.productId && (o.variantId === null || r.variantId === o.variantId) && r.at > o.orderedAt);
+      return xs.length ? new Date(Math.max(...xs.map((r) => r.at.getTime()))) : null;
+    };
+    const done = orders.map((o) => ({ o, at: recAt(o) })).filter((x) => x.at);
+    for (const { o, at } of done) await db.reorderOrder.updateMany({ where: { id: o.id, receivedAt: null }, data: { receivedAt: at! } });
+    if (done.length) { const ids = new Set(done.map((x) => x.o.id)); orders = orders.filter((o) => !ids.has(o.id)); }
   }
-  const aggs = await unitsByDay(full[0]!, today);
-  const net = new Map<string, number>();
-  for (const a of aggs) net.set(`${a.productId}|${a.day}`, (net.get(`${a.productId}|${a.day}`) ?? 0) + a.qty - a.bulkQty);
-  const ids = [...new Set([...aggs.filter((a) => a.qty - a.bulkQty > 0).map((a) => a.productId), ...orders.map((o) => o.productId)])];
-  const stock = await productStockTotals(ids);
-  const om = new Map(orders.filter((o) => o.scope !== 'SUPPLIER').map((o) => [o.productId, o]));
-  const smap = new Map(orders.filter((o) => o.scope === 'SUPPLIER').map((o) => [o.productId, o]));
+  // Өнгө / хэмжээ тус бүрийн гарц (бөөний захиалгагүй — захиалга × барааны нийт ширхэг < bulkMin)
+  const vrows = await db.$queryRaw<{ productId: number; variantId: number; day: Date; qty: number }[]>`
+    SELECT x."productId", x."variantId", x.day, sum(x.q)::int AS qty FROM (
+      SELECT l."productId", l."variantId", o.id, (o."confirmedAt" + interval '8 hours')::date AS day, sum(l.qty) AS q,
+             sum(sum(l.qty)) OVER (PARTITION BY o.id, l."productId") AS pq
+      FROM "Order" o JOIN "OrderLine" l ON l."orderId" = o.id
+      WHERE o."confirmedAt" >= ${ubDayStart(full[0]!)} AND o."confirmedAt" < ${ubDayStart(addDays(today, 1))} AND ${COUNTED}
+      GROUP BY 1, 2, 3, 4) x
+    WHERE x.pq < ${cfg.bulkMin} GROUP BY 1, 2, 3`;
+  const vnet = new Map<string, number>();
+  for (const r of vrows) vnet.set(`${r.variantId}|${ymdOf(r.day)}`, (vnet.get(`${r.variantId}|${ymdOf(r.day)}`) ?? 0) + r.qty);
+  const ids = [...new Set([...vrows.filter((r) => r.qty > 0).map((r) => r.productId), ...orders.map((o) => o.productId)])];
+  const [stock, variants] = await Promise.all([
+    productStockTotals(ids),
+    ids.length ? db.productVariant.findMany({ where: { productId: { in: ids } }, select: { id: true, productId: true, code: true, color: true, size: true, isActive: true }, orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] }) : Promise.resolve([]),
+  ]);
   const sp = ids.length ? await db.supplierProduct.findMany({ where: { productId: { in: ids }, OR: [{ toDate: null }, { toDate: { gt: dateOnly(today) } }] }, select: { productId: true, shopId: true } }) : [];
   const shopOf = new Map(sp.map((x) => [x.productId, x.shopId]));
-  const map = new Map<number, ReorderInfo>();
-  for (const id of ids) {
-    const v = full.map((d) => net.get(`${id}|${d}`) ?? 0);
+  const paceOf = (get: (d: string) => number) => {
+    const v = full.map(get);
     const first = v.findIndex((n) => n > 0);
     const fullDays = first < 0 ? 0 : 7 - first;
     const avg7 = fullDays ? v.slice(first).reduce((s, n) => s + n, 0) / fullDays : 0;
     const k3 = Math.min(3, fullDays);
     const avg3 = k3 ? v.slice(-k3).reduce((s, n) => s + n, 0) / k3 : 0;
-    const td = net.get(`${id}|${today}`) ?? 0;
-    const pace = Math.max(avg7, avg3, td);
+    const td = get(today);
+    return { pace: Math.max(avg7, avg3, td), avg7, avg3, td, fullDays };
+  };
+  type O = (typeof orders)[number];
+  const view = (o: O | undefined) => o ? { id: o.id, qty: o.qty, expectedDay: o.expectedDay, orderedAt: o.orderedAt, byName: o.byName, note: o.note, variantId: o.variantId } : null;
+  const levelOf = (o: O | undefined, days: number | null): ReorderLevel => o ? (o.expectedDay < today ? 'LATE' : 'ORDERED')
+    : days !== null && days <= cfg.urgentDays ? 'URGENT' : days !== null && days <= cfg.leadDays ? 'ORDER' : 'OK';
+  const RANK: Record<ReorderLevel, number> = { URGENT: 5, LATE: 4, ORDER: 3, ORDERED: 2, OK: 1 };
+  const map = new Map<number, ReorderInfo>();
+  for (const id of ids) {
+    const vs = variants.filter((v) => v.productId === id);
+    const byV = stock.get(id)?.byVariant;
+    const mine = (scope: 'OWNER' | 'SUPPLIER') => orders.filter((o) => o.productId === id && (o.scope === 'SUPPLIER') === (scope === 'SUPPLIER'));
+    const whole = (scope: 'OWNER' | 'SUPPLIER') => mine(scope).find((o) => o.variantId === null);
+    const vcov: VariantCover[] = vs.map((v) => {
+      const p = paceOf((d) => vnet.get(`${v.id}|${d}`) ?? 0);
+      const available = byV?.get(v.id)?.available ?? 0;
+      const days = p.pace > 0 ? Math.max(0, Math.floor(available / p.pace)) : null;
+      const vo = (scope: 'OWNER' | 'SUPPLIER') => mine(scope).find((o) => o.variantId === v.id) ?? whole(scope);
+      return { variantId: v.id, label: [v.color, v.size].filter(Boolean).join(' / ') || v.code, available, pace: r1(p.pace), days, runOutDay: days === null ? null : addDays(today, days),
+        level: levelOf(vo('OWNER'), days), order: view(vo('OWNER')), supLevel: levelOf(vo('SUPPLIER'), days), supOrder: view(vo('SUPPLIER')) };
+    }).filter((v) => v.days !== null || v.order || v.supOrder);
+    // Бараа бүхэлдээ (нийлбэр) — тайлбарт
+    const tp = paceOf((d) => vs.reduce((s, v) => s + (vnet.get(`${v.id}|${d}`) ?? 0), 0));
     const available = stock.get(id)?.available ?? 0;
-    const days = pace > 0 ? Math.max(0, Math.floor(available / pace)) : null;
-    const levelOf = (o: (typeof orders)[number] | undefined): ReorderLevel => o ? (o.expectedDay < today ? 'LATE' : 'ORDERED')
-      : days !== null && days <= cfg.urgentDays ? 'URGENT' : days !== null && days <= cfg.leadDays ? 'ORDER' : 'OK';
-    const view = (o: (typeof orders)[number] | undefined) => o ? { id: o.id, qty: o.qty, expectedDay: o.expectedDay, orderedAt: o.orderedAt, byName: o.byName, note: o.note } : null;
-    const o = om.get(id); const so = smap.get(id);
+    const tdays = tp.pace > 0 ? Math.max(0, Math.floor(available / tp.pace)) : null;
+    // Үндсэн мөр = хамгийн яаралтай өнгө (#128): нэг өнгө дуусахад л сануулна
+    const worst = (scope: 'OWNER' | 'SUPPLIER', lv: (v: VariantCover) => ReorderLevel, od: (v: VariantCover) => VariantCover['order']) => {
+      if (!vcov.length) { const o = whole(scope); return { level: levelOf(o, tdays), days: tdays, order: view(o), label: null as string | null }; }
+      const w = [...vcov].sort((a, b) => RANK[lv(b)] - RANK[lv(a)] || (a.days ?? 1e9) - (b.days ?? 1e9))[0]!;
+      return { level: lv(w), days: w.days, order: od(w), label: vcov.length > 1 ? w.label : null };
+    };
+    const ow = worst('OWNER', (v) => v.level, (v) => v.order);
+    const sw = worst('SUPPLIER', (v) => v.supLevel, (v) => v.supOrder);
     map.set(id, {
-      productId: id, shopId: shopOf.get(id) ?? null, available, pace: r1(pace), days, runOutDay: days === null ? null : addDays(today, days), level: levelOf(o),
-      basis: { avg7: r1(avg7), avg3: r1(avg3), today: td, fullDays },
-      order: view(o), sup: { level: levelOf(so), order: view(so) },
+      productId: id, shopId: shopOf.get(id) ?? null, available, pace: r1(tp.pace), days: ow.days, runOutDay: ow.days === null ? null : addDays(today, ow.days), level: ow.level,
+      basis: { avg7: r1(tp.avg7), avg3: r1(tp.avg3), today: tp.td, fullDays: tp.fullDays },
+      order: ow.order, worstLabel: ow.label, variants: vcov,
+      sup: { level: sw.level, order: sw.order, days: sw.days, worstLabel: sw.label },
     });
   }
   reorderCache = { at: Date.now(), map };
@@ -1031,12 +1077,12 @@ export async function reorderBanner(roles: Role[]): Promise<{ urgent: number; or
 }
 
 /** «Захиалсан» — хэдэн ширхэг, хэзээ ирэх (анх: өнөөдөр + ирэх хоног) */
-export async function markReordered(actor: UserActor, b: { productId?: unknown; qty?: unknown; expectedDay?: unknown; note?: unknown }) {
+export async function markReordered(actor: UserActor, b: { productId?: unknown; variantId?: unknown; qty?: unknown; expectedDay?: unknown; note?: unknown }) {
   assertSA(actor);
   return createReorder(actor, b);
 }
 /** Эрх шалгасны дараа (СА эсвэл тухайн барааны нийлүүлэгч) */
-export async function createReorder(actor: UserActor, b: { productId?: unknown; qty?: unknown; expectedDay?: unknown; note?: unknown }, scope: ReorderScope = 'OWNER') {
+export async function createReorder(actor: UserActor, b: { productId?: unknown; variantId?: unknown; qty?: unknown; expectedDay?: unknown; note?: unknown }, scope: ReorderScope = 'OWNER') {
   const productId = Number(b.productId);
   const product = Number.isInteger(productId) ? await db.product.findUnique({ where: { id: productId }, select: { id: true, name: true } }) : null;
   if (!product) throw notFound('Бараа олдсонгүй');
@@ -1045,11 +1091,21 @@ export async function createReorder(actor: UserActor, b: { productId?: unknown; 
   const expectedDay = b.expectedDay ? String(b.expectedDay) : addDays(ubDay(), cfg.leadDays);
   if (!isYmd(expectedDay)) throw badRequest('Ирэх өдөр буруу');
   const note = cleanText(b.note, 300);
+  // Өнгө / хэмжээ тус бүрээр (#128): тэр өнгийг захиалахад бусад өнгөний нөөц үргэлжлэн бодогдоно
+  let variantId: number | null = null;
+  let label = '';
+  if (b.variantId !== undefined && b.variantId !== null && b.variantId !== '') {
+    variantId = Number(b.variantId);
+    const v = Number.isInteger(variantId) ? await db.productVariant.findUnique({ where: { id: variantId }, select: { productId: true, color: true, size: true, code: true } }) : null;
+    if (!v || v.productId !== productId) throw badRequest('Өнгө / хэмжээ буруу');
+    label = [v.color, v.size].filter(Boolean).join(' / ') || v.code;
+  }
   const row = await db.$transaction(async (tx) => {
-    const cur = await tx.reorderOrder.findFirst({ where: { productId, scope, receivedAt: null, cancelledAt: null } });
-    if (cur) throw conflict('Энэ бараа аль хэдийн «Захиалсан» байна — эхлээд цуцална уу');
-    const r = await tx.reorderOrder.create({ data: { productId, qty, expectedDay, note, byName: actor.name, scope } });
-    await writeAudit(actor, 'outflow.reorder', 'ReorderOrder', String(r.id), { productId, name: product.name, qty, expectedDay, note, scope }, tx);
+    const cur = await tx.reorderOrder.findFirst({ where: { productId, scope, variantId, receivedAt: null, cancelledAt: null } });
+    if (cur) throw conflict(variantId ? `«${label}» аль хэдийн «Захиалсан» байна — эхлээд цуцална уу` : 'Энэ бараа аль хэдийн «Захиалсан» байна — эхлээд цуцална уу');
+    if (!variantId && (await tx.reorderOrder.count({ where: { productId, scope, variantId: { not: null }, receivedAt: null, cancelledAt: null } }))) throw conflict('Өнгө тус бүрээр захиалсан байна — өнгө бүрээр нь тэмдэглэнэ үү');
+    const r = await tx.reorderOrder.create({ data: { productId, variantId, qty, expectedDay, note, byName: actor.name, scope } });
+    await writeAudit(actor, 'outflow.reorder', 'ReorderOrder', String(r.id), { productId, name: product.name, variant: label || null, qty, expectedDay, note, scope }, tx);
     return r;
   });
   reorderCache = null;
@@ -1086,7 +1142,7 @@ export async function reorderDetailOf(productIdIn: unknown, scope: ReorderScope 
   const cfg = await getConfig();
   const history = await db.reorderOrder.findMany({ where: { productId: id, scope }, orderBy: { orderedAt: 'desc' }, take: 10 });
   const x = m.get(id);
-  const info = x && scope === 'SUPPLIER' ? { ...x, level: x.sup.level, order: x.sup.order } : x;
+  const info = x && scope === 'SUPPLIER' ? { ...x, level: x.sup.level, order: x.sup.order, days: x.sup.days, worstLabel: x.sup.worstLabel, variants: x.variants.map((v) => ({ ...v, level: v.supLevel, order: v.supOrder })) } : x;
   return { info: info ?? null, leadDays: cfg.leadDays, urgentDays: cfg.urgentDays, defaultExpected: addDays(ubDay(), cfg.leadDays), history };
 }
 

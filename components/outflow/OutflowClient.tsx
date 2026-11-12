@@ -36,7 +36,9 @@ type RLevel = 'OK' | 'ORDER' | 'URGENT' | 'ORDERED' | 'LATE';
 interface Reorder {
   productId: number; available: number; pace: number; days: number | null; runOutDay: string | null; level: RLevel;
   basis: { avg7: number; avg3: number; today: number; fullDays: number };
-  order: { id: number; qty: number; expectedDay: string; orderedAt: string; byName: string; note: string } | null;
+  order: { id: number; qty: number; expectedDay: string; orderedAt: string; byName: string; note: string; variantId: number | null } | null;
+  worstLabel: string | null;
+  variants: { variantId: number; label: string; available: number; pace: number; days: number | null; runOutDay: string | null; level: RLevel; order: Reorder['order'] }[];
 }
 interface Table {
   rows: Row[]; total: number; page: number; pages: number; days: string[]; counts: { all: number; boost: number; noboost: number; red: number; orange: number; watched: number; pageShort: number; reorder?: number; ordered?: number };
@@ -178,7 +180,7 @@ export function OutflowClient() {
                     <td className="px-1 py-1"><div className="flex items-center justify-end gap-1"><button type="button" aria-label={`${r.name} засах`} title="Засах" onClick={() => setDlg({ k: 'edit', row: r })} className="h-8 w-8 rounded-lg border border-line bg-surface text-[14px] hover:bg-surface2">✎</button><AlertChip r={r} onOpen={() => setDlg({ k: 'alert', row: r })} /></div></td>
                     {d.isSA ? <td className="px-1 py-1 text-center"><ReorderChip r={r} onOpen={() => setDlg({ k: 'reorder', row: r })} /></td> : null}
                   </tr>
-                  {open.has(r.id) ? <VariantRows id={r.id} lead={d.isLead} sa={d.isSA} /> : null}
+                  {open.has(r.id) ? <VariantRows id={r.id} lead={d.isLead} sa={d.isSA} cover={r.reorder?.variants} onCover={() => setDlg({ k: 'reorder', row: r })} /> : null}
                 </Fragment>
                 ))}
               </tbody>
@@ -239,7 +241,7 @@ function useVariants(id: number) {
   return v;
 }
 /** Өнгө / хэмжээ бүрийн догол мөр (хүснэгт) */
-function VariantRows({ id, lead, sa }: { id: number; lead: boolean; sa: boolean }) {
+function VariantRows({ id, lead, sa, cover, onCover }: { id: number; lead: boolean; sa: boolean; cover?: Reorder['variants']; onCover?: () => void }) {
   const v = useVariants(id);
   if (!v) return <tr><td colSpan={30} className="px-8 py-1 text-[12px] text-muted">Ачаалж байна…</td></tr>;
   return (
@@ -255,7 +257,10 @@ function VariantRows({ id, lead, sa }: { id: number; lead: boolean; sa: boolean 
           <td className={clsx('px-2 py-1 text-right', x.available < x.avg && 'font-bold text-bad-ink')}>{x.available}</td>
           {sa ? <td /> : null}
           <td /><td />
-          {sa ? <td /> : null}
+          {sa ? <td className="px-1 py-1 text-center">{(() => { const c = cover?.find((y) => y.variantId === x.id); if (!c) return <span className="text-[11px] text-subtle">—</span>; return (
+            <button type="button" data-variant-cover={c.level} onClick={onCover} className={clsx('inline-flex w-[76px] flex-col items-center rounded-lg px-1 py-0.5 leading-tight', RL[c.level].cls)}>
+              <b className="text-[12px]">{c.days === null ? '—' : `${c.days} хоног`}</b><span className="text-[10px]">{c.order ? `🚚 ${md(c.order.expectedDay)}` : RL[c.level].label}</span>
+            </button>); })()}</td> : null}
         </tr>
       ))}
     </>
@@ -293,60 +298,89 @@ function ReorderChip({ r, onOpen }: { r: Row; onOpen: () => void }) {
     <button type="button" data-reorder-chip={x.level} onClick={onOpen} title={`Боломжтой ${x.available} · өдөрт ~${x.pace}`}
       className={clsx('inline-flex w-[76px] flex-col items-center rounded-lg px-1 py-0.5 leading-tight', t.cls)}>
       <b className="text-[13px]">{x.days === null ? '—' : `${x.days} хоног`}</b>
+      {x.worstLabel && (x.level === 'ORDER' || x.level === 'URGENT') ? <span className="line-clamp-1 max-w-full text-[10px] [overflow-wrap:anywhere]">{x.worstLabel}</span> : null}
       <span className="text-[10.5px]">{x.order ? (x.level === 'LATE' ? t.label : `🚚 ${md(x.order.expectedDay)}`) : t.label}</span>
     </button>
   );
 }
-interface ReorderD { info: Reorder | null; leadDays: number; urgentDays: number; defaultExpected: string; history: { id: number; qty: number; expectedDay: string; orderedAt: string; byName: string; note: string; receivedAt: string | null; cancelledAt: string | null }[] }
+interface ReorderD { info: Reorder | null; leadDays: number; urgentDays: number; defaultExpected: string; history: { id: number; qty: number; expectedDay: string; orderedAt: string; byName: string; note: string; receivedAt: string | null; cancelledAt: string | null; variantId: number | null }[] }
+const coverCls = (l: RLevel) => (l === 'URGENT' || l === 'LATE' ? 'bg-bad-soft text-bad-ink' : l === 'ORDER' ? 'bg-warn-soft text-warn' : 'bg-surface2');
+/** «Захиалсан» маягт — бараа бүхэлд нь эсвэл нэг өнгө / хэмжээнд (#128) */
+function OrderForm({ defaultDay, onSave, onCancel }: { defaultDay: string; onSave: (qty: number, day: string, note: string) => Promise<void>; onCancel?: () => void }) {
+  const [qty, setQty] = useState(''); const [day, setDay] = useState(defaultDay); const [note, setNote] = useState(''); const [e, setE] = useState<string | null>(null);
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-3">
+      {e ? <p className="text-[12.5px] text-bad-ink">{e}</p> : null}
+      <div className="grid grid-cols-2 gap-2">
+        <label className="flex flex-col gap-1 text-[12.5px] font-semibold text-muted">Ширхэг<input value={qty} inputMode="numeric" onChange={(ev) => setQty(digits(ev.target.value))} className={clsx(inputCls, 'text-right')} /></label>
+        <label className="flex flex-col gap-1 text-[12.5px] font-semibold text-muted">Ирэх өдөр<input type="date" value={day} onChange={(ev) => setDay(ev.target.value)} className={inputCls} /></label>
+      </div>
+      <label className="flex flex-col gap-1 text-[12.5px] font-semibold text-muted">Тайлбар<input value={note} maxLength={300} onChange={(ev) => setNote(ev.target.value)} className={inputCls} /></label>
+      <div className="flex justify-end gap-2">{onCancel ? <Button size="sm" onClick={onCancel}>Болих</Button> : null}<Button size="sm" variant="primary" onClick={() => { if (!Number(qty)) { setE('Захиалсан ширхэгээ бичнэ үү'); return; } void onSave(Number(qty), day, note); }}>Захиалсан</Button></div>
+    </div>
+  );
+}
 export function ReorderDialog({ row, onClose, post, detailUrl, sub = 'зөвхөн Супер админ' }: { row: { id: number; name: string; code: string }; onClose: () => void; post: (j: Record<string, unknown>, m?: string) => Promise<unknown>; detailUrl?: string; sub?: string }) {
   const [d, setD] = useState<ReorderD | null>(null); const [err, setErr] = useState<string | null>(null);
-  const [qty, setQty] = useState(''); const [day, setDay] = useState(''); const [note, setNote] = useState('');
-  const load = useCallback(() => api<ReorderD>(detailUrl ?? `/api/goods-outflow?view=reorder&id=${row.id}`).then((r) => { setD(r); setDay(r.defaultExpected); }).catch((e) => setErr(msg(e))), [row.id, detailUrl]);
+  const [formFor, setFormFor] = useState<number | 'all' | null>(null);
+  const load = useCallback(() => api<ReorderD>(detailUrl ?? `/api/goods-outflow?view=reorder&id=${row.id}`).then((r) => { setD(r); }).catch((e) => setErr(msg(e))), [row.id, detailUrl]);
   useEffect(() => { void load(); }, [load]);
   const x = d?.info;
-  const save = async () => {
-    if (!Number(qty)) { setErr('Захиалсан ширхэгээ бичнэ үү'); return; }
-    const r = await post({ action: 'reorder', productId: row.id, qty: Number(qty), expectedDay: day, note }, `«${row.name}» — захиалсан гэж тэмдэглэлээ (${qty} ш, ${md(day)} ирнэ)`);
-    if (r) onClose();
+  const multi = !!x && x.variants.length > 1;
+  const labelOf = (vid: number | null) => (vid === null ? null : x?.variants.find((v) => v.variantId === vid)?.label ?? `#${vid}`);
+  const save = async (variantId: number | null, qty: number, day: string, note: string) => {
+    const r = await post({ action: 'reorder', productId: row.id, ...(variantId ? { variantId } : {}), qty, expectedDay: day, note }, `«${row.name}${variantId ? ` · ${labelOf(variantId)}` : ''}» — захиалсан (${qty} ш, ${md(day)} ирнэ)`);
+    if (r) { setFormFor(null); await load(); }
   };
-  const cancel = async () => { if (x?.order && confirm('«Захиалсан» тэмдгийг цуцлах уу? Сануулга дахин гарна.')) { const r = await post({ action: 'reorder-cancel', id: x.order.id }, 'Цуцаллаа'); if (r) onClose(); } };
+  const cancel = async (id: number) => { if (confirm('«Захиалсан» тэмдгийг цуцлах уу? Сануулга дахин гарна.')) { const r = await post({ action: 'reorder-cancel', id }, 'Цуцаллаа'); if (r) await load(); } };
+  const wholeOrder = x?.order && x.order.variantId === null ? x.order : null;
   return (
-    <Modal open onClose={onClose} title={`🚚 Нөөц · ${row.name}`} subtitle={`${row.code} · ${sub}`}
-      footer={<><Button onClick={onClose}>Хаах</Button>{x?.order ? <Button onClick={() => void cancel()}>«Захиалсан»-ыг цуцлах</Button> : <Button variant="primary" onClick={() => void save()}>Захиалсан</Button>}</>}>
+    <Modal open onClose={onClose} size={multi ? 'xl' : undefined} title={`🚚 Нөөц · ${row.name}`} subtitle={`${row.code} · ${sub}`} footer={<Button onClick={onClose}>Хаах</Button>}>
       {err ? <Notice>{err}</Notice> : null}
       {d ? (
         <div className="flex flex-col gap-3 text-[13.5px]">
           {x ? (<>
             <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-xl bg-surface2 p-3"><div className="text-muted">Боломжтой</div><b className="text-[17px]">{x.available}</b></div>
-              <div className="rounded-xl bg-surface2 p-3"><div className="text-muted">Өдөрт гарц</div><b className="text-[17px]">~{x.pace}</b></div>
-              <div className={clsx('rounded-xl p-3', x.level === 'URGENT' || x.level === 'LATE' ? 'bg-bad-soft text-bad-ink' : x.level === 'ORDER' ? 'bg-warn-soft text-warn' : 'bg-surface2')}><div>Нөөц</div><b className="text-[17px]">{x.days === null ? '—' : `${x.days} хоног`}</b></div>
+              <div className="rounded-xl bg-surface2 p-3"><div className="text-muted">Боломжтой (нийт)</div><b className="text-[17px]">{x.available}</b></div>
+              <div className="rounded-xl bg-surface2 p-3"><div className="text-muted">Өдөрт гарц (нийт)</div><b className="text-[17px]">~{x.pace}</b></div>
+              <div className={clsx('rounded-xl p-3', coverCls(x.level))}><div>Нөөц{x.worstLabel ? ` · ${x.worstLabel}` : ''}</div><b className="text-[17px]">{x.days === null ? '—' : `${x.days} хоног`}</b></div>
             </div>
             <p className="[overflow-wrap:anywhere]">
-              {x.days === null ? 'Сүүлийн 7 хоногт зарагдаагүй — нөөц бодогдохгүй.' : x.available <= 0 ? <b className="text-bad-ink">Бараа дууссан — яаралтай татаарай (Хятадаас ~{d.leadDays} хоногт ирнэ).</b> : <>Энэ хурдаар <b>{md(x.runOutDay!)}</b> орчим дуусна. Хятадаас захиалбал ~{d.leadDays} хоногт ирнэ
-                {x.days <= d.urgentDays ? <b className="text-bad-ink"> — одоо захиалсан ч ирэхээс өмнө дуусна, яаралтай!</b> : x.days <= d.leadDays ? <b className="text-warn"> — бараагаа одоо татаарай.</b> : ' — одоохондоо хангалттай.'}</>}
+              {x.days === null ? 'Сүүлийн 7 хоногт зарагдаагүй — нөөц бодогдохгүй.' : <>{x.worstLabel ? <>Хамгийн түрүүнд <b>«{x.worstLabel}»</b> </> : 'Энэ хурдаар '}<b>{md(x.runOutDay!)}</b> орчим дуусна. Хятадаас захиалбал ~{d.leadDays} хоногт ирнэ
+                {x.level === 'URGENT' ? <b className="text-bad-ink"> — яаралтай!</b> : x.level === 'ORDER' ? <b className="text-warn"> — бараагаа одоо татаарай.</b> : x.level === 'OK' ? ' — одоохондоо хангалттай.' : ''}</>}
             </p>
-            <p className="text-[12.5px] text-muted [overflow-wrap:anywhere]">Хурд = аль их нь: 7 хоногийн дундаж {x.basis.avg7} ({x.basis.fullDays} өдөр) · сүүлийн 3 өдөр {x.basis.avg3} · өнөөдөр {x.basis.today}. Бөөний захиалга орохгүй.</p>
-          </>) : <p className="text-muted">Сүүлийн 7 хоногт зарагдаагүй.</p>}
-          {x?.order ? (
-            <div className={clsx('rounded-xl p-3', x.level === 'LATE' ? 'bg-bad-soft text-bad-ink' : 'bg-surface2')}>
-              <b>{x.level === 'LATE' ? '⏰ Ирэх хугацаа хэтэрсэн' : '🚚 Захиалсан — ирэхийг хүлээж байна'}</b>
-              <div className="[overflow-wrap:anywhere]">{x.order.qty} ширхэг · {md(x.order.expectedDay)} ирнэ · {x.order.byName}, {ubDateTime(x.order.orderedAt)}{x.order.note ? ` · ${x.order.note}` : ''}</div>
-              <div className="text-[12.5px] text-muted">Агуулахад орлого бүртгэгдэхэд автоматаар хаагдаж, нөөц шинэ үлдэгдлээр дахин бодогдоно.</div>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2 rounded-xl border border-line p-3">
-              <b>Захиалсан бол тэмдэглэ — сануулга зогсоно</b>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="flex flex-col gap-1 text-[12.5px] font-semibold text-muted">Ширхэг<input value={qty} inputMode="numeric" onChange={(e) => setQty(digits(e.target.value))} className={clsx(inputCls, 'text-right')} /></label>
-                <label className="flex flex-col gap-1 text-[12.5px] font-semibold text-muted">Ирэх өдөр<input type="date" value={day} onChange={(e) => setDay(e.target.value)} className={inputCls} /></label>
+            {multi ? (
+              <div className="overflow-x-auto rounded-xl border border-line">
+                <table className="w-full min-w-[560px] text-[13px]">
+                  <thead><tr className="bg-surface2 text-[12px] text-muted"><th className="px-2 py-1.5 text-left">Өнгө / хэмжээ</th><th className="px-2 text-right">Боломжтой</th><th className="px-2 text-right">Өдөрт</th><th className="px-2 text-center">Нөөц</th><th className="px-2 text-right">Захиалга</th></tr></thead>
+                  <tbody>{x.variants.map((v) => (
+                    <Fragment key={v.variantId}>
+                      <tr data-cover-variant={v.variantId} className="border-t border-line">
+                        <td className="max-w-[200px] px-2 py-1.5 font-semibold [overflow-wrap:anywhere]">{v.label}</td>
+                        <td className={clsx('px-2 text-right', v.available <= 0 && 'font-bold text-bad-ink')}>{v.available}</td>
+                        <td className="px-2 text-right">{v.pace ? `~${v.pace}` : '—'}</td>
+                        <td className="px-2 text-center"><span className={clsx('inline-block rounded-md px-1.5 py-0.5 text-[12px] font-bold', coverCls(v.level))}>{v.days === null ? '—' : `${v.days} хоног`} {RL[v.level].label.split(' ')[0]}</span></td>
+                        <td className="px-2 py-1 text-right">{v.order ? (
+                          <span className="inline-flex flex-wrap items-center justify-end gap-1 text-[12px]">🚚 {v.order.qty}ш · {md(v.order.expectedDay)}{v.order.variantId !== null ? <button type="button" onClick={() => void cancel(v.order!.id)} className="text-bad-ink underline">цуцлах</button> : <span className="text-subtle">(бүхэлд)</span>}</span>
+                        ) : <Button size="sm" onClick={() => setFormFor(v.variantId)}>Захиалсан</Button>}</td>
+                      </tr>
+                      {formFor === v.variantId ? <tr><td colSpan={5} className="px-2 pb-2"><OrderForm defaultDay={d.defaultExpected} onSave={(q, dy, n) => save(v.variantId, q, dy, n)} onCancel={() => setFormFor(null)} /></td></tr> : null}
+                    </Fragment>
+                  ))}</tbody>
+                </table>
               </div>
-              <label className="flex flex-col gap-1 text-[12.5px] font-semibold text-muted">Тайлбар<input value={note} maxLength={300} onChange={(e) => setNote(e.target.value)} className={inputCls} /></label>
-            </div>
-          )}
+            ) : null}
+            <p className="text-[12.5px] text-muted [overflow-wrap:anywhere]">Хурд = аль их нь: 7 хоногийн дундаж, сүүлийн 3 өдөр, өнөөдөр (өнгө тус бүрээр). Бөөний захиалга орохгүй.{multi ? ' Нэг өнгийг «Захиалсан» болгосон ч бусад өнгөний нөөц бодогдсоор байна; тэр өнгөний орлого ормогц дахин эхэлнэ.' : ''}</p>
+          </>) : <p className="text-muted">Сүүлийн 7 хоногт зарагдаагүй.</p>}
+          {!multi ? (wholeOrder || x?.order ? (() => { const o = (wholeOrder ?? x!.order)!; return (
+            <div className={clsx('rounded-xl p-3', x?.level === 'LATE' ? 'bg-bad-soft text-bad-ink' : 'bg-surface2')}>
+              <b>{x?.level === 'LATE' ? '⏰ Ирэх хугацаа хэтэрсэн' : '🚚 Захиалсан — ирэхийг хүлээж байна'}</b>
+              <div className="[overflow-wrap:anywhere]">{o.qty} ширхэг · {md(o.expectedDay)} ирнэ · {o.byName}, {ubDateTime(o.orderedAt)}{o.note ? ` · ${o.note}` : ''}</div>
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[12.5px] text-muted">Агуулахад орлого бүртгэгдэхэд автоматаар хаагдана.<Button size="sm" onClick={() => void cancel(o.id)}>«Захиалсан»-ыг цуцлах</Button></div>
+            </div>); })() : (<><b>Захиалсан бол тэмдэглэ — сануулга зогсоно</b><OrderForm defaultDay={d.defaultExpected} onSave={(q, dy, n) => save(null, q, dy, n)} /></>)) : null}
           {d.history.length ? (
             <div className="text-[12.5px]"><b>Өмнөх захиалга</b>
-              {d.history.map((h) => <div key={h.id} className="flex justify-between gap-2 border-t border-line py-1"><span className="min-w-0 [overflow-wrap:anywhere]">{ubDateTime(h.orderedAt)} · {h.qty} ш · {h.byName}</span><span className="shrink-0 text-muted">{h.receivedAt ? `✓ ирсэн ${ubDateTime(h.receivedAt)}` : h.cancelledAt ? 'цуцалсан' : `${md(h.expectedDay)} ирнэ`}</span></div>)}
+              {d.history.map((h) => <div key={h.id} className="flex justify-between gap-2 border-t border-line py-1"><span className="min-w-0 [overflow-wrap:anywhere]">{ubDateTime(h.orderedAt)}{h.variantId ? ` · ${labelOf(h.variantId)}` : ''} · {h.qty} ш · {h.byName}</span><span className="shrink-0 text-muted">{h.receivedAt ? `✓ ирсэн ${ubDateTime(h.receivedAt)}` : h.cancelledAt ? 'цуцалсан' : `${md(h.expectedDay)} ирнэ`}</span></div>)}
             </div>
           ) : null}
         </div>

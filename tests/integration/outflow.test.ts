@@ -42,7 +42,7 @@ const H = 3_600_000;
 let sa: UserActor; let adm: UserActor; let lead: UserActor; let mk: UserActor; let mk2: UserActor; let op: UserActor; let acc: UserActor;
 let page1: number; let page2: number; let prod: number; let v: number; let today: string; let yest: string;
 let ph = 0;
-async function order(over: { daysAgo?: number; hour?: number; status?: 'NEW' | 'CANCELLED'; cancelDaysAgo?: number; qty?: number; pageId?: number } = {}) {
+async function orderAt(over: { daysAgo?: number; hour?: number; status?: 'NEW' | 'CANCELLED'; cancelDaysAgo?: number; qty?: number; pageId?: number } = {}) {
   const { order } = await O.createOrder(op, { phone: String(99300000 + ++ph), province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 13, addressDetail: 'Тест 5-р байр',
     pageId: over.pageId ?? page1, lines: [{ variantId: v, qty: over.qty ?? 1 }], idemKey: randomUUID(), deliveryDate: U.ubDay(new Date(), 1) });
   const at = new Date(U.ubDayStart(U.ubDay(new Date(), -(over.daysAgo ?? 0))).getTime() + (over.hour ?? 10) * H);
@@ -51,6 +51,7 @@ async function order(over: { daysAgo?: number; hour?: number; status?: 'NEW' | '
   await db.order.update({ where: { id: order.id }, data });
   return order.id;
 }
+const order = orderAt;
 /** Бүүстийг өгсөн мөчид асаасан мэт тохируулна */
 async function boostAt(zones: number, at: Date, dollar = 5) {
   await OF.saveBoost(mk, { productId: prod, dollar, zones });
@@ -178,6 +179,44 @@ describe('бараа татах — нөөц хоног (#119, зөвхөн СА
     // үлдэгдэлд хүрэхгүй: журнал = үлдэгдэл
     expect(await db.auditLog.count({ where: { action: { startsWith: 'outflow.reorder' } } })).toBe(3);
     expect(await db.auditLog.count({ where: { action: 'outflow.config' } })).toBe(1);
+  });
+});
+
+describe('бараа татах — өнгө / хэмжээ тус бүрээр (#128)', () => {
+  it('нэг өнгө дуусах дөхвөл барааны мөрөнд тэр өнгө; тэр өнгийг «Захиалсан» болгоход бусад өнгө бодогдсоор; тэр өнгөний орлогоор хаагдана', async () => {
+    const p2 = await P.createProduct(sa, { code: 'C9', name: 'Өнгөтэй бараа', price: 10000, colors: ['Улаан', 'Хар'] });
+    const [red, black] = p2.variants.map((x) => x.id) as [number, number];
+    const wh = await db.warehouse.findFirstOrThrow();
+    await D.createReceipt(sa, { warehouseId: wh.id, lines: [{ variantId: red, qty: 10 }, { variantId: black, qty: 200 }], idemKey: randomUUID() });
+    const sell = async (variantId: number, daysAgo: number, n: number) => {
+      for (let i = 0; i < n; i++) {
+        const { order: o } = await O.createOrder(op, { phone: String(99600000 + ++ph), province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 13, addressDetail: 'Тест 5-р байр', pageId: page1, lines: [{ variantId, qty: 1 }], idemKey: randomUUID(), deliveryDate: U.ubDay(new Date(), 1) });
+        const at = new Date(U.ubDayStart(U.ubDay(new Date(), -daysAgo)).getTime() + 10 * H);
+        await db.order.update({ where: { id: o.id }, data: { createdAt: at, confirmedAt: at } });
+      }
+    };
+    for (let d = 1; d <= 3; d++) { await sell(red, d, 3); await sell(black, d, 3); }
+    let x = (await OF.computeReorder(true)).get(p2.id)!;
+    // улаан 10 − 9 = 1 ÷ 3 = 0 хоног 🔴; хар 191 ÷ 3 = 63 хоног; нийлбэрээр бол 192 ÷ 6 = 32 (нуугдах байсан)
+    expect([x.level, x.days, x.worstLabel]).toEqual(['URGENT', 0, 'Улаан']);
+    expect(x.variants.map((v) => [v.label, v.days, v.level])).toEqual([['Улаан', 0, 'URGENT'], ['Хар', 63, 'OK']]);
+    // улааныг «Захиалсан» → хар бодогдсоор; хар дуусах дөхвөл барааны мөрөнд «Хар»
+    await OF.markReordered(sa, { productId: p2.id, variantId: red, qty: 100 });
+    await err(OF.markReordered(sa, { productId: p2.id, variantId: red, qty: 5 }), 409);
+    await err(OF.markReordered(sa, { productId: p2.id, qty: 5 }), 409); // өнгөөр захиалсан бол бүхэлд нь тэмдэглэхгүй
+    x = (await OF.computeReorder(true)).get(p2.id)!;
+    expect([x.level, x.variants[0]!.level, x.variants[1]!.level]).toEqual(['ORDERED', 'ORDERED', 'OK']);
+    const { order: big } = await O.createOrder(op, { phone: '99611111', province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 13, addressDetail: 'Тест', pageId: page1, lines: [{ variantId: black, qty: 160 }], idemKey: randomUUID(), deliveryDate: U.ubDay(new Date(), 1) });
+    await db.order.update({ where: { id: big.id }, data: { confirmedAt: new Date(Date.now() - 400 * 86_400_000) } });
+    x = (await OF.computeReorder(true)).get(p2.id)!;
+    expect([x.level, x.days, x.worstLabel]).toEqual(['ORDER', 10, 'Хар']); // 31 ÷ 3
+    // хар өнгийн орлого улааны тэмдгийг хаахгүй; улааны орлого хаана
+    await D.createReceipt(sa, { warehouseId: wh.id, lines: [{ variantId: black, qty: 100 }], idemKey: randomUUID() });
+    x = (await OF.computeReorder(true)).get(p2.id)!;
+    expect(x.variants[0]!.level).toBe('ORDERED');
+    await D.createReceipt(sa, { warehouseId: wh.id, lines: [{ variantId: red, qty: 100 }], idemKey: randomUUID() });
+    x = (await OF.computeReorder(true)).get(p2.id)!;
+    expect([x.variants[0]!.level, x.variants[0]!.order, x.level]).toEqual(['OK', null, 'OK']);
   });
 });
 
@@ -318,7 +357,9 @@ describe('бүүстийн ашиг ба анхааруулга (#105–#110)', 
     const al = await OF.alertsView(mk);
     expect(al.red.map((a) => a.productId)).toEqual([prod]);
     expect(al.red[0]!.reasons.join(' ')).toContain('шинэ бүүст');
-    expect(al.red[0]!.pages).toEqual([{ name: 'greenshopy', n: 1 }]);
+    // Өглөө 08:00-оос хойш өнөөдрийн бүүст (8 цагт 0 захиалга) ч шалгагдаж, пэйж нь өнөөдрийнхөөр (0) — цагаас үл хамааран шалгана
+    const intraday = al.red[0]!.reasons.some((r) => r.includes('захиалга алга'));
+    expect(al.red[0]!.pages).toEqual(intraday ? [] : [{ name: 'greenshopy', n: 1 }]);
     expect(await OF.alertBanner(['MARKETING'])).toEqual({ red: 1, orange: 0 });
     expect(await OF.alertBanner(['OPERATOR'])).toBeNull();
     // «1 өдөр ажиглах»
@@ -385,6 +426,9 @@ describe('ажлын цонх (#104-4)', () => {
     const c = await OF.claim(mk, prod);
     await err(OF.claim(mk2, prod), 409, 'claimed');
     await err(OF.release(mk2, c.id), 403);
+    // Авсан мөчөөс хойшхи захиалга (тестийг өдрийн аль ч цагт ажиллуулахад)
+    const nowH = () => (Date.now() + 1000 - U.ubDayStart(U.ubDay()).getTime()) / H;
+    const order = (o: Record<string, unknown> = {}) => orderAt({ hour: nowH(), ...o });
     for (let i = 0; i < 4; i++) await order();
     await OF.syncClaims();
     expect((await db.workClaim.findUniqueOrThrow({ where: { id: c.id } })).progress).toBe(4);

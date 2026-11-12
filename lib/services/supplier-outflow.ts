@@ -50,7 +50,7 @@ export async function supplierOutflow(actor: UserActor, shopIdIn: unknown) {
     return {
       id: p.id, code: p.code, name: p.name, price: p.price, daily, week, avg: Math.round((week / 7) * 10) / 10,
       available: stock.get(p.id)?.available ?? 0,
-      reorder: r ? { level: r.sup.level, days: r.days, pace: r.pace, runOutDay: r.runOutDay, order: r.sup.order ? { expectedDay: r.sup.order.expectedDay, qty: r.sup.order.qty } : null } as Pick<ReorderInfo, 'level' | 'days' | 'pace' | 'runOutDay'> & { order: { expectedDay: string; qty: number } | null } : null,
+      reorder: r ? { level: r.sup.level, days: r.sup.days, pace: r.pace, runOutDay: r.sup.days === null ? null : addDays(today, r.sup.days), worstLabel: r.sup.worstLabel, order: r.sup.order ? { expectedDay: r.sup.order.expectedDay, qty: r.sup.order.qty } : null } as Pick<ReorderInfo, 'level' | 'days' | 'pace' | 'runOutDay' | 'worstLabel'> & { order: { expectedDay: string; qty: number } | null } : null,
       money: { perUnitDed, perUnitEarn: p.price - perUnitDed, revenue, earn, cost, profit: cost === null ? null : earn - week * cost, perUnitProfit: cost === null ? null : p.price - perUnitDed - cost },
     };
   }).sort((a, b) => b.week - a.week || a.name.localeCompare(b.name));
@@ -64,7 +64,7 @@ export async function supplierReorderDetail(actor: UserActor, shopIdIn: unknown,
   const { ids } = await ctx(actor, shopIdIn); own(ids, productIdIn);
   return reorderDetailOf(productIdIn, 'SUPPLIER');
 }
-export async function supplierReorder(actor: UserActor, shopIdIn: unknown, b: { productId?: unknown; qty?: unknown; expectedDay?: unknown; note?: unknown }) {
+export async function supplierReorder(actor: UserActor, shopIdIn: unknown, b: { productId?: unknown; variantId?: unknown; qty?: unknown; expectedDay?: unknown; note?: unknown }) {
   const { ids } = await ctx(actor, shopIdIn); own(ids, b.productId);
   return createReorder(actor, b, 'SUPPLIER');
 }
