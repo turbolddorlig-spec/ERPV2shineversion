@@ -252,8 +252,18 @@ export async function legacyPreview(actor: UserActor, input: PreviewInput) {
     bank: deliver.filter((r) => r.payment === 'BANK').reduce((a, r) => a + r.amount, 0),
     cancel: rows.filter((r) => r.action === 'CANCEL').length, cancelSum: rows.filter((r) => r.action === 'CANCEL').reduce((a, r) => a + r.amount, 0),
     postpone: rows.filter((r) => r.action === 'POSTPONE').length, postponeSum: rows.filter((r) => r.action === 'POSTPONE').reduce((a, r) => a + r.amount, 0),
-    salary: deliver.length * 5000,
+    salary: 0, rate: 0, rateLabel: '',
   };
+  {
+    // Цалингийн урьдчилсан тооцоо: тухайн өдрийн дүрэм + жолоочийн горимоор (switch, #139)
+    const C = await import('./accounting/calc');
+    const rules = await C.rulesFor(db, today);
+    const mode = driver && !driver.isNew ? (await C.modesFor(db, [driver.id], today)).get(driver.id) : undefined;
+    const countable = summary.deliver + summary.cancel + summary.postpone;
+    const { rate, tier } = C.rateFor(rules, mode ?? { mode: 'NORMAL', regionalRate: null }, countable ? (summary.deliver / countable) * 100 : 0, countable, false);
+    summary.rate = rate; summary.salary = rate * summary.deliver;
+    summary.rateLabel = tier === 'flat' ? '1 хүргэлт тогтмол' : tier === 'regional' ? 'Орон нутаг' : 'Гүйцэтгэлээр';
+  }
   const errorCount = general.length + rows.filter((r) => r.errors.length).length;
   return {
     ok: errorCount === 0, general, rows, summary, driver: driver ? { name: driver.isNew ? driverName : driver.name, phone: driverPhone, isNew: driver.isNew } : null,
@@ -282,7 +292,6 @@ export async function legacyCommit(actor: UserActor, input: CommitInput) {
     const L = await import('./delivery/assign');
     const H = await import('./delivery/handover');
     const DR = await import('./delivery/driver');
-    const S = await import('./accounting/settle');
     const C = await import('./accounting/calc');
     const today = ubDay();
     const ip = actor.ip;
@@ -382,8 +391,7 @@ export async function legacyCommit(actor: UserActor, input: CommitInput) {
     }
     if (dN || cN || pN) steps.push(`Хүргэсэн ${dN}, цуцалсан ${cN}, маргааш ${pN}`);
 
-    // 7. Цалин: 1 хүргэлт 5,000₮ (гүйцэтгэлгүй) — өнөөдрийн гүйцэтгэлийг 100% гараар
-    await S.setPerfOverride(actor, { driverId: drv.id, date: today, value: 100, note: 'Туршилтын оруулалт: 1 хүргэлт 5,000₮ (гүйцэтгэлгүй)' });
+    // 7. Цалин — нягтлангийн «Цалин бодох арга» (switch, #139)-аар бодогдоно; оруулалт гар хүргэхгүй
     await writeAudit(actor, 'legacy.import', 'User', drv.id, { driver: drv.name, orders: pv.rows.length, created: createdN, delivered: dN, cancelled: cN, postponed: pN }, db, ['order', 'delivery']);
     const day = await C.computeDriverDay(db, today, drv.id);
     return { ok: true, steps, tempPassword, driver: { id: drv.id, name: drv.name, phone: pv.driver.phone }, day, expected: pv.summary };

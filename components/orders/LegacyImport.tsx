@@ -17,7 +17,7 @@ type Row = {
 };
 type Preview = {
   ok: boolean; general: string[]; rows: Row[]; today: string; warehouse: string | null;
-  summary: { total: number; new: number; existing: number; deliver: number; deliverSum: number; cash: number; bank: number; cancel: number; cancelSum: number; postpone: number; postponeSum: number; salary: number };
+  summary: { total: number; new: number; existing: number; deliver: number; deliverSum: number; cash: number; bank: number; cancel: number; cancelSum: number; postpone: number; postponeSum: number; salary: number; rate: number; rateLabel: string };
   driver: { name: string; phone: string; isNew: boolean } | null;
   products: { code: string; name: string; isNew: boolean; listPrice: number; need: number; have: number; receipt: number; errors: string[] }[];
   opps: { name: string; count: number; suggestId: string }[]; operators: { id: string; name: string }[];
@@ -114,7 +114,7 @@ export function LegacyImport() {
             <Stat label="Нийт" value={`${pv.summary.total}${pv.summary.existing ? ` (өмнө орсон ${pv.summary.existing})` : ''}`} />
             <Stat label="Хүргэсэн" value={`${pv.summary.deliver} · ${mnt(pv.summary.deliverSum)}`} />
             <Stat label="Цуцалсан / Маргааш" value={`${pv.summary.cancel} / ${pv.summary.postpone}`} />
-            <Stat label="Цалин (5,000₮ × хүргэсэн)" value={mnt(pv.summary.salary)} />
+            <Stat label={`Цалин (${pv.summary.rateLabel}: ${mnt(pv.summary.rate)} × ${pv.summary.deliver})`} value={mnt(pv.summary.salary)} />
           </div>
           <p className="text-[13px] text-subtle [overflow-wrap:anywhere]">
             Жолооч: <b>{pv.driver?.name ?? '—'}</b> {pv.driver?.isNew ? <Badge tone="info">шинээр үүснэ</Badge> : pv.driver ? <Badge>бүртгэлтэй</Badge> : null} · Огноо: {pv.today} · Агуулах: {pv.warehouse ?? '—'} ·

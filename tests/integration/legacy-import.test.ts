@@ -76,7 +76,12 @@ describe('туршилтын оруулалт — хуучин ERP-ийн жол
     const pv = await LI.legacyPreview(sa, { text: TEXT, driverName: 'Батаа', driverPhone: '88112233' });
     expect(pv.general).toEqual([]);
     expect(pv.ok).toBe(true);
-    expect(pv.summary).toMatchObject({ total: 24, deliver: 16, deliverSum: 355000, cash: 355000, cancel: 3, postpone: 5, salary: 80000 });
+    // Гүйцэтгэлээр (анхдагч): 16/24 = 66.7% < 90%, 35-аас цөөн → 4,000₮
+    expect(pv.summary).toMatchObject({ total: 24, deliver: 16, deliverSum: 355000, cash: 355000, cancel: 3, postpone: 5, rate: 4000, salary: 64000 });
+    // Switch: «1 хүргэлт тогтмол» 5,000₮ (#139)
+    const ST = await import('@/lib/services/accounting/settle');
+    await ST.setSalaryBasis(sa, { basis: 'FLAT', flatRate: 5000, confirm: 'СОЛИХ' });
+    expect((await LI.legacyPreview(sa, { text: TEXT, driverName: 'Батаа', driverPhone: '88112233' })).summary).toMatchObject({ rate: 5000, salary: 80000, rateLabel: '1 хүргэлт тогтмол' });
     expect(pv.products).toHaveLength(19);
     expect(pv.opps.find((o) => o.name === 'Опп2')?.suggestId).toBe(op.id); // нэрээр олдсон
 
@@ -146,5 +151,38 @@ describe('туршилтын оруулалт — хуучин ERP-ийн жол
     await O.createOrder(op, { phone: '88800003', province: 'Улаанбаатар', district: 'Баянгол', addressDetail: 'Тест байр', lines: [{ variantId: v, qty: 1 }], idemKey: 'legacy-test-order-2' });
     const pv2 = await LI.legacyPreview(sa, { text: TEXT, driverName: 'Батаа', driverPhone: '88112233' });
     expect(pv2.rows.find((r) => r.phone === '88800003')!.errors.some((e) => e.includes('идэвхтэй захиалга'))).toBe(true);
+  });
+
+  it('#139 цалин бодох арга: гүйцэтгэлээр ⇄ 1 хүргэлт тогтмол — өнөөдрөөс, баталгаажуулалттай, зөвхөн СА, орон нутаг өөрийн дүнгээр', async () => {
+    const ST = await import('@/lib/services/accounting/settle');
+    const C = await import('@/lib/services/accounting/calc');
+    const r = await LI.legacyCommit(sa, { text: TEXT, driverName: 'Батаа', driverPhone: '88112233' });
+    const today = U.ubDay();
+    expect(r.day).toMatchObject({ rate: 4000, salary: 64000, tier: 'small', toReceive: 355000 - 64000 });
+    const acc = await actor(['ACCOUNTING']);
+    await err(ST.setSalaryBasis(acc, { basis: 'FLAT', confirm: 'СОЛИХ' }), 403);
+    await err(ST.salaryBasisImpact(acc, { basis: 'FLAT' }), 403);
+    await err(ST.setSalaryBasis(sa, { basis: 'FLAT' }), 400, 'confirm_required');
+    await err(ST.setSalaryBasis(sa, { basis: 'FLAT', flatRate: 50, confirm: 'СОЛИХ' }), 400, 'bad_rate');
+    const imp = await ST.salaryBasisImpact(sa, { basis: 'FLAT', flatRate: 5000 });
+    expect(imp.drivers).toEqual([expect.objectContaining({ name: 'Батаа', delivered: 16, before: 64000, after: 80000 })]);
+    expect((await C.computeDriverDay(db, today, r.driver.id)).salary).toBe(64000); // нөлөөлөл харахад өөрчлөгдөхгүй
+    await ST.setSalaryBasis(sa, { basis: 'FLAT', flatRate: 5000, confirm: 'солих' });
+    expect(await C.computeDriverDay(db, today, r.driver.id)).toMatchObject({ rate: 5000, tier: 'flat', salary: 80000, toReceive: 275000 });
+    // дүнг гараар засна
+    await ST.setSalaryBasis(sa, { basis: 'FLAT', flatRate: 5500, confirm: 'СОЛИХ' });
+    expect((await C.computeDriverDay(db, today, r.driver.id)).salary).toBe(16 * 5500);
+    // орон нутгийн жолооч өөрийн дүнгээр
+    await ST.setPayMode(sa, { driverId: r.driver.id, mode: 'REGIONAL', rate: 3000 });
+    expect(await C.computeDriverDay(db, today, r.driver.id)).toMatchObject({ rate: 3000, tier: 'regional', salary: 48000 });
+    await ST.setPayMode(sa, { driverId: r.driver.id, mode: 'NORMAL' });
+    // буцааж гүйцэтгэлээр; «Цалингийн дүрэм» хадгалахад switch өөрчлөгдөхгүй
+    await ST.setSalaryBasis(sa, { basis: 'PERF', confirm: 'СОЛИХ' });
+    expect((await C.computeDriverDay(db, today, r.driver.id)).salary).toBe(64000);
+    await ST.setSalaryBasis(sa, { basis: 'FLAT', confirm: 'СОЛИХ' });
+    await ST.setSalaryRules(sa, { effectiveFrom: U.ubDay(new Date(), 1), rules: C.DEFAULT_RULES });
+    expect((await C.rulesFor(db, U.ubDay(new Date(), 1)))).toMatchObject({ basis: 'FLAT', flatRate: 5500 });
+    const hist = await db.auditLog.count({ where: { action: 'salary.basis' } });
+    expect(hist).toBe(4); // FLAT 5000, FLAT 5500, PERF, FLAT
   });
 });

@@ -196,7 +196,7 @@ export function DebtLedgerDialog({ onClose }: { onClose: () => void }) {
 
 // ───────────────────────── Цалингийн дүрэм (Супер админ) ─────────────────────────
 
-interface Rules { rates: { high: number; mid: number; low: number }; regionalDefault: number; bigCount: number; big: { high: number; mid: number }; small: { high: number; mid: number }; special: { high: number; mid: number } }
+interface Rules { rates: { high: number; mid: number; low: number }; regionalDefault: number; bigCount: number; big: { high: number; mid: number }; small: { high: number; mid: number }; special: { high: number; mid: number }; basis?: 'PERF' | 'FLAT'; flatRate?: number }
 export function SalaryRulesDialog({ onClose }: { onClose: () => void }) {
   const [data, setData] = useState<{ today: string; current: Rules & { effectiveFrom: string | null }; defaults: Rules; canEdit: boolean; history: { id: number; effectiveFrom: string; rules: Rules; note: string | null; byName: string; createdAt: string }[] } | null>(null);
   const [r, setR] = useState<Rules | null>(null);
@@ -228,6 +228,9 @@ export function SalaryRulesDialog({ onClose }: { onClose: () => void }) {
       <div className="flex flex-col gap-3">
         {err ? <Notice>{err}</Notice> : null}
         {ok ? <Notice tone="ok">Хадгалагдлаа — {from}-аас хүчинтэй</Notice> : null}
+        <BasisSwitch current={{ basis: data?.current.basis ?? 'PERF', flatRate: data?.current.flatRate ?? 5000 }} canEdit={!!data?.canEdit} onChanged={() => void load()} />
+        <div className={clsx('flex flex-col gap-3', data?.current.basis === 'FLAT' && 'opacity-60')}>
+        {data?.current.basis === 'FLAT' ? <p className="text-[12.5px] text-subtle">Доорх гүйцэтгэлийн дүрэм «Гүйцэтгэлээр» горимд буцаахад ашиглагдана (одоо идэвхгүй).</p> : null}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {num(r.rates.high, (n) => setR({ ...r, rates: { ...r.rates, high: n } }), 'Өндөр хөлс ₮')}
           {num(r.rates.mid, (n) => setR({ ...r, rates: { ...r.rates, mid: n } }), 'Дунд хөлс ₮')}
@@ -236,6 +239,7 @@ export function SalaryRulesDialog({ onClose }: { onClose: () => void }) {
         </div>
         <div className="grid gap-2 sm:grid-cols-[160px_1fr]">{num(r.bigCount, (n) => setR({ ...r, bigCount: n }), 'Олон захиалгын босго')}<p className="self-end pb-2 text-[12.5px] text-muted">Тооцох захиалга (хүргэсэн + цуцалсан + маргааш) энэ тооноос их бол «олон захиалга»-ын босго хэрэглэнэ.</p></div>
         <div className="grid gap-2 lg:grid-cols-3">{tier('big', `${r.bigCount}+ захиалга / гараар засагдсан`)}{tier('small', `${r.bigCount}-аас цөөн`)}{tier('special', 'Тусгай гүйцэтгэл')}</div>
+        </div>
         {data?.canEdit ? (
           <div className="grid gap-2 sm:grid-cols-[180px_1fr]">
             <label className="flex flex-col gap-1 text-[12px] font-semibold text-muted">Хэдэн өдрөөс<input type="date" min={data.today} value={from} onChange={(e) => setFrom(e.target.value)} className="h-10 rounded-lg border border-line bg-surface px-2 text-[14px] text-ink" /></label>
@@ -244,11 +248,136 @@ export function SalaryRulesDialog({ onClose }: { onClose: () => void }) {
         ) : null}
         {data?.history.length ? (
           <div className="rounded-[12px] border border-line p-2.5 text-[12.5px]"><div className="mb-1 font-bold">Түүх</div>
-            {data.history.map((h) => <div key={h.id} className="py-0.5 [overflow-wrap:anywhere]"><b>{h.effectiveFrom}</b>-аас: {money(h.rules.rates.high)} / {money(h.rules.rates.mid)} / {money(h.rules.rates.low)} · {h.byName}{h.note ? ` — ${h.note}` : ''}</div>)}
+            {data.history.map((h) => <div key={h.id} className="py-0.5 [overflow-wrap:anywhere]"><b>{h.effectiveFrom}</b>-аас: {h.rules.basis === 'FLAT' ? `1 хүргэлт тогтмол ${money(h.rules.flatRate ?? 5000)}` : `гүйцэтгэлээр ${money(h.rules.rates.high)} / ${money(h.rules.rates.mid)} / ${money(h.rules.rates.low)}`} · {h.byName}{h.note ? ` — ${h.note}` : ''}</div>)}
           </div>
         ) : null}
         <Button size="sm" variant="ghost" onClick={() => data && setR(data.defaults)}>Хуучин ERP-ийн утга (5000 / 4500 / 4000)</Button>
       </div>
     </Modal>
+  );
+}
+
+// ───────────────────────── Цалин бодох арга: switch (#139, Супер админ) ─────────────────────────
+
+interface Impact {
+  today: string; current: { basis: 'PERF' | 'FLAT'; flatRate: number; label: string }; next: { basis: 'PERF' | 'FLAT'; flatRate: number; label: string };
+  drivers: { driverId: string; name: string; delivered: number; mode: string; before: number; beforeRate: number; after: number; afterRate: number }[];
+  lockedCount: number; totalBefore: number; totalAfter: number; confirmWord: string;
+}
+const BASIS_OPTS: { key: 'PERF' | 'FLAT'; title: string; text: string }[] = [
+  { key: 'PERF', title: 'Гүйцэтгэлээр', text: '35 захиалгаас доош / дээш, гүйцэтгэлийн хувиар 5,000 / 4,500 / 4,000₮ (одоогийн дүрэм)' },
+  { key: 'FLAT', title: '1 хүргэлт тогтмол', text: 'Гүйцэтгэл огт харахгүй — хүргэсэн бүрт тогтмол дүн, хэд ч цуцалсан хамаагүй' },
+];
+
+function BasisSwitch({ current, canEdit, onChanged }: { current: { basis: 'PERF' | 'FLAT'; flatRate: number }; canEdit: boolean; onChanged: () => void }) {
+  const [rate, setRate] = useState(String(current.flatRate));
+  const [want, setWant] = useState<{ basis: 'PERF' | 'FLAT'; flatRate: number } | null>(null);
+  const [impact, setImpact] = useState<Impact | null>(null);
+  const [step, setStep] = useState(1);
+  const [checks, setChecks] = useState([false, false, false]);
+  const [word, setWord] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  useEffect(() => { setRate(String(current.flatRate)); }, [current.flatRate]);
+
+  const start = async (basis: 'PERF' | 'FLAT') => {
+    const flatRate = Number(rate);
+    if (basis === current.basis && flatRate === current.flatRate) return;
+    setErr(null); setDone(null); setBusy(true);
+    try {
+      const r = await api<Impact>('/api/accounting/salary-rules', { method: 'POST', json: { action: 'basis-impact', basis, flatRate } });
+      setImpact(r); setWant({ basis, flatRate }); setStep(1); setChecks([false, false, false]); setWord('');
+    } catch (e) { setErr(msg(e)); } finally { setBusy(false); }
+  };
+  const confirm = async () => {
+    if (!want) return;
+    setBusy(true); setErr(null);
+    try {
+      await api('/api/accounting/salary-rules', { method: 'POST', json: { action: 'basis', ...want, confirm: word } });
+      setDone(`✓ «${impact?.next.label}»${want.basis === 'FLAT' ? ` ${money(want.flatRate)}` : ''} — өнөөдрөөс хүчинтэй`);
+      setWant(null); setImpact(null); onChanged();
+    } catch (e) { setErr(msg(e)); } finally { setBusy(false); }
+  };
+  const close = () => { setWant(null); setImpact(null); };
+  const QUESTIONS = impact ? [
+    `Өнөөдрийн (${impact.today}) тооцоо нийлээгүй ${impact.drivers.length} жолоочийн цалин шууд «${impact.next.label}»-аар дахин бодогдохыг ойлгосон`,
+    `Баталгаажсан ${impact.lockedCount} тооцоо болон өнгөрсөн өдрүүдийн цалин өөрчлөгдөхгүйг ойлгосон`,
+    'Энэ өөрчлөлт түүхэнд миний нэрээр бичигдэж, жолооч нарын апп дээр шинэ дүрэм харагдахыг ойлгосон',
+  ] : [];
+
+  return (
+    <div className="flex flex-col gap-2 rounded-[12px] border-2 border-accent/40 p-3">
+      <div className="flex flex-wrap items-center gap-2"><b className="text-[14px]">Цалин бодох арга</b><Badge tone="accent">Одоо: {current.basis === 'FLAT' ? `1 хүргэлт тогтмол ${money(current.flatRate)}` : 'Гүйцэтгэлээр'}</Badge></div>
+      <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Цалин бодох арга">
+        {BASIS_OPTS.map((o) => {
+          const on = current.basis === o.key;
+          return (
+            <button key={o.key} type="button" role="radio" aria-checked={on} disabled={!canEdit || busy} onClick={() => void start(o.key)}
+              className={clsx('flex min-w-0 items-start gap-2.5 rounded-xl border p-3 text-left transition-colors disabled:cursor-not-allowed', on ? 'border-accent bg-accent-soft' : 'border-line hover:bg-surface2')}>
+              <span className={clsx('mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full p-0.5', on ? 'bg-accent' : 'bg-line')}><span className={clsx('h-4 w-4 rounded-full bg-surface transition-transform', on && 'translate-x-4')} /></span>
+              <span className="min-w-0"><b className="block text-[14px]">{o.title}</b><span className="block text-[12.5px] text-muted [overflow-wrap:anywhere]">{o.text}</span></span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="flex flex-col gap-1 text-[12px] font-semibold text-muted">1 хүргэлтийн хөлс ₮ (тогтмол)
+          <input type="number" inputMode="numeric" min={100} step={100} value={rate} disabled={!canEdit} onChange={(e) => setRate(e.target.value.replace(/[^\d]/g, ''))} className="h-10 w-40 rounded-lg border border-line bg-surface px-2 text-[14px] text-ink" /></label>
+        {canEdit && current.basis === 'FLAT' && Number(rate) !== current.flatRate ? <Button size="sm" variant="dark" loading={busy} onClick={() => void start('FLAT')}>Дүнг солих</Button> : null}
+        <span className="pb-2 text-[12px] text-subtle">Орон нутгийн жолооч өөрийн тохируулсан дүнгээр хэвээр.{canEdit ? '' : ' Зөвхөн Супер админ солино.'}</span>
+      </div>
+      {err && !want ? <Notice>{err}</Notice> : null}
+      {done ? <Notice tone="ok">{done}</Notice> : null}
+
+      {want && impact ? (
+        <Modal open onClose={close} title={`Цалин бодох аргыг солих уу? (${step}/3)`} subtitle={`${impact.current.label}${impact.current.basis === 'FLAT' ? ` ${money(impact.current.flatRate)}` : ''} → ${impact.next.label}${impact.next.basis === 'FLAT' ? ` ${money(impact.next.flatRate)}` : ''}`}
+          footer={<>
+            <Button onClick={step === 1 ? close : () => setStep(step - 1)}>{step === 1 ? 'Болих' : 'Буцах'}</Button>
+            {step < 3 ? <Button variant="dark" disabled={step === 2 && checks.some((c) => !c)} onClick={() => setStep(step + 1)}>Үргэлжлүүлэх</Button>
+              : <Button variant="primary" loading={busy} disabled={word.trim().toUpperCase() !== impact.confirmWord} onClick={() => void confirm()}>Солих</Button>}
+          </>}>
+          <div className="flex flex-col gap-3 text-[13.5px]">
+            {err ? <Notice>{err}</Notice> : null}
+            {step === 1 ? (
+              <>
+                <Notice tone="warn">Солимогц ӨНӨӨДРӨӨС хүчинтэй. Өнөөдрийн тооцоо нийлээгүй бүх жолоочийн цалин доорх шиг өөрчлөгдөнө.</Notice>
+                {impact.drivers.length ? (
+                  <div className="overflow-x-auto rounded-xl border border-line">
+                    <table className="w-full min-w-[420px] text-[13px]">
+                      <thead className="bg-surface2 text-left text-[12px] text-subtle"><tr><th className="px-2 py-1.5">Жолооч</th><th className="px-2">Хүргэсэн</th><th className="px-2 text-right">Одоо</th><th className="px-2 text-right">Солисны дараа</th></tr></thead>
+                      <tbody>{impact.drivers.map((d) => (
+                        <tr key={d.driverId} className="border-t border-line">
+                          <td className="max-w-[180px] px-2 py-1.5 [overflow-wrap:anywhere]">{d.name}</td><td className="px-2">{d.delivered}</td>
+                          <td className="whitespace-nowrap px-2 text-right">{money(d.before)} <span className="text-subtle">({money(d.beforeRate)})</span></td>
+                          <td className={clsx('whitespace-nowrap px-2 text-right font-bold', d.after > d.before ? 'text-ok-ink' : d.after < d.before ? 'text-bad-ink' : '')}>{money(d.after)} <span className="font-normal text-subtle">({money(d.afterRate)})</span></td>
+                        </tr>))}</tbody>
+                      <tfoot><tr className="border-t border-line font-bold"><td className="px-2 py-1.5" colSpan={2}>Нийт</td><td className="px-2 text-right">{money(impact.totalBefore)}</td><td className="px-2 text-right">{money(impact.totalAfter)}</td></tr></tfoot>
+                    </table>
+                  </div>
+                ) : <p className="text-muted">Өнөөдөр тооцоо нийлээгүй жолооч алга.</p>}
+                {impact.lockedCount ? <p className="text-[12.5px] text-subtle">Баталгаажсан {impact.lockedCount} тооцоо өөрчлөгдөхгүй.</p> : null}
+              </>
+            ) : step === 2 ? (
+              <div className="flex flex-col gap-2">
+                <p className="font-semibold">Дараах бүгдийг уншиж чагтална уу:</p>
+                {QUESTIONS.map((q, i) => (
+                  <label key={i} className="flex min-w-0 items-start gap-2 rounded-xl border border-line p-2.5">
+                    <input type="checkbox" className="mt-1" checked={checks[i]} onChange={(e) => setChecks(checks.map((c, j) => (j === i ? e.target.checked : c)))} />
+                    <span className="min-w-0 [overflow-wrap:anywhere]">{q}</span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <p>Санамсаргүй дарахаас сэргийлж <b>«{impact.confirmWord}»</b> гэж бичнэ үү:</p>
+                <input data-autofocus value={word} onChange={(e) => setWord(e.target.value)} placeholder={impact.confirmWord} className="h-11 rounded-xl border border-line bg-surface px-3 text-[15px] font-bold tracking-wide" />
+                <p className="text-[12.5px] text-subtle">Нийт цалин: {money(impact.totalBefore)} → <b>{money(impact.totalAfter)}</b></p>
+              </div>
+            )}
+          </div>
+        </Modal>
+      ) : null}
+    </div>
   );
 }

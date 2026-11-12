@@ -337,6 +337,8 @@ function cleanRules(v: unknown): SalaryRules {
     regionalDefault: int(o.regionalDefault, 'Орон нутгийн анхны хөлс'),
     bigCount: int(o.bigCount, 'Захиалгын тооны босго', 1000),
     big: tiers(o.big, 'Олон захиалга'), small: tiers(o.small, 'Цөөн захиалга'), special: tiers(o.special, 'Тусгай'),
+    // Цалин бодох арга (switch) энд өөрчлөгдөхгүй — setSalaryRules хүчинтэй дүрмийнхээс авна (#139)
+    basis: DEFAULT_RULES.basis, flatRate: DEFAULT_RULES.flatRate,
   };
   if (r.bigCount < 1) throw badRequest('Захиалгын тооны босго 1-ээс их');
   return r;
@@ -347,17 +349,78 @@ export async function setSalaryRules(actor: UserActor, input: { effectiveFrom?: 
   if (!canManagePay(actor.roles)) throw forbidden('Цалингийн дүрмийг Супер админ өөрчилнө');
   const from = cleanYmd(input.effectiveFrom, 'Хүчинтэй өдөр');
   if (from < ubDay()) throw badRequest('Өнгөрсөн өдрөөс өөрчлөхгүй — өнгөрсөн тооцоо хэвээр үлдэнэ', 'past_date');
-  const rules = cleanRules(input.rules);
+  const clean = cleanRules(input.rules);
   const note = String(input.note ?? '').trim().slice(0, 300) || null;
   return inTx(async (tx) => {
     const done = await tx.driverSettlement.count({ where: { date: { gte: dateOnly(from) }, status: 'COMPLETED' } });
     if (done) throw conflict(`${from}-ээс хойш баталгаажсан тооцоо ${done} байна — дараагийн өдрөөс сонгоно уу`, 'day_locked');
     const before = await rulesFor(tx, from);
+    const rules: SalaryRules = { ...clean, basis: before.basis, flatRate: before.flatRate };
     await tx.salaryRule.upsert({ where: { effectiveFrom: dateOnly(from) }, create: { effectiveFrom: dateOnly(from), rules: rules as unknown as Prisma.InputJsonValue, note, byName: actor.name }, update: { rules: rules as unknown as Prisma.InputJsonValue, note, byName: actor.name } });
     const pend = await tx.driverSettlement.findMany({ where: { date: { gte: dateOnly(from) }, status: 'PENDING' }, select: { driverId: true, date: true } });
     for (const p of pend) await reopenPending(tx, p.driverId, ymdOf(p.date), actor.name, 'Цалингийн дүрэм солигдсон');
     await writeAudit(actor, 'salary.rules', 'SalaryRule', from, { from, before: { ...before, effectiveFrom: undefined }, after: rules, note } as unknown as Prisma.InputJsonValue, tx, ['money', 'settings']);
     return { ok: true };
+  });
+}
+
+// ───────────────────────── Цалин бодох арга: Гүйцэтгэлээр ⇄ 1 хүргэлт тогтмол (#139) ─────────────────────────
+
+export const BASIS_LABEL: Record<SalaryRules['basis'], string> = { PERF: 'Гүйцэтгэлээр', FLAT: '1 хүргэлт тогтмол' };
+export const BASIS_CONFIRM = 'СОЛИХ';
+
+function cleanBasis(input: { basis?: unknown; flatRate?: unknown }, current: SalaryRules) {
+  const basis = input.basis === 'FLAT' ? 'FLAT' : input.basis === 'PERF' ? 'PERF' : null;
+  if (!basis) throw badRequest('Цалин бодох аргаа сонгоно уу', 'bad_basis');
+  const raw = input.flatRate === undefined || input.flatRate === null || input.flatRate === '' ? current.flatRate : Number(input.flatRate);
+  if (!Number.isInteger(raw) || raw < 100 || raw > 1_000_000) throw badRequest('1 хүргэлтийн хөлс 100–1,000,000₮ бүхэл тоо', 'bad_rate');
+  return { basis: basis as SalaryRules['basis'], flatRate: raw };
+}
+
+/** Солихын өмнө: өнөөдрийн тооцоо нийлээгүй жолооч бүрийн цалин одоо → солисны дараа */
+export async function salaryBasisImpact(actor: UserActor, input: { basis?: unknown; flatRate?: unknown }) {
+  if (!canManagePay(actor.roles)) throw forbidden('Цалин бодох аргыг Супер админ солино');
+  const today = ubDay();
+  const current = await rulesFor(db, today);
+  const next = { ...current, ...cleanBasis(input, current) };
+  const [now, after] = await Promise.all([computeDay(db, today), computeDay(db, today, undefined, next)]);
+  const am = new Map(after.map((d) => [d.driverId, d]));
+  const open = now.filter((d) => !d.locked && (d.delivered || d.cancelled || d.postponed || d.out));
+  const drivers = open.map((d) => ({ driverId: d.driverId, name: d.driverName, delivered: d.delivered, mode: d.mode, before: d.salary, beforeRate: d.rate, after: am.get(d.driverId)?.salary ?? d.salary, afterRate: am.get(d.driverId)?.rate ?? d.rate }));
+  return {
+    today, current: { basis: current.basis, flatRate: current.flatRate, label: BASIS_LABEL[current.basis] },
+    next: { basis: next.basis, flatRate: next.flatRate, label: BASIS_LABEL[next.basis] },
+    drivers, lockedCount: now.filter((d) => d.locked).length,
+    totalBefore: drivers.reduce((a, d) => a + d.before, 0), totalAfter: drivers.reduce((a, d) => a + d.after, 0), confirmWord: BASIS_CONFIRM,
+  };
+}
+
+/**
+ * Switch: ӨНӨӨДРӨӨС шууд хүчинтэй — өнөөдрийн тооцоо нийлээгүй бүх жолоочийн цалин шинэ аргаар бодогдоно.
+ * Баталгаажсан (COMPLETED) тооцоо хуулбараараа хэвээр; өнгөрсөн өдрүүд өөрийн дүрмээр хэвээр. «СОЛИХ» гэж бичиж баталгаажуулна.
+ */
+export async function setSalaryBasis(actor: UserActor, input: { basis?: unknown; flatRate?: unknown; confirm?: unknown; note?: unknown }) {
+  if (!canManagePay(actor.roles)) throw forbidden('Цалин бодох аргыг Супер админ солино');
+  if (String(input.confirm ?? '').trim().toUpperCase() !== BASIS_CONFIRM) throw badRequest(`Баталгаажуулахдаа «${BASIS_CONFIRM}» гэж бичнэ үү`, 'confirm_required');
+  const today = ubDay();
+  const note = String(input.note ?? '').trim().slice(0, 300) || null;
+  return inTx(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(13::int4, 1::int4)`;
+    const current = await rulesFor(tx, today);
+    const b = cleanBasis(input, current);
+    if (b.basis === current.basis && b.flatRate === current.flatRate) return { ok: true, unchanged: true };
+    const { effectiveFrom: _ef, ...base } = current;
+    const rules: SalaryRules = { ...base, ...b };
+    await tx.salaryRule.upsert({ where: { effectiveFrom: dateOnly(today) }, create: { effectiveFrom: dateOnly(today), rules: rules as unknown as Prisma.InputJsonValue, note, byName: actor.name }, update: { rules: rules as unknown as Prisma.InputJsonValue, note, byName: actor.name } });
+    // Ирээдүйд хүчинтэй болох дүрэм байвал арга нь буцаж солигдохгүй
+    const future = await tx.salaryRule.findMany({ where: { effectiveFrom: { gt: dateOnly(today) } } });
+    for (const f of future) await tx.salaryRule.update({ where: { id: f.id }, data: { rules: { ...(f.rules as object), ...b } as unknown as Prisma.InputJsonValue } });
+    const pend = await tx.driverSettlement.findMany({ where: { date: dateOnly(today), status: 'PENDING' }, select: { driverId: true } });
+    for (const p of pend) await reopenPending(tx, p.driverId, today, actor.name, 'Цалин бодох арга солигдсон');
+    await writeAudit(actor, 'salary.basis', 'SalaryRule', today, {
+      from: { basis: BASIS_LABEL[current.basis], flatRate: current.flatRate }, to: { basis: BASIS_LABEL[b.basis], flatRate: b.flatRate }, date: today, note, reopened: pend.length,
+    } as unknown as Prisma.InputJsonValue, tx, ['money', 'settings']);
+    return { ok: true, unchanged: false, reopened: pend.length };
   });
 }
 

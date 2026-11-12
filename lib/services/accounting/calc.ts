@@ -29,6 +29,10 @@ export interface SalaryRules {
   small: Tiers;
   /** Тусгай гүйцэтгэлтэй жолооч */
   special: Tiers;
+  /** Цалин бодох арга (#139): PERF — гүйцэтгэлээр (дээрх босго), FLAT — 1 хүргэлт тогтмол (цуцлалт хамаагүй). Орон нутаг өөрийн дүнгээр */
+  basis: 'PERF' | 'FLAT';
+  /** FLAT үеийн 1 хүргэлтийн хөлс (анх 5,000₮, Супер админ засна) */
+  flatRate: number;
 }
 export const DEFAULT_RULES: SalaryRules = {
   rates: { high: 5000, mid: 4500, low: 4000 },
@@ -37,16 +41,19 @@ export const DEFAULT_RULES: SalaryRules = {
   big: { high: 94.5, mid: 89.5 },
   small: { high: 100, mid: 90 },
   special: { high: 91.5, mid: 86.4 },
+  basis: 'PERF',
+  flatRate: 5000,
 };
 
 export type PayMode = 'NORMAL' | 'SPECIAL' | 'REGIONAL';
 export const MODE_LABEL: Record<PayMode, string> = { NORMAL: 'Энгийн', SPECIAL: 'Тусгай', REGIONAL: 'Орон нутаг' };
-export type Tier = 'regional' | 'special' | 'manual' | 'big' | 'small';
+export type Tier = 'regional' | 'flat' | 'special' | 'manual' | 'big' | 'small';
 
 /** Хуучин ERP-ийн цалингийн хүснэгт (яг ижил дараалал): орон нутаг → тусгай → гараар засагдсан → 35+ → 35-аас цөөн */
 export function rateFor(rules: SalaryRules, mode: { mode: PayMode; regionalRate: number | null }, perf: number, countable: number, manual: boolean): { rate: number; tier: Tier } {
   const pick = (t: Tiers) => (perf >= t.high ? rules.rates.high : perf >= t.mid ? rules.rates.mid : rules.rates.low);
   if (mode.mode === 'REGIONAL') return { rate: mode.regionalRate ?? rules.regionalDefault, tier: 'regional' };
+  if (rules.basis === 'FLAT') return { rate: rules.flatRate, tier: 'flat' };
   if (mode.mode === 'SPECIAL') return { rate: pick(rules.special), tier: 'special' };
   if (manual) return { rate: pick(rules.big), tier: 'manual' };
   if (countable >= rules.bigCount) return { rate: pick(rules.big), tier: 'big' };
@@ -141,13 +148,13 @@ function sv(s: Prisma.DriverSettlementGetPayload<object>): SettlementView {
 /**
  * Өдрийн бүх жолоочийн (эсвэл нэг жолоочийн) тооцоо. Баталгаажсан (COMPLETED) өдөр — баталгаажуулах үеийн хуулбараар (түгжигдсэн).
  */
-export async function computeDay(tx: Tx | typeof db, ymd: string, driverId?: string): Promise<DriverDay[]> {
+export async function computeDay(tx: Tx | typeof db, ymd: string, driverId?: string, rulesOverride?: SalaryRules): Promise<DriverDay[]> {
   const d = dateOnly(ymd);
   const [rows, handovers, settlements, rules, sales] = await Promise.all([
     dayRows(tx, ymd, driverId),
     tx.handover.findMany({ where: { date: d, ...(driverId ? { driverId } : {}) }, select: { id: true, number: true, status: true, driverId: true, driverName: true } }),
     tx.driverSettlement.findMany({ where: { date: d, ...(driverId ? { driverId } : {}) } }),
-    rulesFor(tx, ymd),
+    rulesOverride ? Promise.resolve(rulesOverride) : rulesFor(tx, ymd),
     tx.$queryRaw<{ driverId: string; n: number; amount: number }[]>`
       SELECT "driverId", count(*)::int AS n, coalesce(sum(total), 0)::int AS amount FROM "DriverDoc"
       WHERE kind = 'EXTRA_SALE' AND status = 'DONE' AND "createdAt" >= ${ubDayStart(ymd)} AND "createdAt" < ${ubDayStart(addDays(ymd, 1))}
@@ -224,6 +231,12 @@ export async function computeDriverDay(tx: Tx | typeof db, ymd: string, driverId
 /** Гүйцэтгэлийн дүрмийн тайлбар (жолооч, нягтланд харуулах — хуучин «Цалингийн хувь тооцоолох дүрэм») */
 export function rulesText(rules: SalaryRules) {
   const m = (n: number) => `${n.toLocaleString('en-US')}₮`;
+  if (rules.basis === 'FLAT') {
+    return [
+      { key: 'flat', title: '1 хүргэлт тогтмол (гүйцэтгэлгүй)', lines: [`${m(rules.flatRate)} / хүргэлт — цуцалсан, маргааш хамаагүй`] },
+      { key: 'regional', title: 'Орон нутаг', lines: [`Өөрийн тохируулсан хөлс (анх ${m(rules.regionalDefault)})`] },
+    ];
+  }
   const t = (x: Tiers) => [`≥${x.high}% → ${m(rules.rates.high)}`, `≥${x.mid}% → ${m(rules.rates.mid)}`, `бусад → ${m(rules.rates.low)}`];
   return [
     { key: 'big', title: `${rules.bigCount}+ захиалга (эсвэл гараар засагдсан)`, lines: t(rules.big) },

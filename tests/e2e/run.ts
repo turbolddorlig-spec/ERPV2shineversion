@@ -266,7 +266,8 @@ async function main() {
   const conc = await Promise.all(Array.from({ length: 5 }, (_, i) => req('/api/stock/issues', { cookie: whU.cookie, method: 'POST', body: { warehouseId: 1, reason: 'SAMPLE', note: 'E2E зэрэг зарлага', lines: [{ variantId: vZ, qty: 3 }], idemKey: `e2e-c${i}-${Date.now()}` } })));
   check('зэрэг 5 зарлага (3 ш), байгаа 10 → 3 амжилттай, 2 татгалзсан', conc.filter((x) => x.status === 201).length === 3 && conc.filter((x) => x.status === 409).length === 2, conc.map((x) => x.status).join(','));
   check('зэрэг зарлагын дараа үлдэгдэл 1 (сөрөг биш)', ((await balOf(vZ)).byWarehouse['1'] ?? 0) === 1);
-  // Шилжүүлэг 2 алхам
+  // Шилжүүлэг 2 алхам (тест бүр 2 ш шилжүүлдэг тул Агуулах 2-т хүрэлцэхгүй бол эхлээд орлогоор нөхнө)
+  if (((await balOf(3)).byWarehouse['2'] ?? 0) < 2) await req('/api/stock/receipts', { cookie: whU.cookie, method: 'POST', body: { warehouseId: 2, lines: [{ variantId: 3, qty: 10 }], idemKey: `e2e-tr-prep-${Date.now()}` } });
   const tr = await req('/api/stock/transfers', { cookie: whU.cookie, method: 'POST', body: { fromWarehouseId: 2, toWarehouseId: 1, lines: [{ variantId: 3, qty: 2 }], idemKey: `e2e-tr-${Date.now()}` } });
   const tid = JSON.parse(tr.text).transfer?.id;
   check('шилжүүлэг илгээх → 201', tr.status === 201, tr.text.slice(0, 100));

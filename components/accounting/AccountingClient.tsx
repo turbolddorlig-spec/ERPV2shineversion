@@ -40,7 +40,7 @@ export const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алд�
 const ubToday = (add = 0) => new Date(Date.now() + 8 * 3600_000 + add * 86_400_000).toISOString().slice(0, 10);
 const shift = (ymd: string, n: number) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 export const MODE_L: Record<string, string> = { NORMAL: 'Энгийн', SPECIAL: 'Тусгай', REGIONAL: 'Орон нутаг' };
-export const TIER_L: Record<string, string> = { regional: 'Орон нутаг (тогтмол)', special: 'Тусгай', manual: 'Гараар засагдсан', big: '35+ захиалга', small: '35-аас цөөн' };
+export const TIER_L: Record<string, string> = { flat: '1 хүргэлт тогтмол', regional: 'Орон нутаг (тогтмол)', special: 'Тусгай', manual: 'Гараар засагдсан', big: '35+ захиалга', small: '35-аас цөөн' };
 const pct = (n: number) => `${Number.isInteger(n) ? n : n.toFixed(2)}%`;
 
 type TabK = 'todo' | 'none' | 'done' | 'all';
