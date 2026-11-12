@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { db } from '../../db';
 import { badRequest, conflict, forbidden, notFound } from '../../errors';
 import { writeAudit, SYSTEM_ACTOR, type Actor } from '../../audit';
@@ -123,8 +123,9 @@ export interface TxIn { date: Date; description: string; amount: number; phone?:
 
 /** Захиалгын төлсөн нийлбэр (давхардсан, буцаасныг тооцохгүй) */
 async function paidFor(tx: Tx, orderId: number, exceptId?: number) {
-  const a = await tx.bankTransaction.aggregate({ where: { orderId, status: { in: LINKED }, isDuplicate: false, refunded: false, ...(exceptId ? { id: { not: exceptId } } : {}) }, _sum: { amount: true } });
-  return a._sum.amount ?? 0;
+  const a = await tx.bankTransaction.aggregate({ where: { orderId, status: { in: LINKED }, isDuplicate: false, refunded: false, ...(exceptId ? { id: { not: exceptId } } : {}) }, _sum: { amount: true, excessRefunded: true } });
+  // Илүүг буцаасан дүн (#129) төлсөн дүнгээс хасагдана
+  return (a._sum.amount ?? 0) - (a._sum.excessRefunded ?? 0);
 }
 
 /** Мөнгө орсон: «Төлбөр хүлээж буй» → «Шинэ», урьдчилж төлсөн (Модуль 3-ын markPaid-тай ижил, Meta илгээгдэнэ). Дугаар солигдохгүй */
@@ -315,6 +316,33 @@ export async function manualMatch(actor: UserActor, idIn: unknown, input: { orde
   return r;
 }
 
+/**
+ * «Илүүг буцаасан» (#129): захиалгын дүнгээс илүү орсон мөнгийг үйлчлүүлэгчид буцааж өгсөн — илүү дүн тэр гүйлгээнд бичигдэж,
+ * төлсөн дүнгээс хасагдана → гүйлгээ «Таарсан». Эцсийн (болиулахгүй), түүхэнд.
+ */
+export async function refundExcess(actor: UserActor, idIn: unknown) {
+  assertEdit(actor);
+  const id = Number(idIn);
+  const r = await inTx(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(6::int4, 0::int4)`;
+    const t = await tx.bankTransaction.findUnique({ where: { id } });
+    if (!t) throw notFound('Гүйлгээ олдсонгүй');
+    if (!t.orderId || t.status !== 'EXCESS_AMOUNT' || t.refunded || t.isDuplicate) throw conflict('Зөвхөн «Илүү» төлөлттэй гүйлгээнд', 'not_excess');
+    await lockOrder(tx, t.orderId);
+    const o = await tx.order.findUniqueOrThrow({ where: { id: t.orderId }, select: { id: true, number: true, total: true, paidAmount: true, prepaid: true, phone: true } });
+    const excess = (await paidFor(tx, o.id)) - o.total;
+    if (excess <= 0) throw conflict('Илүү төлөлт алга', 'not_excess');
+    if (excess > t.amount - t.excessRefunded) throw conflict('Илүү дүн энэ гүйлгээнээс их — нягтлан шалгана уу', 'excess_split');
+    await tx.bankTransaction.update({ where: { id }, data: { excessRefunded: { increment: excess }, excessRefundedAt: new Date(), excessRefundedByName: actor.name } });
+    if (o.prepaid && o.paidAmount > o.total) await tx.order.update({ where: { id: o.id }, data: { paidAmount: o.total } });
+    await restatus(tx, o.id);
+    await writeAudit(actor, 'bank.excess_refunded', 'BankTransaction', String(id), { order: o.number, phone: o.phone, amount: excess, txAmount: t.amount, total: o.total }, tx, ['money', 'bank']);
+    return { refunded: excess, order: o.number };
+  });
+  bustCounts();
+  return r;
+}
+
 /** «Буцаасан» тэмдэг (үйлчлүүлэгчид мөнгийг нь буцааж өгсөн) */
 export async function setRefunded(actor: UserActor, idIn: unknown, input: { refunded?: unknown }) {
   assertEdit(actor);
@@ -367,9 +395,16 @@ export async function listTransactions(actor: UserActor, f: BankFilter) {
   ]);
   const orders = await db.order.findMany({ where: { id: { in: items.map((t) => t.orderId).filter((x): x is number => !!x) } }, select: { id: true, number: true, total: true, phone: true, status: true, prepaid: true } });
   const om = new Map(orders.map((o) => [o.id, o]));
+  // «Илүү» гүйлгээний буцаах дүн (#129) = тэр захиалгын төлсөн − нийт дүн
+  const exIds = [...new Set(items.filter((t) => t.status === 'EXCESS_AMOUNT' && t.orderId && !t.refunded).map((t) => t.orderId!))];
+  const paid = exIds.length ? await db.$queryRaw<{ orderId: number; paid: number }[]>`
+    SELECT "orderId", sum(amount - "excessRefunded")::int AS paid FROM "BankTransaction"
+    WHERE "orderId" IN (${Prisma.join(exIds)}) AND "isDuplicate" = false AND refunded = false AND status IN ('MATCHED','EXCESS_AMOUNT','PARTIAL_PAYMENT') GROUP BY 1` : [];
+  const pm = new Map(paid.map((x) => [x.orderId, x.paid]));
   return {
     page, total, pages: Math.max(1, Math.ceil(total / 50)), canEdit: canBankImport(actor.roles),
-    items: items.map((t) => ({ ...t, statusLabel: t.refunded ? BANK_STATUS_LABEL.REFUNDED : t.isDuplicate ? BANK_STATUS_LABEL.DUPLICATE : BANK_STATUS_LABEL[t.status] ?? t.status, order: t.orderId ? om.get(t.orderId) ?? null : null })),
+    items: items.map((t) => ({ ...t, statusLabel: t.refunded ? BANK_STATUS_LABEL.REFUNDED : t.isDuplicate ? BANK_STATUS_LABEL.DUPLICATE : BANK_STATUS_LABEL[t.status] ?? t.status, order: t.orderId ? om.get(t.orderId) ?? null : null,
+      excess: t.status === 'EXCESS_AMOUNT' && t.orderId && !t.refunded ? Math.max(0, (pm.get(t.orderId) ?? 0) - (om.get(t.orderId)?.total ?? 0)) : 0 })),
   };
 }
 
@@ -404,7 +439,7 @@ export async function priceChanges(actor: UserActor, p: { page?: number }) {
   assertView(actor);
   const page = Math.max(1, Math.floor(Number(p.page) || 1));
   const rows = await db.$queryRaw<{ id: number; number: string; phone: string; total: number; status: string; prepaid: boolean; paid: number; operatorName: string; updatedAt: Date; n: number }[]>`
-    WITH s AS (SELECT "orderId", sum(amount)::int AS paid FROM "BankTransaction" WHERE "orderId" IS NOT NULL AND "isDuplicate" = false AND refunded = false AND status IN ('MATCHED','EXCESS_AMOUNT','PARTIAL_PAYMENT') GROUP BY 1)
+    WITH s AS (SELECT "orderId", sum(amount - "excessRefunded")::int AS paid FROM "BankTransaction" WHERE "orderId" IS NOT NULL AND "isDuplicate" = false AND refunded = false AND status IN ('MATCHED','EXCESS_AMOUNT','PARTIAL_PAYMENT') GROUP BY 1)
     SELECT o.id, o.number, o.phone, o.total, o.status::text AS status, o.prepaid, s.paid, o."operatorName", o."updatedAt", count(*) OVER ()::int AS n
     FROM s JOIN "Order" o ON o.id = s."orderId"
     WHERE s.paid <> o.total AND o.status <> 'CANCELLED'

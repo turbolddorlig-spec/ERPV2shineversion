@@ -13,7 +13,7 @@ import { GmailSettings } from './GmailSettings';
  * Банкны импорт (Модуль 6, хуучнаар нь, #83): Хаан банкны CSV / Gmail → утас + дүнгээр «Төлбөр хүлээж буй» захиалга «Мөнгө орсон».
  * Статистик, табууд, хайлт, «Гараар тааруулах», «Буцаасан», «Дүн өөрчлөгдсөн», CSV экспорт.
  */
-interface Tx { id: number; txDate: string; description: string; amount: number; phone: string | null; status: string; statusLabel: string; isDuplicate: boolean; refunded: boolean; source: string; matchedByName: string | null; importedByName: string; order: { id: number; number: string; total: number; status: string; prepaid: boolean } | null }
+interface Tx { id: number; txDate: string; description: string; amount: number; phone: string | null; status: string; statusLabel: string; isDuplicate: boolean; refunded: boolean; excess?: number; excessRefunded: number; excessRefundedByName: string | null; source: string; matchedByName: string | null; importedByName: string; order: { id: number; number: string; total: number; status: string; prepaid: boolean } | null }
 interface ListResp { page: number; total: number; pages: number; canEdit: boolean; items: Tx[] }
 type Agg = { count: number; amount: number };
 interface Stats { total: Agg; matched: Agg; unmatched: Agg; partial: Agg; excess: Agg; duplicate: Agg; refunded: Agg }
@@ -66,6 +66,10 @@ export function BankImportClient() {
     setBusy(true); setErr(null); setInfo(null);
     try { const r = await api<{ emails: number; imported: number; matched: number; duplicates: number; skipped: number }>('/api/bank/gmail', { method: 'POST', json: { action: 'sync' } }); setInfo(`Gmail: ${r.emails} имэйл · ${r.imported} импорт · ${r.matched} таарсан · ${r.duplicates} давхардсан · ${r.skipped} алгассан`); await load(); }
     catch (e) { setErr(msg(e)); } finally { setBusy(false); }
+  };
+  const refundExcess = async (t: Tx) => {
+    if (!t.excess || !confirm(`№${t.order?.number} захиалгын илүү төлсөн ${t.excess.toLocaleString('en-US')}₮-ийг үйлчлүүлэгчид буцааж өгсөн үү?\n\nАнхаар: дараа нь болиулах боломжгүй.`)) return;
+    try { await api(`/api/bank/${t.id}/refund-excess`, { method: 'POST', json: {} }); await load(); } catch (e) { setErr(msg(e)); }
   };
   const refund = async (t: Tx) => {
     if (!confirm(`${t.amount.toLocaleString('en-US')}₮-ийн гүйлгээг «Буцаасан» гэж тэмдэглэх үү?\n\nАнхаар: дараа нь болиулах, захиалгад тааруулах боломжгүй.`)) return;
@@ -127,7 +131,8 @@ export function BankImportClient() {
                 <td className="px-3 py-2"><Badge tone={t.refunded ? 'accent' : TONE[t.isDuplicate ? 'DUPLICATE' : t.status] ?? 'neutral'}>{t.statusLabel}</Badge>{t.matchedByName ? <span className="block text-[11px] text-subtle">{t.matchedByName}</span> : null}</td>
                 <td className="px-3 py-2">{t.order ? <><b>{t.order.number}</b><span className="block text-[11.5px] text-subtle">{money(t.order.total)} · {ST_L[t.order.status] ?? t.order.status}</span></> : '—'}</td>
                 <td className="px-3 py-2 text-right">{data.canEdit ? <div className="flex justify-end gap-1.5">{t.refunded ? <span className="text-[12px] text-subtle">Буцаасан — өөрчлөхгүй</span>
-                  : t.order ? <span className="text-[12px] text-subtle">Таарсан — өөрчлөхгүй</span>
+                  : t.order ? (t.excess ? <Button size="sm" variant="primary" data-refund-excess onClick={() => void refundExcess(t)}>Илүүг буцаасан ({t.excess.toLocaleString('en-US')}₮)</Button>
+                    : <span className="text-[12px] text-subtle">{t.excessRefunded ? `Илүү ${t.excessRefunded.toLocaleString('en-US')}₮ буцаасан${t.excessRefundedByName ? ` · ${t.excessRefundedByName}` : ''}` : 'Таарсан — өөрчлөхгүй'}</span>)
                   : <><Button size="sm" onClick={() => setMatch(t)}>Гараар тааруулах</Button><Button size="sm" variant="ghost" onClick={() => void refund(t)}>Буцаасан</Button></>}</div> : null}</td>
               </tr>
             ))}</tbody></table></div>

@@ -1104,6 +1104,10 @@ model BankTransaction {
   status         String    @default("UNMATCHED")
   isDuplicate    Boolean   @default(false)
   refunded       Boolean   @default(false)
+  /// Илүү төлөлтийг үйлчлүүлэгчид буцаасан дүн (#129) — төлсөн дүнгээс хасагдана; буцаахгүй (эцсийн)
+  excessRefunded Int       @default(0)
+  excessRefundedAt DateTime?
+  excessRefundedByName String?
   source         String    @default("CSV")
   emailMessageId String?   @unique
   importedAt     DateTime  @default(now())

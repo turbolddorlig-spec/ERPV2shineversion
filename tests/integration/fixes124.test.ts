@@ -194,3 +194,22 @@ describe('өмнө танигдаагүй гүйлгээг дахин таару
     expect((await B.rescanUnmatched()).phones).toBe(0);
   });
 });
+
+describe('банкны «Илүү»-г буцаах (#129)', () => {
+  it('илүү дүн = төлсөн − нийт; буцаасны дараа «Таарсан», захиалгын илүү төлөлт арилна; давтахгүй', async () => {
+    const { order: a } = await O.createOrder(op, ub({ phone: '99887722', prepaidWait: true }));
+    await B.importTransactions(acc, [{ date: new Date(), description: '99887722 tulbur', amount: a.total + 5000 }], 'CSV');
+    const t = await db.bankTransaction.findFirstOrThrow({ where: { orderId: a.id } });
+    expect(t.status).toBe('EXCESS_AMOUNT');
+    expect((await B.listTransactions(acc, { tab: 'EXCESS_AMOUNT' })).items.find((x) => x.id === t.id)?.excess).toBe(5000);
+    await err(B.refundExcess(op, t.id), 403);
+    expect(await B.refundExcess(acc, t.id)).toEqual({ refunded: 5000, order: a.number });
+    const t2 = await db.bankTransaction.findUniqueOrThrow({ where: { id: t.id } });
+    expect([t2.status, t2.excessRefunded]).toEqual(['MATCHED', 5000]);
+    const o = await db.order.findUniqueOrThrow({ where: { id: a.id } });
+    expect([o.status, o.paidAmount]).toEqual(['NEW', a.total]);
+    expect((await Q.listOrders(sa, { overpaid: true })).items).toHaveLength(0);
+    await err(B.refundExcess(acc, t.id), 409, 'not_excess');
+    expect(await db.auditLog.count({ where: { action: 'bank.excess_refunded' } })).toBe(1);
+  });
+});
