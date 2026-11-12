@@ -92,6 +92,12 @@ describe('туршилтын оруулалт — хуучин ERP-ийн жол
     expect(day.deliveredAmount).toBe(355000);
     expect(day.cash).toBe(355000);
     expect(day.cancelled).toBe(3);
+    // #140 Падааны нийт дүн (хуучин шиг): авч гарсан 24 захиалгын анхны дүн, тулгалт
+    expect(day.padaan).toEqual({ orders: 24, total: 528000, cancelled: 66000, postponed: 107000, refused: 0, open: 0, openCount: 0 });
+    expect(day.padaan!.total - day.padaan!.cancelled - day.padaan!.postponed - day.salary).toBe(day.toReceive);
+    const ST0 = await import('@/lib/services/accounting/settle');
+    const det = await ST0.accountingDriver(sa, r.driver.id, U.ubDay());
+    expect(det.notInPadaan).toEqual([]);
     expect(day.postponed).toBe(5);
     expect(day.rate).toBe(5000);
     expect(day.salary).toBe(80000);

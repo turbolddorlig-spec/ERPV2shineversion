@@ -133,7 +133,7 @@ async function buildDetail(id: number, canOperate: boolean) {
     orders: h.orders.map((x) => {
       const o = om.get(x.orderId);
       return {
-        orderId: x.orderId, position: x.position, number: o?.number ?? '?', phone: o?.phone ?? '', total: o?.total ?? 0, createdAt: o?.createdAt ?? null, status: o?.status ?? null,
+        orderId: x.orderId, position: x.position, number: o?.number ?? '?', phone: o?.phone ?? '', total: o?.total ?? 0, originalTotal: o?.originalTotal ?? null, createdAt: o?.createdAt ?? null, status: o?.status ?? null,
         note: o?.note ?? null, isNew: x.addedAt.getTime() > h.createdAt.getTime(), removedAt: x.removedAt, removeReason: x.removeReason,
         lines: (o?.lines ?? []).map((l) => ({ name: l.name, label: l.label, code: l.code, qty: l.qty, unitPrice: l.unitPrice })),
       };

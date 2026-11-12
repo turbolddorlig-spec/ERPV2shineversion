@@ -27,6 +27,7 @@ export interface Day {
   deliveredAmount: number; prepaidAmount: number; prepaidCount: number; cancelledAmount: number; cash: number; bank: number; unpaid: number;
   partialCount: number; refusedAmount: number; perfCalc: number; perfOverride: number | null; perf: number; mode: 'NORMAL' | 'SPECIAL' | 'REGIONAL';
   regionalRate: number | null; rate: number; tier: string; salary: number; toReceive: number; extraSale: { count: number; amount: number };
+  padaan?: { orders: number; total: number; cancelled: number; postponed: number; refused: number; open: number; openCount: number };
   settlement: Settlement | null; locked: boolean;
 }
 interface Payment { id: number; kind: string; driverId: string; driverName: string; date: string; amount: number; note: string | null; approved: boolean; approvedByName: string | null; createdAt: string }
@@ -376,6 +377,7 @@ export interface Detail {
   day: Day; rulesText: RulesText[]; modeLabel: string; orders: DOrder[];
   extras: { id: number; kind: string; status: string; total: number; payment: string | null; createdAt: string; lines: { qty: number; unitPrice: number }[] }[];
   debts: { id: number; kind: string; description: string; amount: number; createdAt: string }[]; debtTotal: number; payments: Payment[];
+  notInPadaan?: { id: number; number: string; total: number; status: string }[];
 }
 const PAY_L: Record<string, string> = { CASH: 'Бэлэн', BANK: 'Данс', UNPAID: 'Төлөөгүй', PREPAID: 'Урьдчилж төлсөн' };
 const FAULT_L: Record<string, string> = { OPERATOR: 'Опп', DRIVER: 'Жолооч', MARKETING: 'Маркетинг', WAREHOUSE: 'Агуулах' };
@@ -388,7 +390,57 @@ export function orderBadge(o: DOrder): { l: string; tone: 'ok' | 'bad' | 'warn' 
   return { l: 'Хүлээн аваагүй', tone: 'neutral' };
 }
 
-export function DayPanels({ d }: { d: Detail }) {
+const ST_L: Record<string, string> = { ASSIGNED: 'Оноосон', OUT_FOR_DELIVERY: 'Хүргэлтэд', DELIVERED: 'Хүргэсэн' };
+
+/**
+ * Падааны нийт дүн (#140, хуучин шиг): падаанаар авч гарсан бүх захиалгын анхны дүн → тулгалт.
+ * Падаан − цуцалсан − маргааш − хэсэгчилсэн болиулсан − шийдэгдээгүй = хүргэсэн; − орон нутаг − цалин = хүлээн авах.
+ * Дарахад падаан бүтнээрээ (хэвлэх хуудас) шинэ цонхонд нээгдэнэ.
+ */
+function PadaanCard({ d, link }: { d: Detail; link?: boolean }) {
+  const r = d.day; const p = r.padaan;
+  if (!r.handover || !p) {
+    return (
+      <div className="rounded-[14px] border border-line p-3">
+        <div className="mb-1 text-[13px] font-extrabold">Падаан</div>
+        <p className="text-[13px] text-muted">{r.handover ? `${r.handover.number} · баталгаажсан тооцооны хуулбарт падааны дүн алга` : 'Энэ өдөр падаангүй'}</p>
+      </div>
+    );
+  }
+  const delivered = p.total - p.cancelled - p.postponed - p.refused - p.open;
+  const calc = delivered - r.prepaidAmount - r.salary;
+  const missing = d.notInPadaan ?? [];
+  const ok = calc === r.toReceive && !p.openCount && !missing.length;
+  return (
+    <Wrap href={link ? `/print/handover/${r.handover.id}` : undefined}
+      className={clsx('flex min-w-0 flex-col rounded-[14px] border p-3', link && 'transition-colors hover:bg-surface2/60', ok ? 'border-ok-ink/40' : 'border-warn/60')}>
+      <div className="mb-1 flex items-center justify-between gap-2 text-[13px] font-extrabold"><span>Падаан {r.handover.number}</span>{link ? <span className="text-[12px] font-semibold text-accent-ink">Нээх ↗</span> : null}</div>
+      <Row l={`Падааны нийт дүн (${p.orders})`} v={money(p.total)} strong />
+      <Row l={`− Цуцалсан (${r.cancelled + r.excluded})`} v={money(p.cancelled)} />
+      <Row l={`− Маргааш (${r.postponed})`} v={money(p.postponed)} />
+      {p.refused ? <Row l={`− Хэсэгчилсэн болиулсан (${r.partialCount})`} v={money(p.refused)} /> : null}
+      {p.openCount ? <Row l={`− Шийдэгдээгүй (${p.openCount})`} v={money(p.open)} tone="warn" /> : null}
+      <Row l="= Хүргэсэн" v={money(delivered)} />
+      {r.prepaidAmount ? <Row l="− Орон нутаг" v={money(r.prepaidAmount)} /> : null}
+      <Row l="− Цалин" v={money(r.salary)} />
+      <Row l="= Хүлээн авах" v={money(calc)} strong />
+      <div className="mt-1.5">
+        {ok ? <Badge tone="ok">✅ ПАДААН ТААРСАН</Badge>
+          : <Badge tone="warn">⚠️ {calc !== r.toReceive ? `Зөрүү ${money(Math.abs(calc - r.toReceive))}` : p.openCount ? `${p.openCount} захиалга шийдэгдээгүй` : 'Падаанд ороогүй захиалга'}</Badge>}
+      </div>
+      {missing.length ? (
+        <div className="mt-1.5 text-[12px] text-warn [overflow-wrap:anywhere]">
+          Падаанд ороогүй ({missing.length} · {money(missing.reduce((a, o) => a + o.total, 0))}): {missing.slice(0, 10).map((o) => `№${o.number} ${money(o.total)} (${ST_L[o.status] ?? o.status})`).join(', ')}{missing.length > 10 ? ' …' : ''}
+        </div>
+      ) : null}
+    </Wrap>
+  );
+}
+function Wrap({ href, className, children }: { href?: string; className: string; children: React.ReactNode }) {
+  return href ? <a href={href} target="_blank" rel="noreferrer" title="Падаан бүтнээр нээх" className={className}>{children}</a> : <div className={className}>{children}</div>;
+}
+
+export function DayPanels({ d, padaanLink }: { d: Detail; padaanLink?: boolean }) {
   const r = d.day;
   const extraTake = d.extras.filter((x) => x.kind === 'EXTRA_TAKE' && x.status !== 'CANCELLED');
   const extraSale = d.extras.filter((x) => x.kind === 'EXTRA_SALE');
@@ -415,7 +467,8 @@ export function DayPanels({ d }: { d: Detail }) {
         {d.debtTotal ? <Badge tone="bad">Нээлттэй өр {money(d.debtTotal)}</Badge> : null}
         {r.locked ? <Badge tone="ok">🔒 Баталгаажсан</Badge> : null}
       </div>
-      <div className="grid gap-3 lg:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <PadaanCard d={d} link={padaanLink} />
         <div className="rounded-[14px] border border-line p-3">
           <div className="mb-1 text-[13px] font-extrabold">Мөнгө</div>
           <Row l={`Хүргэсэн дүн (${r.delivered})`} v={money(r.deliveredAmount)} />
@@ -461,7 +514,7 @@ function DriverDrawer({ driverId, date, onClose, onChanged, onPerf, onApprove }:
       {err ? <Notice>{err}</Notice> : null}
       {d && r ? (
         <div className="flex flex-col gap-3">
-          <DayPanels d={d} />
+          <DayPanels d={d} padaanLink />
           {d.debts.length ? (
             <div className="rounded-[14px] border border-bad-soft bg-bad-soft p-3 text-[12.5px]">
               <div className="mb-1 text-[13px] font-extrabold text-bad-ink">Нээлттэй өр (компанид) · {money(d.debtTotal)}</div>

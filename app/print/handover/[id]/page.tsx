@@ -14,15 +14,18 @@ export default async function HandoverPrintPage({ params }: { params: { id: stri
   const { user } = await requirePage('handover');
   const h = await handoverDetail({ id: user.id, name: user.name, roles: user.roles }, Number(params.id)).catch(() => null);
   if (!h) notFound();
-  const orders = h.orders.filter((o) => !o.removedAt);
+  // «Маргааш» дарсан ч бараа жолоочид үлдсэн захиалга падаанаар авч гарсанд тооцогдоно (#140)
+  const orders = h.orders.filter((o) => !o.removedAt || o.removeReason === 'Маргааш (бараа жолоочид)');
+  const amount = orders.reduce((a, o) => a + (o.originalTotal ?? o.total), 0);
+  const postponedPieces = orders.filter((o) => o.removedAt).reduce((a, o) => a + o.lines.reduce((b, l) => b + l.qty, 0), 0);
   return (
     <main className="mx-auto max-w-[820px] bg-white p-6 text-[13px] text-black [overflow-wrap:anywhere] print:p-0">
       <div className="mb-4 flex items-start justify-between print:hidden"><a href="/handover" className="text-[13px] underline">← Буцах</a><PrintButton /></div>
       <h1 className="text-[20px] font-extrabold">Падаан {h.number}</h1>
       <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 border-y border-black/20 py-2 sm:grid-cols-4">
-        <p>Огноо: <b>{h.date}</b></p><p>Жолооч: <b>{h.driverName}</b></p><p>Нийт захиалга: <b>{orders.length}</b></p><p>Нийт дүн: <b>{money(h.totals.amount)}</b></p>
+        <p>Огноо: <b>{h.date}</b></p><p>Жолооч: <b>{h.driverName}</b></p><p>Нийт захиалга: <b>{orders.length}</b></p><p>Нийт дүн: <b>{money(amount)}</b></p>
       </div>
-      <h2 className="mt-4 font-bold">Барааны нэгтгэл ({h.totals.pieces} ширхэг)</h2>
+      <h2 className="mt-4 font-bold">Барааны нэгтгэл ({h.totals.pieces} ширхэг{postponedPieces ? ` · үүнээс гадна «Маргааш» болсон ${postponedPieces} ширхэг жолооч дээр` : ''})</h2>
       <table className="mt-1 w-full border-collapse text-[12.5px]">
         <thead><tr className="border-b border-black/30 text-left"><th className="py-1">Тавиур</th><th>Бараа</th><th className="text-right">Тоо</th><th className="text-center">Check</th></tr></thead>
         <tbody>{h.items.map((i) => <tr key={i.variantId} className="border-b border-black/10"><td className="py-1">{i.shelfCode ?? ''}</td><td>{i.code} · {i.name}{i.label ? ` · ${i.label}` : ''}</td><td className="text-right font-bold">{i.qty}</td><td className="text-center">{i.checked ? '✓' : '☐'}</td></tr>)}</tbody>
@@ -37,8 +40,8 @@ export default async function HandoverPrintPage({ params }: { params: { id: stri
       <div className="mt-1 grid gap-2 sm:grid-cols-2 print:grid-cols-2">
         {orders.map((o, i) => (
           <div key={o.orderId} className="min-w-0 break-inside-avoid rounded border border-black/20 p-2">
-            <p className="flex justify-between"><b>#{i + 1} · №{o.number}</b><span>{mmdd(o.createdAt ? new Date(o.createdAt) : null)}</span></p>
-            <p>Дүн: <b>{money(o.total)}</b></p>
+            <p className="flex justify-between gap-2"><b>#{i + 1} · №{o.number}{o.removedAt ? ' · Маргааш' : ''}</b><span>{mmdd(o.createdAt ? new Date(o.createdAt) : null)}</span></p>
+            <p>Дүн: <b>{money(o.originalTotal ?? o.total)}</b>{o.originalTotal !== null && o.originalTotal !== o.total ? <span> (хэсэгчилсэн → {money(o.total)})</span> : null}</p>
             <p className="mt-1 font-semibold">Бараанууд:</p>
             {o.lines.map((l, j) => <p key={j}>• {l.name}{l.label ? ` · ${l.label}` : ''} {l.qty}ш — {money(l.unitPrice * l.qty)}</p>)}
             {o.note ? <p className="mt-1 font-bold text-red-700">Санамж: {o.note}</p> : null}

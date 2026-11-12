@@ -124,6 +124,8 @@ export interface DriverDay {
   cash: number; bank: number; unpaid: number; partialCount: number; refusedAmount: number;
   perfCalc: number; perfOverride: number | null; perf: number; mode: PayMode; regionalRate: number | null; rate: number; tier: Tier;
   salary: number; toReceive: number;
+  /** Падааны нийт дүн (#140, хуучин шиг): падаанаар авч гарсан бүх захиалгын АНХНЫ дүн (хэсэгчилсэн буцаалтаас өмнөх) + тулгалт */
+  padaan?: { orders: number; total: number; cancelled: number; postponed: number; refused: number; open: number; openCount: number };
   extraSale: { count: number; amount: number };
   settlement: SettlementView | null;
   locked: boolean;
@@ -185,6 +187,12 @@ export async function computeDay(tx: Tx | typeof db, ymd: string, driverId?: str
     }
     const list = byDriver.get(id) ?? [];
     const c = { delivered: 0, cancelled: 0, excluded: 0, postponed: 0, out: 0, notReceived: 0 };
+    let padaanTotal = 0, postponedAmount = 0, openAmount = 0, openCount = 0;
+    for (const r of list) {
+      padaanTotal += r.originalTotal ?? r.total;
+      if (r.outcome === 'POSTPONED') postponedAmount += r.total;
+      if (r.outcome === 'OUT' || r.outcome === 'NOT_RECEIVED') { openAmount += r.originalTotal ?? r.total; openCount++; }
+    }
     let deliveredAmount = 0, prepaidAmount = 0, prepaidCount = 0, cancelledAmount = 0, cash = 0, bank = 0, unpaid = 0, partialCount = 0, refusedAmount = 0;
     for (const r of list) {
       switch (r.outcome) {
@@ -217,6 +225,7 @@ export async function computeDay(tx: Tx | typeof db, ymd: string, driverId?: str
       deliveredAmount, prepaidAmount, prepaidCount, cancelledAmount, cash, bank, unpaid, partialCount, refusedAmount,
       perfCalc: r2(perfCalc), perfOverride, perf: r2(perf), mode: mode.mode, regionalRate: mode.regionalRate, rate, tier,
       salary, toReceive: deliveredAmount - prepaidAmount - salary,
+      padaan: { orders: list.length, total: padaanTotal, cancelled: cancelledAmount, postponed: postponedAmount, refused: refusedAmount, open: openAmount, openCount },
       extraSale: { count: salesM.get(id)?.n ?? 0, amount: salesM.get(id)?.amount ?? 0 },
       settlement: s ? sv(s) : null, locked: false,
     });

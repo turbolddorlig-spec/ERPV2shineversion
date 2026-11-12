@@ -116,6 +116,12 @@ async function driverDetail(driverId: string, date: string) {
     WHERE h."driverId" = ${driverId}::uuid AND h.date = ${dateOnly(date)}::date
       AND (ho."removedAt" IS NULL AND o."handoverId" = h.id OR ho."removeReason" = 'Маргааш (бараа жолоочид)')
     ORDER BY ho.position`;
+  // Падаанд ороогүй (#140, хуучин «Падааны зөрүү»): тухайн өдөр энэ жолоочид оноогдсон / хүргэлтэд / хүргэсэн боловч падааны жагсаалтад алга
+  const sheetIds = orders.map((o) => o.id);
+  const notInPadaan = await db.order.findMany({
+    where: { driverId, deliveryDate: dateOnly(date), status: { in: ['ASSIGNED', 'OUT_FOR_DELIVERY', 'DELIVERED'] }, ...(sheetIds.length ? { id: { notIn: sheetIds } } : {}) },
+    select: { id: true, number: true, total: true, status: true }, orderBy: { id: 'asc' }, take: 200,
+  });
   const lines = orders.length ? await db.orderLine.findMany({ where: { orderId: { in: orders.map((o) => o.id) } }, orderBy: { id: 'asc' }, select: { orderId: true, name: true, label: true, qty: true, refusedQty: true, unitPrice: true } }) : [];
   const lm = new Map<number, typeof lines>();
   for (const l of lines) { const a = lm.get(l.orderId) ?? []; a.push(l); lm.set(l.orderId, a); }
@@ -125,7 +131,7 @@ async function driverDetail(driverId: string, date: string) {
     db.driverPayment.findMany({ where: { driverId, date: dateOnly(date) }, orderBy: { createdAt: 'desc' } }),
   ]);
   return {
-    day, rules, rulesText: rulesText(rules), modeLabel: MODE_LABEL[day.mode],
+    day, rules, rulesText: rulesText(rules), modeLabel: MODE_LABEL[day.mode], notInPadaan,
     orders: orders.map((o) => ({ ...o, lines: lm.get(o.id) ?? [] })),
     extras: extras.map((d) => ({ id: d.id, kind: d.kind, status: d.status, total: d.total, payment: d.payment, createdAt: d.createdAt, lines: d.lines.map((l) => ({ variantId: l.variantId, qty: l.qty, unitPrice: l.unitPrice })) })),
     debts: debts.map((d) => ({ id: d.id, kind: d.kind, description: d.description, amount: d.amount, createdAt: d.createdAt })),
