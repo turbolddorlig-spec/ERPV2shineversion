@@ -223,6 +223,8 @@ export async function deactivateUser(actor: UserActor, id: string) {
     if (target.roles.includes('DRIVER')) await assertDriverClear(tx, id, target.name);
     const u = await tx.user.update({ where: { id }, data: { isActive: false }, select: PUBLIC_SELECT });
     const n = await revokeAllSessions(id, tx);
+    // Аудит #149: олгоогүй зээлийн хүсэлт автоматаар цуцлагдана
+    await tx.staffLoan.updateMany({ where: { staffId: id, status: 'REQUESTED' }, data: { status: 'CANCELLED', closedAt: new Date(), decidedNote: 'Ажилтан идэвхгүй болсон' } });
     // Аудит Б18: нээлттэй зээл, өр, хасагдаагүй торгууль байвал анхааруулна (цалингийн / тооцооны самбарт үлдэнэ)
     const [loans, debts, pens, cdebt] = await Promise.all([
       tx.staffLoan.count({ where: { staffId: id, status: 'ISSUED' } }),

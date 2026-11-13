@@ -23,7 +23,8 @@ type Tx = Prisma.TransactionClient;
 const KEY_CODE = 'salary.lockCode';
 /** Маркетингийн үнэлгээний цалин — сервер автоматаар нэмнэ (#104) */
 export const EVAL_LABEL = 'Үнэлгээний цалин (автомат)';
-const EXCLUDED_ROLES: Role[] = ['DRIVER', 'DRIVER_LEAD', 'SUPER_ADMIN', 'SUPPLIER'];
+// Аудит #149: ахлах жолоочийн цалин энд (бараа зээл нь цалингаас суутгагдана); жолооч — «Тооцоо»-д
+const EXCLUDED_ROLES: Role[] = ['DRIVER', 'SUPER_ADMIN', 'SUPPLIER'];
 const ROLE_PENALTY: Partial<Record<Role, PenaltyType>> = { OPERATOR: 'OPP_ERROR', OPERATOR_LEAD: 'OPP_ERROR', MARKETING: 'MARKETING_ERROR', MARKETING_LEAD: 'MARKETING_ERROR', WAREHOUSE: 'WAREHOUSE_ERROR' };
 export const DAY_TYPE_LABEL: Record<string, string> = { LEAVE: 'Чөлөөтэй', SICK: 'Өвчтэй', ABSENT: 'Тасалсан', DAY_OFF: 'Амарсан' };
 
@@ -442,6 +443,8 @@ export async function lockSalary(actor: UserActor, idIn: unknown, versionIn?: un
     // Зээлсэн бараа: «Цалингаас суутгах» (Бараа зээлтэй ижил — барааны журналаар, давхардахгүй)
     const saved = ((r.loans as { loanId: number; amount: number }[]) ?? []).filter((l) => !prev.loansCharged.includes(l.loanId));
     const loanIds = saved.map((l) => l.loanId);
+    // Аудит #149: суутгах бүх зээлийг эхлээд (дугаарын дарааллаар) түгжинэ — зэрэг буцаалттай deadlock / хуучин дүнгээр суутгахгүй
+    if (loanIds.length) await tx.$queryRaw`SELECT count(*)::int AS n FROM (SELECT id FROM "StaffLoan" WHERE id = ANY(${loanIds}::int[]) ORDER BY id FOR UPDATE) s`;
     // Аудит №6: хадгалснаас хойш буцаалт / суутгалын өөрчлөлт болсон бол хадгалсан дүнгээр суутгахгүй — дахин хадгалуулна
     for (const l of saved) {
       const now = inp.loans.find((x) => x.id === l.loanId);

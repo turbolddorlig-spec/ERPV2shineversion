@@ -271,7 +271,8 @@ export const stockCache: { today: { at: number; data: unknown } | null } = { tod
 export async function inTx<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
-      const r = await db.$transaction(fn, { timeout: 20_000, maxWait: 10_000 });
+      // Аудит #149: түгжээ 8 сек-ээс удаан хүлээхгүй («Систем түр завгүй») — нэг бараа түгжигдэхэд бүх холболт эзлэгдэж систем гацахгүй
+      const r = await db.$transaction(async (tx) => { await tx.$executeRaw`SET LOCAL lock_timeout = '8s'`; return fn(tx); }, { timeout: 20_000, maxWait: 10_000 });
       stockCache.today = null;
       return r;
     } catch (e) {

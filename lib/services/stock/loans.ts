@@ -22,6 +22,28 @@ export const getLoanDiscount = () => getSettingNumber(LOAN_DISCOUNT_KEY, 5000);
 
 const outstanding = (l: { qty: number; returnedQty: number; chargedQty: number }) => l.qty - l.returnedQty - l.chargedQty;
 
+/** Аудит #149 (эзний шийдвэр): 16,000₮-өөс доош үнэтэй бараа хөнгөлөлт (5,000₮) эдлэхгүй — бүтэн үнээр */
+export const LOAN_DISCOUNT_MIN_PRICE = 16_000;
+export const loanDeduction = (unitPrice: number, discount: number) => (unitPrice < LOAN_DISCOUNT_MIN_PRICE ? unitPrice : Math.max(0, unitPrice - discount));
+/** Аудит #149 (эзний шийдвэр): өөрийнхөө зээлийг олгох, буцаах, суутгал засахгүй (Супер админаас бусад) */
+const assertNotSelf = (actor: UserActor, staffId: string, what: string) => {
+  if (staffId === actor.id && !actor.roles.includes('SUPER_ADMIN')) throw forbidden(`Өөрийнхөө зээлийг ${what} боломжгүй — өөр хүн хийнэ`);
+};
+/** Зээл авч болох хүн: идэвхтэй, зээлийн эрхтэй (жолооч, нийлүүлэгч биш) */
+async function assertBorrower(tx: Prisma.TransactionClient | typeof db, staffId: string) {
+  const u = await tx.user.findUnique({ where: { id: staffId }, select: { isActive: true, roles: true } });
+  if (!u || !u.isActive) throw conflict('Ажилтан идэвхгүй болсон — зээл олгохгүй', 'inactive_staff');
+  if (!canRequestLoan(u.roles) && !u.roles.includes('SUPER_ADMIN')) throw conflict('Энэ ажилтанд бараа зээл олгохгүй (жолооч, нийлүүлэгч)', 'not_borrower');
+}
+/** Тухайн хүний одоо байгаа (олгосон, буцаагаагүй) зээл — олгохдоо харуулна */
+export async function staffLoanSummary(staffId: string) {
+  const r = await db.$queryRaw<{ loans: number; pieces: number; amount: bigint }[]>`
+    SELECT count(DISTINCT l.id)::int AS loans, COALESCE(sum(x.qty - x."returnedQty" - x."chargedQty"), 0)::int AS pieces,
+           COALESCE(sum((x.qty - x."returnedQty" - x."chargedQty") * COALESCE(x.deduction, 0)), 0)::bigint AS amount
+    FROM "StaffLoan" l JOIN "StaffLoanLine" x ON x."loanId" = l.id WHERE l."staffId" = ${staffId}::uuid AND l.status = 'ISSUED'`;
+  return { loans: r[0]?.loans ?? 0, pieces: r[0]?.pieces ?? 0, amount: Number(r[0]?.amount ?? 0) };
+}
+
 export async function requestLoan(actor: UserActor, input: { lines?: unknown; note?: unknown; idemKey?: unknown }) {
   requireRole(canRequestLoan(actor.roles), 'Бараа зээл хүсэх эрхгүй');
   const idemKey = cleanIdemKey(input.idemKey);
@@ -33,10 +55,12 @@ export async function requestLoan(actor: UserActor, input: { lines?: unknown; no
   // Аудит А11: идэвхгүй (архивласан / хасагдсан) хувилбарыг зээлэхгүй
   const inactive = await db.productVariant.count({ where: { id: { in: lines.map((x) => x.variantId) }, OR: [{ isActive: false }, { product: { status: 'ARCHIVED' } }] } });
   if (inactive) throw badRequest('Идэвхгүй / архивласан бараа зээлэх боломжгүй', 'inactive_variant');
+  const pv = await db.productVariant.findMany({ where: { id: { in: lines.map((x) => x.variantId) } }, select: { id: true, priceOverride: true, product: { select: { price: true } } } });
+  const reqPrice = new Map(pv.map((v) => [v.id, v.priceOverride ?? v.product.price]));
   try {
     const loan = await db.$transaction(async (tx) => {
       const l = await tx.staffLoan.create({
-        data: { staffId: actor.id, staffName: actor.name, note, idemKey, lines: { create: lines.map((x) => ({ variantId: x.variantId, qty: x.qty })) } },
+        data: { staffId: actor.id, staffName: actor.name, note, idemKey, lines: { create: lines.map((x) => ({ variantId: x.variantId, qty: x.qty, requestPrice: reqPrice.get(x.variantId) ?? null })) } },
       });
       bustTodayCache();
       await writeAudit(actor, 'loan.requested', 'StaffLoan', String(l.id), { lines: lines.length, total: lines.reduce((s, x) => s + x.qty, 0), note }, tx, ['stock', 'loan']);
@@ -56,15 +80,17 @@ async function loadLoan(tx: Prisma.TransactionClient | typeof db, id: number) {
 }
 
 /** Ажилтан өөрийн хүсэлтийг цуцлах (олгохоос өмнө) */
-export async function cancelLoan(actor: UserActor, idInput: unknown) {
+export async function cancelLoan(actor: UserActor, idInput: unknown, input: { note?: unknown } = {}) {
   const id = cleanId(idInput, 'Зээл');
   const l = await loadLoan(db, id);
   if (l.staffId !== actor.id && !canOperateStock(actor.roles)) throw forbidden();
+  // Аудит #149: өөр хүний хүсэлтийг цуцлахад шалтгаан заавал
+  const note = l.staffId === actor.id ? cleanNote(input.note) : cleanNote(input.note, { required: true });
   if (l.status === 'CANCELLED') return l;
   if (l.status !== 'REQUESTED') throw conflict('Олгосон зээлийг цуцлахгүй — буцаалтаар хаана', 'loan_issued');
-  const ok = await db.staffLoan.updateMany({ where: { id, status: 'REQUESTED' }, data: { status: 'CANCELLED', closedAt: new Date() } });
+  const ok = await db.staffLoan.updateMany({ where: { id, status: 'REQUESTED' }, data: { status: 'CANCELLED', closedAt: new Date(), decidedNote: note } });
   bustTodayCache();
-  if (ok.count) await writeAudit(actor, 'loan.cancelled', 'StaffLoan', String(id), {}, db, ['loan']);
+  if (ok.count) await writeAudit(actor, 'loan.cancelled', 'StaffLoan', String(id), { staff: l.staffName, note }, db, ['loan']);
   return loadLoan(db, id);
 }
 
@@ -72,10 +98,10 @@ export async function rejectLoan(actor: UserActor, idInput: unknown, input: { no
   requireRole(canOperateStock(actor.roles));
   const id = cleanId(idInput, 'Зээл');
   const note = cleanNote(input.note, { required: true });
-  const ok = await db.staffLoan.updateMany({ where: { id, status: 'REQUESTED' }, data: { status: 'REJECTED', decidedNote: note, issuedById: actor.id, issuedByName: actor.name, closedAt: new Date() } });
+  const ok = await db.staffLoan.updateMany({ where: { id, status: 'REQUESTED' }, data: { status: 'REJECTED', decidedNote: note, closedAt: new Date() } });
   if (!ok.count) { const l = await loadLoan(db, id); if (l.status === 'REJECTED') return l; throw conflict('Энэ хүсэлт шийдэгдсэн байна'); }
   bustTodayCache();
-  await writeAudit(actor, 'loan.rejected', 'StaffLoan', String(id), { note }, db, ['loan']);
+  await writeAudit(actor, 'loan.rejected', 'StaffLoan', String(id), { note, by: actor.name }, db, ['loan']);
   return loadLoan(db, id);
 }
 
@@ -92,33 +118,39 @@ export async function issueLoan(actor: UserActor, idInput: unknown, input: { war
   }
   const discount = await getLoanDiscount();
   return inTx(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "StaffLoan" WHERE id = ${id} FOR UPDATE`;
     const l = await loadLoan(tx, id);
     if (l.status === 'ISSUED') return { loan: l, duplicate: true };
-    if (l.status !== 'REQUESTED') throw conflict('Энэ хүсэлт шийдэгдсэн байна');
-    const ok = await tx.staffLoan.updateMany({ where: { id, status: 'REQUESTED' }, data: { status: 'ISSUED' } });
-    if (!ok.count) return { loan: await loadLoan(tx, id), duplicate: true };
+    // Аудит #149: зэрэг цуцлагдсан / татгалзсан бол «олгосон» гэж харуулахгүй
+    if (l.status !== 'REQUESTED') throw conflict(`Энэ хүсэлт ${LOAN_STATUS_LABEL[l.status]} болсон байна`, 'loan_decided');
+    assertNotSelf(actor, l.staffId, 'өөртөө олгох');
+    await assertBorrower(tx, l.staffId);
+    await tx.staffLoan.update({ where: { id }, data: { status: 'ISSUED' } });
     const { warehouse, locationId } = await warehouseLocation(tx, warehouseId);
     const staffLoc = await staffLocationId(tx, { id: l.staffId, name: l.staffName });
+    // Аудит #149: хувилбарын түгжээ аваад идэвхтэй эсэхийг дахин шалгана (архивлахтай зэрэг ирвэл)
+    await lockReservedVariants(tx, l.lines);
     const variants = await tx.productVariant.findMany({ where: { id: { in: l.lines.map((x) => x.variantId) } }, select: { id: true, isActive: true, priceOverride: true, product: { select: { price: true, status: true } } } });
-    // Аудит #143: хүсэлтээс хойш идэвхгүй / архивласан болсон бол олгохгүй
     if (variants.some((v) => !v.isActive || v.product.status === 'ARCHIVED')) throw badRequest('Идэвхгүй / архивласан бараа зээлэх боломжгүй', 'inactive_variant');
-    const price = new Map(variants.map((v) => [v.id, v.priceOverride ?? v.product.price]));
+    // Аудит #149: хүсэлтийн үеийн ба одоогийн үнийн ИХ нь — үнийг түр бууруулж суутгалыг багасгахгүй
+    const nowPrice = new Map(variants.map((v) => [v.id, v.priceOverride ?? v.product.price]));
+    const price = new Map(l.lines.map((x) => [x.variantId, Math.max(nowPrice.get(x.variantId) ?? 0, x.requestPrice ?? 0)]));
     const moves = [];
     for (const line of l.lines) {
       const q = adjust.has(line.variantId) ? adjust.get(line.variantId)! : line.qty;
       if (q > line.qty) throw badRequest('Хүссэнээс их олгохгүй', 'bad_qty');
       if (q === 0) { await tx.staffLoanLine.delete({ where: { id: line.id } }); continue; }
       const unitPrice = price.get(line.variantId) ?? 0;
-      await tx.staffLoanLine.update({ where: { id: line.id }, data: { qty: q, unitPrice, deduction: Math.max(0, unitPrice - discount) } });
+      await tx.staffLoanLine.update({ where: { id: line.id }, data: { qty: q, unitPrice, deduction: loanDeduction(unitPrice, discount) } });
       moves.push({ type: 'LOAN_OUT' as const, variantId: line.variantId, qty: q, fromId: locationId, toId: staffLoc, note: `${l.staffName}-д зээл` });
     }
     if (!moves.length) throw badRequest('Дор хаяж нэг бараа олгоно уу', 'no_lines');
     // Аудит #142 (эзний шийдвэр, Б10 шиг): захиалгад түгжигдсэн барааг ажилтанд зээлээр гаргахгүй
-    await lockReservedVariants(tx, moves);
     await applyMoves(tx, actor, { type: 'loan', id }, moves);
     await assertNotReserved(tx, moves, undefined, true);
     const u = await tx.staffLoan.update({ where: { id }, data: { warehouseId, issuedById: actor.id, issuedByName: actor.name, issuedAt: new Date() }, include: { lines: true } });
-    await writeAudit(actor, 'loan.issued', 'StaffLoan', String(id), { staff: l.staffName, warehouse: warehouse.name, total: moves.reduce((s, m) => s + m.qty, 0) }, tx, ['stock', 'loan']);
+    const lines = await tx.staffLoanLine.findMany({ where: { loanId: id }, select: { variantId: true, qty: true, unitPrice: true, deduction: true } });
+    await writeAudit(actor, 'loan.issued', 'StaffLoan', String(id), { staff: l.staffName, warehouse: warehouse.name, total: moves.reduce((s, m) => s + m.qty, 0), lines } as unknown as Prisma.InputJsonValue, tx, ['stock', 'loan']);
     return { loan: u, duplicate: false };
   });
 }
@@ -136,6 +168,7 @@ export async function returnLoan(actor: UserActor, idInput: unknown, input: { wa
     await tx.$queryRaw`SELECT id FROM "StaffLoan" WHERE id = ${id} FOR UPDATE`;
     const l = await loadLoan(tx, id);
     if (l.status !== 'ISSUED') throw conflict('Энэ зээл нээлттэй биш байна', 'loan_not_issued');
+    assertNotSelf(actor, l.staffId, 'өөрөө буцааж авах');
     const { warehouse, locationId } = await warehouseLocation(tx, warehouseId);
     const staffLoc = await staffLocationId(tx, { id: l.staffId, name: l.staffName });
     const moves = [];
@@ -164,7 +197,10 @@ export async function setLoanDeduction(actor: UserActor, idInput: unknown, input
   const l = await loadLoan(db, id);
   const line = l.lines.find((x) => x.variantId === variantId);
   if (!line) throw notFound('Мөр олдсонгүй');
+  assertNotSelf(actor, l.staffId, 'суутгалыг өөрөө засах');
   if (l.status !== 'ISSUED') throw conflict('Нээлттэй зээлийн суутгалыг л засна');
+  // Аудит #149: суутгал барааны үнээс их байж болохгүй
+  if (line.unitPrice !== null && d > line.unitPrice) throw badRequest(`Суутгал барааны үнээс (${line.unitPrice.toLocaleString('en-US')}₮) их байж болохгүй`, 'deduction_over');
   if (line.deduction === d) return l;
   await db.$transaction(async (tx) => {
     // Аудит А11: тэр мөчид цалингаар суутгагдсан (хаагдсан) зээлийн суутгалыг өөрчлөхгүй
@@ -183,6 +219,8 @@ export async function setLoanDeduction(actor: UserActor, idInput: unknown, input
  */
 export async function chargeLoanTx(tx: Prisma.TransactionClient, actor: UserActor, id: number, note: string | null) {
   {
+    // Аудит #149: зээлийг эхлээд түгжинэ — зэрэг буцаалт / суутгал засварын хуучин тоогоор суутгахгүй
+    await tx.$queryRaw`SELECT id FROM "StaffLoan" WHERE id = ${id} FOR UPDATE`;
     const l = await loadLoan(tx, id);
     if (l.status === 'CLOSED') return { loan: l, duplicate: true, amount: 0 };
     if (l.status !== 'ISSUED') throw conflict('Энэ зээл нээлттэй биш байна');
@@ -207,7 +245,8 @@ export async function chargeLoanTx(tx: Prisma.TransactionClient, actor: UserActo
 export async function setLoanDiscount(actor: UserActor, value: unknown) {
   requireRole(canLoanFinance(actor.roles), 'Хямдралыг Супер админ, Нягтлан засна');
   const v = Number(value);
-  if (!Number.isInteger(v) || v < 0 || v > 10_000_000) throw badRequest('Хямдрал 0 эсвэл түүнээс их бүхэл тоо (төгрөг)');
+  // Аудит #149: хөнгөлөлт 16,000₮-өөс бага (үнэтэй бараанд л хэрэглэгдэнэ)
+  if (!Number.isInteger(v) || v < 0 || v >= LOAN_DISCOUNT_MIN_PRICE) throw badRequest(`Хямдрал 0 – ${(LOAN_DISCOUNT_MIN_PRICE - 1).toLocaleString('en-US')}₮`);
   const old = await getLoanDiscount();
   await db.$transaction(async (tx) => {
     await tx.appSetting.upsert({ where: { key: LOAN_DISCOUNT_KEY }, create: { key: LOAN_DISCOUNT_KEY, value: v, updatedById: actor.id }, update: { value: v, updatedById: actor.id } });
@@ -226,14 +265,18 @@ export async function listLoans(actor: UserActor, params: { status?: string; min
     if (!['REQUESTED', 'ISSUED', 'CLOSED', 'REJECTED', 'CANCELLED'].includes(params.status)) throw badRequest('Төлөв буруу');
     where.status = params.status as LoanStatus;
   }
-  const page = Math.max(1, Math.floor(params.page ?? 1));
+  const page = Math.max(1, Math.min(10_000, Math.floor(Number(params.page) || 1)));
   const [total, rows] = await Promise.all([
     db.staffLoan.count({ where }),
     db.staffLoan.findMany({ where, orderBy: { id: 'desc' }, skip: (page - 1) * 30, take: 30, include: { lines: true } }),
   ]);
   const info = await variantInfo([...new Set(rows.flatMap((r) => r.lines.map((l) => l.variantId)))]);
+  // Аудит #149: олгохдоо тухайн хүнд одоо байгаа зээл (ширхэг, дүн); 30+ хоног хаагдаагүй зээл
+  const reqStaff = canOperateStock(actor.roles) ? [...new Set(rows.filter((r) => r.status === 'REQUESTED').map((r) => r.staffId))] : [];
+  const holds = Object.fromEntries(await Promise.all(reqStaff.map(async (sid) => [sid, await staffLoanSummary(sid)] as const)));
+  const oldOpen = canSeeAllLoans(actor.roles) ? await db.staffLoan.count({ where: { status: 'ISSUED', issuedAt: { lt: new Date(Date.now() - LOAN_OLD_DAYS * 86_400_000) } } }) : 0;
   return {
-    total, page, pageSize: 30, loanDiscount: await getLoanDiscount(),
+    total, page, pageSize: 30, loanDiscount: await getLoanDiscount(), holds, oldOpen, oldDays: LOAN_OLD_DAYS, minDiscountPrice: LOAN_DISCOUNT_MIN_PRICE,
     can: { request: canRequestLoan(actor.roles), operate: canOperateStock(actor.roles), finance: canLoanFinance(actor.roles), all: canSeeAllLoans(actor.roles) },
     items: rows.map((l) => serializeLoan(l, info)),
   };
@@ -245,6 +288,7 @@ export async function getLoan(actor: UserActor, idInput: unknown) {
   return serializeLoan(l, await variantInfo(l.lines.map((x) => x.variantId)));
 }
 
+export const LOAN_OLD_DAYS = 30;
 function serializeLoan(l: Awaited<ReturnType<typeof loadLoan>>, info: Awaited<ReturnType<typeof variantInfo>>) {
   const lines = l.lines.map((x) => ({
     id: x.id, variantId: x.variantId, ...info.get(x.variantId), qty: x.qty, returnedQty: x.returnedQty, chargedQty: x.chargedQty, outstanding: outstanding(x),
@@ -254,6 +298,7 @@ function serializeLoan(l: Awaited<ReturnType<typeof loadLoan>>, info: Awaited<Re
     id: l.id, staffId: l.staffId, staffName: l.staffName, status: l.status, statusLabel: LOAN_STATUS_LABEL[l.status], note: l.note, decidedNote: l.decidedNote,
     requestedAt: l.requestedAt, issuedAt: l.issuedAt, issuedBy: l.issuedByName, closedAt: l.closedAt, warehouseId: l.warehouseId,
     lines, outstandingQty: lines.reduce((s, x) => s + x.outstanding, 0),
+    old: l.status === 'ISSUED' && !!l.issuedAt && Date.now() - l.issuedAt.getTime() > LOAN_OLD_DAYS * 86_400_000,
     /** Буцаагаагүй бол цалингаас суутгах дүн */
     deductionDue: lines.reduce((s, x) => s + x.outstanding * (x.deduction ?? 0), 0),
   };

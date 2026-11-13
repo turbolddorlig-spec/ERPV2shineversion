@@ -17,8 +17,8 @@ import { ItemPicker, newKey, type PickLine } from './ItemPicker';
 type LStatus = 'REQUESTED' | 'ISSUED' | 'CLOSED' | 'REJECTED' | 'CANCELLED';
 const TONE: Record<LStatus, 'warn' | 'info' | 'ok' | 'neutral' | 'bad'> = { REQUESTED: 'warn', ISSUED: 'info', CLOSED: 'ok', REJECTED: 'bad', CANCELLED: 'neutral' };
 interface LLine { id: number; variantId: number; code: string; name: string; label: string; thumb: string | null; qty: number; returnedQty: number; chargedQty: number; outstanding: number; unitPrice: number | null; deduction: number | null }
-interface Loan { id: number; staffId: string; staffName: string; status: LStatus; statusLabel: string; note: string | null; decidedNote: string | null; requestedAt: string; issuedAt: string | null; issuedBy: string | null; closedAt: string | null; lines: LLine[]; outstandingQty: number; deductionDue: number }
-interface Resp { items: Loan[]; total: number; pageSize: number; loanDiscount: number; can: { request: boolean; operate: boolean; finance: boolean; all: boolean } }
+interface Loan { id: number; staffId: string; staffName: string; status: LStatus; statusLabel: string; note: string | null; decidedNote: string | null; requestedAt: string; issuedAt: string | null; issuedBy: string | null; closedAt: string | null; lines: LLine[]; outstandingQty: number; deductionDue: number; old?: boolean }
+interface Resp { items: Loan[]; total: number; pageSize: number; loanDiscount: number; holds?: Record<string, { loans: number; pieces: number; amount: number }>; oldOpen?: number; oldDays?: number; minDiscountPrice?: number; can: { request: boolean; operate: boolean; finance: boolean; all: boolean } }
 interface Wh { id: number; name: string; isPrimary: boolean }
 
 const FILTERS = [{ v: 'open', l: 'Нээлттэй' }, { v: 'REQUESTED', l: 'Хүсэлт' }, { v: 'ISSUED', l: 'Олгосон' }, { v: 'CLOSED', l: 'Хаагдсан' }, { v: 'all', l: 'Бүгд' }];
@@ -79,7 +79,7 @@ export function LoansClient({ selfId }: { selfId: string }) {
 
       {can?.finance ? (
         <section className="flex flex-wrap items-end gap-3 rounded-[18px] border border-line bg-surface p-4 shadow-card">
-          <Field id="disc" className="w-48" label="Зээлийн хямдрал (нэгж бүрд)" inputMode="numeric" value={discount} onChange={(e) => setDiscount(e.target.value.replace(/[^\d]/g, ''))} hint="Суутгал = үнэ − хямдрал" />
+          <Field id="disc" className="w-48" label="Зээлийн хямдрал (нэгж бүрд)" inputMode="numeric" value={discount} onChange={(e) => setDiscount(e.target.value.replace(/[^\d]/g, ''))} hint={`Суутгал = үнэ − хямдрал (${money(data?.minDiscountPrice ?? 16000)}-өөс доош үнэтэй бараа — бүтэн үнээр)`} />
           <Button loading={busy} disabled={discount === String(data?.loanDiscount)} onClick={() => run(() => api('/api/loans/settings', { method: 'POST', json: { loanDiscount: Number(discount) } }), `Хямдрал ${money(Number(discount))} боллоо (шинээр олгох зээлд)`)}>Хадгалах</Button>
         </section>
       ) : null}
@@ -89,8 +89,9 @@ export function LoansClient({ selfId }: { selfId: string }) {
         {can?.all && can.request ? <label className="ml-auto inline-flex h-10 items-center gap-2 text-[13.5px] font-semibold"><input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} className="h-[18px] w-[18px] accent-[var(--accent)]" />Зөвхөн миний</label> : null}
       </div>
 
+      {data?.oldOpen ? <p role="alert" data-loan-old className="rounded-[14px] border border-warn/40 bg-warn-soft px-4 py-2.5 text-[13.5px] font-semibold text-warn">🟠 {data.oldDays} хоногоос удаан хаагдаагүй {data.oldOpen} зээл байна — буцаалт авах эсвэл цалингаас суутгана уу.</p> : null}
       <ul className="flex flex-col gap-3">
-        {data?.items.map((l) => <LoanCard key={l.id} loan={l} can={can!} selfId={selfId} whs={whs} busy={busy} run={run} />)}
+        {data?.items.map((l) => <LoanCard key={l.id} loan={l} can={can!} selfId={selfId} whs={whs} busy={busy} run={run} hold={data.holds?.[l.staffId]} />)}
       </ul>
       {data && !data.items.length ? <div className="rounded-[16px] border border-dashed border-line bg-surface p-8 text-center text-muted">Зээл алга</div> : null}
       {data && data.total > data.pageSize ? (
@@ -103,9 +104,10 @@ export function LoansClient({ selfId }: { selfId: string }) {
   );
 }
 
-function LoanCard({ loan: l, can, selfId, whs, busy, run }: {
-  loan: Loan; can: Resp['can']; selfId: string; whs: Wh[]; busy: boolean; run: (fn: () => Promise<unknown>, ok: string) => Promise<boolean>;
+function LoanCard({ loan: l, can, selfId, whs, busy, run, hold }: {
+  loan: Loan; can: Resp['can']; selfId: string; whs: Wh[]; busy: boolean; run: (fn: () => Promise<unknown>, ok: string) => Promise<boolean>; hold?: { loans: number; pieces: number; amount: number };
 }) {
+  const own = l.staffId === selfId; // Аудит #149: өөрийнхөө зээлийг олгох / буцаах / суутгал засахгүй
   const primary = String(whs.find((w) => w.isPrimary)?.id ?? '');
   const [wh, setWh] = useState('');
   const [mode, setMode] = useState<null | 'issue' | 'return'>(null);
@@ -123,8 +125,10 @@ function LoanCard({ loan: l, can, selfId, whs, busy, run }: {
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[13px] font-bold text-subtle">№{l.id}</span>
         <span className="flex-1 text-[16px] font-bold">{l.staffName}</span>
+        {l.old ? <Badge tone="warn">30+ хоног</Badge> : null}
         <Badge tone={TONE[l.status]}>{l.statusLabel}</Badge>
       </div>
+      {l.status === 'REQUESTED' && hold ? <p className="text-[12.5px] font-semibold text-muted">Одоо байгаа зээл: {hold.loans ? `${hold.loans} зээл · ${hold.pieces} ширхэг · суутгах ${money(hold.amount)}` : 'байхгүй'}</p> : null}
       <p className="text-[12.5px] text-subtle">Хүссэн: {ubDateTime(l.requestedAt)}{l.issuedAt ? ` · Олгосон: ${l.issuedBy}, ${ubDateTime(l.issuedAt)}` : ''}{l.closedAt ? ` · Хаагдсан: ${ubDateTime(l.closedAt)}` : ''}{l.note ? ` · ${l.note}` : ''}{l.decidedNote ? ` · Тайлбар: ${l.decidedNote}` : ''}</p>
       <ul className="flex flex-col divide-y divide-line rounded-xl border border-line">
         {l.lines.map((x) => (
@@ -135,7 +139,7 @@ function LoanCard({ loan: l, can, selfId, whs, busy, run }: {
               <span className="text-[12px] text-subtle">{x.code} · {x.qty} ширхэг{x.returnedQty ? ` · буцаасан ${x.returnedQty}` : ''}{x.chargedQty ? ` · цалингаас ${x.chargedQty}` : ''}{l.status === 'ISSUED' ? ` · үлдсэн ${x.outstanding}` : ''}</span>
             </span>
             {x.deduction !== null ? (
-              can.finance && l.status === 'ISSUED' ? (
+              can.finance && l.status === 'ISSUED' && !own ? (
                 <span className="flex items-center gap-1.5">
                   <input inputMode="numeric" aria-label={`${x.code} нэгжийн суутгал`} value={ded[x.variantId] ?? String(x.deduction)} onChange={(e) => setDed((d) => ({ ...d, [x.variantId]: e.target.value.replace(/[^\d]/g, '') }))}
                     className="h-10 w-28 rounded-lg border border-line bg-surface px-2 text-right font-semibold outline-none focus:border-accent" />
@@ -172,8 +176,9 @@ function LoanCard({ loan: l, can, selfId, whs, busy, run }: {
       ) : (
         <div className="flex flex-wrap justify-end gap-2">
           {l.status === 'REQUESTED' && l.staffId === selfId ? <Button variant="danger" loading={busy} onClick={() => run(() => post('cancel', {}), 'Хүсэлт цуцлагдлаа')}>Цуцлах</Button> : null}
-          {l.status === 'REQUESTED' && can.operate ? <><Button variant="danger" onClick={() => setReject(true)}>Татгалзах</Button><Button variant="primary" onClick={() => open('issue')}>Олгох</Button></> : null}
-          {l.status === 'ISSUED' && can.operate ? <Button variant="dark" onClick={() => open('return')}>Буцаалт хүлээн авах</Button> : null}
+          {l.status === 'REQUESTED' && can.operate && !own ? <><Button variant="danger" onClick={() => setReject(true)}>Татгалзах</Button><Button variant="primary" onClick={() => open('issue')}>Олгох</Button></> : null}
+          {l.status === 'REQUESTED' && can.operate && own ? <span className="text-[12.5px] text-subtle">Өөрийн хүсэлтийг өөр хүн олгоно</span> : null}
+          {l.status === 'ISSUED' && can.operate && !own ? <Button variant="dark" onClick={() => open('return')}>Буцаалт хүлээн авах</Button> : null}
         </div>
       )}
       <ReasonModal open={reject} title="Зээлийн хүсэлт татгалзах" label="Шалтгаан" confirmText="Татгалзах" busy={busy} onCancel={() => setReject(false)}

@@ -10,7 +10,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     const ctx = await requireApiUser(req, { page: 'loans', need: 'edit' });
     const body = await req.json().catch(() => ({}));
     switch (params.action) {
-      case 'cancel': return json({ loan: await cancelLoan(ctx.actor, params.id) });
+      case 'cancel': return json({ loan: await cancelLoan(ctx.actor, params.id, body) });
       case 'reject': return json({ loan: await rejectLoan(ctx.actor, params.id, body) });
       case 'issue': return json(await issueLoan(ctx.actor, params.id, body));
       case 'return': return json(await returnLoan(ctx.actor, params.id, body));

@@ -271,7 +271,7 @@ describe('бараа зээл (#38)', () => {
     await L.issueLoan(wh, loan.id, { warehouseId: main.id });
     expect(await qty(main.id, v1)).toBe(7);
     let l = await L.getLoan(mk, loan.id);
-    expect(l.lines[0]).toMatchObject({ qty: 3, unitPrice: 10000, deduction: 5000, outstanding: 3 });
+    expect(l.lines[0]).toMatchObject({ qty: 3, unitPrice: 10000, deduction: 10000, outstanding: 3 }); // #149: 16,000₮-өөс доош — хөнгөлөлтгүй
     // хэсэгчилсэн буцаалт; давхар дарахад нэг
     const rk = key();
     await Promise.all([1, 2].map(() => L.returnLoan(wh, loan.id, { warehouseId: main.id, lines: [{ variantId: v1, qty: 1 }], idemKey: rk })));

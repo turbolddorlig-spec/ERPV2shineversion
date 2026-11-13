@@ -41,7 +41,7 @@ export const PAGES: PageDef[] = [
   { key: 'goods-outflow', label: 'Барааны гарц', short: 'Гарц', href: '/goods-outflow', group: 'Үндсэн', icon: 'trend', module: 7, edit: [...SA_A, 'MARKETING_LEAD', 'MARKETING'] },
   { key: 'warehouse', label: 'Агуулах', short: 'Агуулах', href: '/warehouse', group: 'Агуулах', icon: 'warehouse', module: 2, edit: [...SA_A, 'WAREHOUSE'], view: ['ACCOUNTING'] },
   { key: 'loans', label: 'Бараа зээл', short: 'Зээл', href: '/loans', group: 'Агуулах', icon: 'hand', module: 2,
-    edit: [...SA_A, 'WAREHOUSE', 'ACCOUNTING', 'OPERATOR_LEAD', 'OPERATOR', 'MARKETING_LEAD', 'MARKETING'] },
+    edit: [...SA_A, 'WAREHOUSE', 'ACCOUNTING', 'OPERATOR_LEAD', 'OPERATOR', 'MARKETING_LEAD', 'MARKETING', 'DRIVER_LEAD'] },
   { key: 'handover', label: 'Жолоочид бараа өгөх', short: 'Падаан', href: '/handover', group: 'Агуулах', icon: 'swap', module: 4, edit: [...SA_A, 'WAREHOUSE'], view: ['ACCOUNTING'] },
   { key: 'driver-lead', label: 'Жолооч удирдлага', short: 'Хуваарь', href: '/driver-lead', group: 'Хүргэлт', icon: 'users', module: 4, edit: [...SA_A, 'DRIVER_LEAD'] },
   { key: 'driver', label: 'Миний хүргэлт', short: 'Хүргэлт', href: '/driver', group: 'Хүргэлт', icon: 'truck', module: 5, edit: ['DRIVER'] },
@@ -112,7 +112,8 @@ export const canOperateStock = (roles: Role[]) => has(roles, [...SA_A, 'WAREHOUS
 /** Тооллого батлах, шилжүүлгийн дутагдал шийдэх, агуулах удирдах */
 export const canApproveStock = (roles: Role[]) => has(roles, SA_A);
 /** Бараа зээл хүсэх */
-export const canRequestLoan = (roles: Role[]) => has(roles, ['OPERATOR', 'OPERATOR_LEAD', 'MARKETING', 'MARKETING_LEAD']);
+// Аудит #149 (эзний шийдвэр): ахлах жолооч зээлж болно (цалин нь «Ажилтны цалин»-д); жолооч, нийлүүлэгч — үгүй
+export const canRequestLoan = (roles: Role[]) => has(roles, ['OPERATOR', 'OPERATOR_LEAD', 'MARKETING', 'MARKETING_LEAD', 'DRIVER_LEAD']) && !has(roles, ['DRIVER', 'SUPPLIER']);
 /** Зээлийн хямдрал засах, цалингаас суутгах гэж тэмдэглэх */
 export const canLoanFinance = (roles: Role[]) => has(roles, ['SUPER_ADMIN', 'ACCOUNTING']);
 /** Бүх ажилтны зээлийг харах */
