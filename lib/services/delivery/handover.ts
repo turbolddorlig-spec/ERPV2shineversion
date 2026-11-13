@@ -7,11 +7,12 @@ import { mediaUrl } from '../../storage';
 import { variantInfo } from '../stock/info';
 import { driverGoods } from './driver';
 import { dateOnly, ubDay, ymdOf, isYmd } from '../../ubdate';
-import { applyMoves, stockCache, type MoveSpec } from '../stock/core';
+import { addDays as addDaysYmd } from './core';
+import { applyMoves, handedOverNeed, stockCache, type MoveSpec } from '../stock/core';
 import { inTx, type UserActor } from '../orders/core';
 import { bustCounts } from '../orders/queries';
 import { assertDayOpen } from '../accounting/lock';
-import { HANDOVER_STATUS_LABEL, isGiven, approvalFor, cleanYmd, driverLocationId, lockDelivery, lockHandover, lockOrders, nextHandoverNumber, primaryWarehouse } from './core';
+import { HANDOVER_STATUS_LABEL, isGiven, approvalFor, cleanYmd, driverLocationId, lockDrivers, lockHandover, lockOrders, nextHandoverNumber, primaryWarehouse } from './core';
 
 /**
  * Жолоочид бараа өгөх — хуучин ERP-ийн урсгал (#66): агуулах жолооч + огноо сонгоод захиалгуудаа (бүгдийг) сонгож «Падаан үүсгэх»,
@@ -22,10 +23,43 @@ import { HANDOVER_STATUS_LABEL, isGiven, approvalFor, cleanYmd, driverLocationId
 const assertView = (a: UserActor) => { if (!canView(a.roles, 'handover')) throw forbidden(); };
 const assertOperate = (a: UserActor) => { if (!canOperateHandover(a.roles)) throw forbidden('Падааныг агуулахын ажилтан, админ хийнэ'); };
 
+/** Аудит #147: падааны дугаар (id) буруу бол 404 — системийн алдаа биш */
+function cleanHid(v: unknown): number {
+  const n = Number(v);
+  if (!Number.isInteger(n) || n <= 0 || n > 2_147_483_647) throw notFound('Падаан олдсонгүй');
+  return n;
+}
+/** Падааны жолоочийн түгжээ (жолооч бүрээр, #147) */
+async function lockHandoverDriver(tx: Prisma.TransactionClient, id: number) {
+  const pre = await tx.handover.findUnique({ where: { id }, select: { driverId: true } });
+  if (!pre) throw notFound('Падаан олдсонгүй');
+  await lockDrivers(tx, [pre.driverId]);
+}
+
 function cleanUuid(v: unknown, label = 'Жолооч'): string {
   const s = String(v ?? '');
   if (!/^[0-9a-f-]{36}$/i.test(s)) throw badRequest(`${label} буруу`);
   return s;
+}
+
+/**
+ * Аудит #147 (эзний шийдвэр): агуулах өгсөн боловч жолооч 2 цагаас удаан хүлээн аваагүй падаан — бараа жолоочийн гарт,
+ * захиалга хүргэлтэд гараагүй. Агуулах, ахлах жолооч, Супер админд улаанаар.
+ */
+export const STALE_HANDED_OVER_MS = 2 * 3600_000;
+export async function staleHandedOver() {
+  const rows = await db.handover.findMany({ where: { status: 'HANDED_OVER', handedOverAt: { lt: new Date(Date.now() - STALE_HANDED_OVER_MS) } }, orderBy: { handedOverAt: 'asc' }, take: 50,
+    select: { id: true, number: true, date: true, driverId: true, driverName: true, handedOverAt: true, handedOverBy: true } });
+  return rows.map((r) => ({ ...r, date: ymdOf(r.date) }));
+}
+
+let staleCache: { at: number; n: number } | null = null;
+export async function staleHandoverAlert(roles: string[]): Promise<{ count: number } | null> {
+  if (!roles.some((r) => ['SUPER_ADMIN', 'ADMIN', 'DRIVER_LEAD', 'WAREHOUSE'].includes(r))) return null;
+  if (!staleCache || Date.now() - staleCache.at > 30_000) {
+    staleCache = { at: Date.now(), n: await db.handover.count({ where: { status: 'HANDED_OVER', handedOverAt: { lt: new Date(Date.now() - STALE_HANDED_OVER_MS) } } }) };
+  }
+  return staleCache.n ? { count: staleCache.n } : null;
 }
 
 /** Жолооч сонгох жагсаалт: OKEY/ХОРИГ, захиалгын тоо, төлөв (Бэлдээгүй / Бэлдэж байна / Бэлдсэн / Өгсөн) */
@@ -45,7 +79,7 @@ export async function handoverBoard(actor: UserActor, dateInput?: string) {
   const am = new Map(approvals.map((a) => [a.driverId, a]));
   const trusted = new Set(settings.map((s) => s.userId));
   return {
-    date, canOperate: canOperateHandover(actor.roles), canApprove: canApproveDrivers(actor.roles),
+    date, canOperate: canOperateHandover(actor.roles), canApprove: canApproveDrivers(actor.roles), staleHandedOver: await staleHandedOver(),
     drivers: drivers.map((dr) => {
       const h = hm.get(dr.id);
       const a = am.get(dr.id);
@@ -66,13 +100,16 @@ export async function driverDay(actor: UserActor, input: { driverId?: unknown; d
   const driverId = cleanUuid(input.driverId);
   const date = cleanYmd(input.date);
   const h = await db.handover.findUnique({ where: { driverId_date: { driverId, date: dateOnly(date) } }, select: { id: true } });
-  if (h) return { handover: await handoverDetail(actor, h.id), eligible: [], approval: await approvalFor(db, driverId, date) };
+  if (h) {
+    const hd = await handoverDetail(actor, h.id);
+    return { handover: hd, shortages: await shortages(actor, h.id, hd), eligible: [], approval: await approvalFor(db, driverId, date) };
+  }
   const rows = await db.order.findMany({
     where: { driverId, deliveryDate: dateOnly(date), status: 'ASSIGNED', handoverId: null },
     orderBy: { id: 'asc' }, include: { lines: { select: { qty: true } } },
   });
   return {
-    handover: null, approval: await approvalFor(db, driverId, date),
+    handover: null, shortages: [], approval: await approvalFor(db, driverId, date),
     eligible: rows.map((o) => ({ id: o.id, number: o.number, phone: o.phone, items: o.lines.reduce((a, l) => a + l.qty, 0), total: o.total, note: o.note })),
   };
 }
@@ -80,7 +117,7 @@ export async function driverDay(actor: UserActor, input: { driverId?: unknown; d
 /** Падааны дэлгэрэнгүй: бараа нэгтгэсэн (тавиурын дарааллаар) + Check, захиалгууд (хасагдсан нь улаанаар) */
 export async function handoverDetail(actor: UserActor, idInput: unknown) {
   assertView(actor);
-  return buildDetail(Number(idInput), canOperateHandover(actor.roles));
+  return buildDetail(cleanHid(idInput), canOperateHandover(actor.roles));
 }
 
 async function buildDetail(id: number, canOperate: boolean) {
@@ -148,10 +185,11 @@ export async function createHandover(actor: UserActor, input: { driverId?: unkno
   const date = cleanYmd(input.date);
   const orderIds = Array.isArray(input.orderIds) ? [...new Set((input.orderIds as unknown[]).map(Number))].filter((n) => Number.isInteger(n) && n > 0) : [];
   if (!orderIds.length) throw badRequest('Захиалга сонгоно уу');
-  const driver = await db.user.findUnique({ where: { id: driverId }, select: { id: true, name: true, roles: true } });
+  const driver = await db.user.findUnique({ where: { id: driverId }, select: { id: true, name: true, roles: true, isActive: true } });
   if (!driver || !driver.roles.includes('DRIVER')) throw badRequest('Жолооч олдсонгүй');
+  if (!driver.isActive) throw badRequest('Жолооч идэвхгүй болсон — падаан үүсгэхгүй', 'inactive_driver'); // Аудит #147
   const res = await inTx(async (tx) => {
-    await lockDelivery(tx);
+    await lockDrivers(tx, [driverId]);
     const ap = await approvalFor(tx, driverId, date);
     if (!ap.approved) throw conflict(`Нягтлан зөвшөөрөл өгөөгүй (ХОРИГ)${ap.note ? `: ${ap.note}` : ''}. Нягтлантай холбогдоно уу.`, 'not_approved');
     const exists = await tx.handover.findUnique({ where: { driverId_date: { driverId, date: dateOnly(date) } } });
@@ -184,7 +222,7 @@ async function loadForChange(tx: Prisma.TransactionClient, id: number) {
 /** Бараа бүрийн Check (агуулах) */
 export async function setCheck(actor: UserActor, idInput: unknown, input: { variantId?: unknown; checked?: unknown; kind?: unknown }) {
   assertOperate(actor);
-  const id = Number(idInput);
+  const id = cleanHid(idInput);
   const variantId = Number(input.variantId);
   const kind = input.kind === 'EXTRA' ? 'EXTRA' : 'ORDER';
   if (!Number.isInteger(variantId)) throw badRequest('Бараа буруу');
@@ -210,7 +248,7 @@ export async function setCheck(actor: UserActor, idInput: unknown, input: { vari
 /** «Бэлтгэсэн» (Ноорог → Бэлтгэсэн) */
 export async function prepareHandover(actor: UserActor, idInput: unknown) {
   assertOperate(actor);
-  const id = Number(idInput);
+  const id = cleanHid(idInput);
   await inTx(async (tx) => {
     const h = await loadForChange(tx, id);
     if (h.status !== 'DRAFT') return;
@@ -227,10 +265,10 @@ export async function prepareHandover(actor: UserActor, idInput: unknown) {
  */
 export async function confirmHandover(actor: UserActor, idInput: unknown) {
   assertOperate(actor);
-  const id = Number(idInput);
+  const id = cleanHid(idInput);
   let duplicate = false;
   await inTx(async (tx) => {
-    await lockDelivery(tx);
+    await lockHandoverDriver(tx, id);
     const h = await loadForChange(tx, id);
     if (isGiven(h.status)) { duplicate = true; return; }
     if (h.status !== 'PREPARED') throw conflict('Эхлээд «Бэлтгэсэн» дарна уу', 'not_prepared');
@@ -245,15 +283,21 @@ export async function confirmHandover(actor: UserActor, idInput: unknown) {
     const need = new Map(qty);
     for (const [v, q] of xqty) need.set(v, (need.get(v) ?? 0) + q);
     const wh = await tx.warehouse.findUnique({ where: { id: h.warehouseId }, include: { location: true } });
-    const have = new Map((await tx.stockBalance.findMany({ where: { locationId: wh?.location?.id ?? -1, variantId: { in: [...need.keys()] } } })).map((b) => [b.variantId, b.qty]));
+    const locId = wh?.location?.id ?? -1;
+    // Аудит #147: барааны түгжээ (шилжүүлэг, зарлага, өөр падаантай нэг дараалал) — хоёр падаан сүүлийн барааг зэрэг «өгөхгүй»
+    await tx.$queryRaw`SELECT count(pg_advisory_xact_lock(2::int4, v))::int AS n FROM (SELECT DISTINCT unnest(${[...need.keys()]}::int[]) AS v ORDER BY 1) s`;
+    const others = await handedOverNeed(tx, [...need.keys()], { locationIds: [locId], excludeHandoverId: id });
+    const bal = new Map((await tx.stockBalance.findMany({ where: { locationId: locId, variantId: { in: [...need.keys()] } } })).map((b) => [b.variantId, b.qty]));
+    const have = new Map([...need.keys()].map((v) => [v, Math.max(0, (bal.get(v) ?? 0) - (others.get(`${locId}:${v}`) ?? 0))]));
     const short = [...need].filter(([v, q]) => (have.get(v) ?? 0) < q);
     if (short.length) {
       const names = new Map([...orders.flatMap((o) => o.lines.map((l) => [l.variantId, `${l.name}${l.label ? ` · ${l.label}` : ''}`] as const)), ...[...(await variantInfo([...xqty.keys()]))].map(([v, i]) => [v, `${i.name}${i.label ? ` · ${i.label}` : ''}`] as const)]);
-      throw conflict(short.map(([v, q]) => `«${names.get(v)}» үндсэн агуулахад хүрэлцэхгүй: байгаа ${have.get(v) ?? 0}, өгөх ${q}`).join('; '), 'insufficient_stock');
+      throw conflict(short.map(([v, q]) => { const o = others.get(`${locId}:${v}`) ?? 0; return `«${names.get(v)}» үндсэн агуулахад хүрэлцэхгүй: байгаа ${have.get(v) ?? 0}${o ? ` (${o} нь өөр жолоочид өгөгдсөн, хүлээн авахыг хүлээж буй)` : ''}, өгөх ${q}`; }).join('; '), 'insufficient_stock');
     }
     await tx.handover.update({ where: { id }, data: { status: 'HANDED_OVER', handedOverAt: new Date(), handedOverBy: actor.name, version: { increment: 1 } } });
     await writeAudit(actor, 'handover.handed_over', 'Handover', String(id), {
       number: h.number, driver: h.driverName, orders: orders.length, pieces: [...qty.values()].reduce((a, b) => a + b, 0), note: 'Жолооч утсаараа хүлээн авна',
+      lines: [...need].map(([variantId, q]) => ({ variantId, qty: q })),
     }, tx, ['delivery']);
   });
   bustCounts();
@@ -288,10 +332,9 @@ const assertDriverRole = (a: UserActor) => { if (!canDrive(a.roles)) throw forbi
 export async function myHandover(actor: UserActor) {
   assertDriverRole(actor);
   const today = ubDay();
-  const h = await db.handover.findFirst({
-    where: { driverId: actor.id, OR: [{ date: dateOnly(today) }, { status: 'HANDED_OVER' }] },
-    orderBy: [{ date: 'desc' }], select: { id: true },
-  });
+  // Аудит #147: хүлээн авах (агуулах өгсөн) падаан эхэнд — өчигдрийнх өнөөдрийн ноорогт дарагдаж нуугдахгүй
+  const h = (await db.handover.findFirst({ where: { driverId: actor.id, status: 'HANDED_OVER' }, orderBy: [{ date: 'asc' }], select: { id: true } }))
+    ?? (await db.handover.findFirst({ where: { driverId: actor.id, date: dateOnly(today) }, select: { id: true } }));
   const pending = await db.handover.count({ where: { driverId: actor.id, status: 'HANDED_OVER' } });
   if (!h) return { today, pending, handover: null };
   const d = await buildDetail(h.id, false);
@@ -312,7 +355,7 @@ export async function myHandoverPending(actor: UserActor) {
 /** Жолооч бараа бүрийг чагтална (агуулах Check хийсэн бараа л; «Бүгд» — variantId: 'all') */
 export async function setDriverCheck(actor: UserActor, idInput: unknown, input: { variantId?: unknown; checked?: unknown; kind?: unknown }) {
   assertDriverRole(actor);
-  const id = Number(idInput);
+  const id = cleanHid(idInput);
   await inTx(async (tx) => {
     const h = await loadForChange(tx, id);
     if (h.driverId !== actor.id) throw notFound('Падаан олдсонгүй');
@@ -337,10 +380,10 @@ export async function setDriverCheck(actor: UserActor, idInput: unknown, input: 
  */
 export async function receiveHandover(actor: UserActor, idInput: unknown) {
   assertDriverRole(actor);
-  const id = Number(idInput);
+  const id = cleanHid(idInput);
   let duplicate = false;
   await inTx(async (tx) => {
-    await lockDelivery(tx);
+    await lockDrivers(tx, [actor.id]);
     const h = await loadForChange(tx, id);
     if (h.driverId !== actor.id) throw notFound('Падаан олдсонгүй');
     if (h.status === 'RECEIVED') { duplicate = true; return; }
@@ -382,9 +425,9 @@ export async function receiveHandover(actor: UserActor, idInput: unknown) {
  */
 export async function revertHandover(actor: UserActor, idInput: unknown) {
   assertOperate(actor);
-  const id = Number(idInput);
+  const id = cleanHid(idInput);
   await inTx(async (tx) => {
-    await lockDelivery(tx);
+    await lockHandoverDriver(tx, id);
     const h = await loadForChange(tx, id);
     if (h.status === 'DRAFT') return;
     // Аудит #141 (эзний шийдвэр): жолооч хүлээн авсан падааныг ХЭЗЭЭ Ч буцаахгүй — «Маргааш» болсон бараа падаангүй хоцрох,
@@ -392,7 +435,17 @@ export async function revertHandover(actor: UserActor, idInput: unknown) {
     if (h.status === 'RECEIVED') throw conflict('Жолооч хүлээн авсан падааныг буцаах боломжгүй — захиалга бүрийг жолооч хүргэсэн / цуцалсан / маргааш болгоно', 'handover_received');
     await tx.handoverCheck.deleteMany({ where: { handoverId: id } });
     await tx.handover.update({ where: { id }, data: { status: 'DRAFT', preparedAt: null, preparedBy: null, handedOverAt: null, handedOverBy: null, receivedAt: null, receivedBy: null, version: { increment: 1 } } });
-    await writeAudit(actor, 'handover.reverted', 'Handover', String(id), { number: h.number, from: h.status }, tx, ['delivery']);
+    // Аудит #147: агуулах өгсөн (жолооч хүлээн аваагүй) падааныг буцаавал — ямар бараа тавиурт буцах ёстойг түүхэнд
+    let lines: { variantId: number; qty: number }[] | undefined;
+    if (h.status === 'HANDED_OVER') {
+      const r = await tx.$queryRaw<{ variantId: number; qty: number }[]>`
+        SELECT x."variantId", sum(x.qty)::int AS qty FROM (
+          SELECT ol."variantId", ol.qty FROM "HandoverOrder" ho JOIN "OrderLine" ol ON ol."orderId" = ho."orderId" WHERE ho."handoverId" = ${id} AND ho."removedAt" IS NULL
+          UNION ALL SELECT dl."variantId", dl.qty FROM "DriverDoc" d JOIN "DriverDocLine" dl ON dl."docId" = d.id WHERE d."handoverId" = ${id} AND d.kind = 'EXTRA_TAKE' AND d.status = 'REQUESTED'
+        ) x GROUP BY 1 ORDER BY 1`;
+      lines = r;
+    }
+    await writeAudit(actor, 'handover.reverted', 'Handover', String(id), { number: h.number, from: h.status, ...(lines ? { lines, note: 'Агуулах өгсөн бараа тавиурт буцах ёстой (жолооч хүлээн аваагүй)' } : {}) } as Prisma.InputJsonValue, tx, ['delivery']);
   });
   stockCache.today = null; bustCounts();
   return handoverDetail(actor, id);
@@ -401,12 +454,14 @@ export async function revertHandover(actor: UserActor, idInput: unknown) {
 /** «Падаан буцаах» (зөвхөн Ноорог): падаан устаж, захиалгууд жолоочид оноосон хэвээр үлдэнэ */
 export async function deleteHandover(actor: UserActor, idInput: unknown) {
   assertOperate(actor);
-  const id = Number(idInput);
+  const id = cleanHid(idInput);
   await inTx(async (tx) => {
-    await lockDelivery(tx);
+    await lockHandoverDriver(tx, id);
     const h = await loadForChange(tx, id);
     if (h.status !== 'DRAFT') throw conflict('Эхлээд «Буцаах» дарж ноорог болгоно уу', 'not_draft');
-    await tx.order.updateMany({ where: { handoverId: id }, data: { handoverId: null } });
+    // Аудит #147: 1 сая захиалгыг бүтэн уншихгүй — падааны мөрүүдээс
+    const oids = (await tx.handoverOrder.findMany({ where: { handoverId: id }, select: { orderId: true } })).map((x) => x.orderId);
+    if (oids.length) await tx.order.updateMany({ where: { id: { in: oids }, handoverId: id }, data: { handoverId: null } });
     // Нэмэлт барааны хүсэлт хүлээгдэж үлдэнэ — шинэ падаан үүсэхэд дахин орно
     await tx.driverDoc.updateMany({ where: { handoverId: id, status: 'REQUESTED' }, data: { handoverId: null } });
     await tx.handover.delete({ where: { id } });
@@ -422,8 +477,11 @@ export async function handoverHistory(actor: UserActor, p: { from?: string; to?:
   assertView(actor);
   const to = p.to && isYmd(p.to) ? p.to : ubDay();
   const from = p.from && isYmd(p.from) ? p.from : ubDay(new Date(), -7);
+  // Аудит #147: хамгийн ихдээ 1 жил, 200 хуудас
+  if (from > to) throw badRequest('Эхлэх огноо дуусахаас хойш байна');
+  if (addDaysYmd(from, 366) < to) throw badRequest('Хугацаа 1 жилээс урт байж болохгүй', 'range_too_long');
   const where = { date: { gte: dateOnly(from), lte: dateOnly(to) }, ...(p.driverId ? { driverId: cleanUuid(p.driverId) } : {}) };
-  const page = Math.max(1, Math.min(10_000, Math.floor(Number(p.page) || 1)));
+  const page = Math.max(1, Math.min(200, Math.floor(Number(p.page) || 1)));
   const [total, rows] = await Promise.all([db.handover.count({ where }), db.handover.findMany({
     where, orderBy: [{ date: 'desc' }, { id: 'desc' }], skip: (page - 1) * HISTORY_PAGE, take: HISTORY_PAGE, include: { _count: { select: { orders: { where: { removedAt: null } } } } },
   })]);
@@ -438,6 +496,11 @@ export async function handoverHistory(actor: UserActor, p: { from?: string; to?:
 
 // ───────────────────────── Нягтлангийн OKEY / ХОРИГ ─────────────────────────
 
+async function assertDriverUser(id: string) {
+  const u = await db.user.findUnique({ where: { id }, select: { roles: true } });
+  if (!u || !u.roles.includes('DRIVER')) throw badRequest('Жолооч олдсонгүй');
+}
+
 export async function setApproval(actor: UserActor, input: { driverId?: unknown; date?: unknown; approved?: unknown; note?: unknown }) {
   if (!canApproveDrivers(actor.roles)) throw forbidden('OKEY / ХОРИГ-ийг нягтлан, админ тавина');
   const driverId = cleanUuid(input.driverId);
@@ -445,6 +508,7 @@ export async function setApproval(actor: UserActor, input: { driverId?: unknown;
   const approved = input.approved === true;
   const note = String(input.note ?? '').trim().slice(0, 200) || null;
   if (!approved && !note) throw badRequest('ХОРИГ-ийн шалтгааныг бичнэ үү (жишээ: өр 120,000₮)', 'reason_required');
+  await assertDriverUser(driverId);
   await db.$transaction(async (tx) => {
     await tx.driverApproval.upsert({ where: { driverId_date: { driverId, date: dateOnly(date) } }, create: { driverId, date: dateOnly(date), approved, note, byName: actor.name }, update: { approved, note, byName: actor.name, at: new Date() } });
     await writeAudit(actor, approved ? 'driver.approved' : 'driver.blocked', 'User', driverId, { date, note }, tx, ['delivery', 'money']);
@@ -456,6 +520,7 @@ export async function setTrusted(actor: UserActor, input: { driverId?: unknown; 
   if (!canApproveDrivers(actor.roles)) throw forbidden('Нягтлан, админ тохируулна');
   const driverId = cleanUuid(input.driverId);
   const trusted = input.trusted === true;
+  await assertDriverUser(driverId);
   await db.$transaction(async (tx) => {
     await tx.driverSetting.upsert({ where: { userId: driverId }, create: { userId: driverId, trusted, updatedBy: actor.name }, update: { trusted, updatedBy: actor.name } });
     await writeAudit(actor, 'driver.trusted', 'User', driverId, { trusted }, tx, ['delivery']);
@@ -464,13 +529,17 @@ export async function setTrusted(actor: UserActor, input: { driverId?: unknown; 
 }
 
 /** Падаан эхлүүлэхээс өмнө: үндсэн агуулахад хүрэлцэх эсэх (дутуу бол «Дүүргэлт»-ээр татна) */
-export async function shortages(actor: UserActor, idInput: unknown) {
+export async function shortages(actor: UserActor, idInput: unknown, built?: Awaited<ReturnType<typeof buildDetail>>) {
   assertView(actor);
-  const d = await handoverDetail(actor, idInput);
-  const h = await db.handover.findUniqueOrThrow({ where: { id: d.id } });
-  const wh = await primaryWarehouse(db).catch(() => null);
-  const locId = wh && wh.warehouse.id === h.warehouseId ? wh.locationId : (await db.stockLocation.findUnique({ where: { warehouseId: h.warehouseId } }))?.id;
-  const bal = await db.stockBalance.findMany({ where: { locationId: locId ?? -1, variantId: { in: d.items.map((i) => i.variantId) } } });
-  const bm = new Map(bal.map((b) => [b.variantId, b.qty]));
-  return d.items.filter((i) => (bm.get(i.variantId) ?? 0) < i.qty).map((i) => ({ variantId: i.variantId, code: i.code, name: i.name, need: i.qty, have: bm.get(i.variantId) ?? 0 }));
+  // Аудит #147: аль хэдийн бэлдсэн дэлгэрэнгүйг дахин тооцоолохгүй; нэмэлт бараа ба өөр жолоочид өгөгдсөн барааг тооцно
+  const d = built ?? await handoverDetail(actor, idInput);
+  const hw = await db.handover.findUnique({ where: { id: d.id }, select: { warehouseId: true } });
+  const loc = hw ? await db.stockLocation.findUnique({ where: { warehouseId: hw.warehouseId }, select: { id: true } }) : null;
+  const locId = loc?.id ?? -1;
+  const need = new Map<number, { variantId: number; code: string; name: string; qty: number }>();
+  for (const i of [...d.items, ...d.extras]) { const e = need.get(i.variantId) ?? { variantId: i.variantId, code: i.code, name: i.name, qty: 0 }; e.qty += i.qty; need.set(i.variantId, e); }
+  const vids = [...need.keys()];
+  const [bal, others] = await Promise.all([db.stockBalance.findMany({ where: { locationId: locId, variantId: { in: vids } } }), handedOverNeed(db, vids, { locationIds: [locId], excludeHandoverId: d.id })]);
+  const bm = new Map(bal.map((b) => [b.variantId, Math.max(0, b.qty - (others.get(`${locId}:${b.variantId}`) ?? 0))]));
+  return [...need.values()].filter((i) => (bm.get(i.variantId) ?? 0) < i.qty).map((i) => ({ variantId: i.variantId, code: i.code, name: i.name, need: i.qty, have: bm.get(i.variantId) ?? 0 }));
 }

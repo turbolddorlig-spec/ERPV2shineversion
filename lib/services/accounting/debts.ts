@@ -5,7 +5,7 @@ import { writeAudit, SYSTEM_ACTOR } from '../../audit';
 import { canAccount, canDrive } from '../../permissions';
 import { dateOnly, ubDay, ubDayStart, ubHour, isYmd } from '../../ubdate';
 import { inTx, type UserActor } from '../orders/core';
-import { addDays, driverLocationId } from '../delivery/core';
+import { addDays, driverLocationId, lockDrivers } from '../delivery/core';
 import { applyMoves } from '../stock/core';
 import { driverGoods } from '../delivery/driver';
 
@@ -99,7 +99,8 @@ export async function resolveDebt(actor: UserActor, idIn: unknown, input: { note
   const note = String(input.note ?? '').trim().slice(0, 500);
   if (note.length < 3) throw badRequest('Хасах шалтгаанаа бичнэ үү', 'reason_required');
   return inTx(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(3::int4, 0::int4)`;
+    const pre = await tx.companyDebt.findUnique({ where: { id }, select: { driverId: true } });
+    await lockDrivers(tx, [pre?.driverId]); // Аудит #147: жолоочийн түгжээ (8 сек хязгаартай)
     const d0 = await tx.companyDebt.findUnique({ where: { id } });
     if (!d0) throw notFound('Өр олдсонгүй');
     if (d0.status !== 'PENDING') return { debt: serialize(d0), duplicate: true };
@@ -226,7 +227,7 @@ export async function closeDayShortages(now = new Date()): Promise<{ ran: boolea
   let created = 0, changed = 0, resolved = 0;
   for (const d of drivers) {
     const r = await inTx(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(3::int4, 0::int4)`;
+      await lockDrivers(tx, [d.userId]);
       return syncShortageDebts(tx, d.userId, { close: date });
     });
     created += r.created; changed += r.changed; resolved += r.resolved;
@@ -256,7 +257,7 @@ export async function closeShortagesNow(actor: UserActor, driverIdIn: unknown) {
   assertAccount(actor);
   const driverId = cleanUuid(driverIdIn);
   return inTx(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(3::int4, 0::int4)`;
+    await lockDrivers(tx, [driverId]);
     return syncShortageDebts(tx, driverId, { close: ubDay() });
   });
 }

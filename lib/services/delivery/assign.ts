@@ -7,7 +7,7 @@ import { RURAL, UB_DISTRICTS } from '../../geo';
 import { dateOnly, ubDay, ubDayStart, ymdOf, isYmd } from '../../ubdate';
 import { inTx, orderSettings, type UserActor } from '../orders/core';
 import { bustCounts, searchIds, serializeOrder } from '../orders/queries';
-import { addDays, addToHandover, cleanYmd, isGiven, lockDelivery, lockOrders, removeFromHandover, type Tx } from './core';
+import { addDays, addToHandover, assertLockedDrivers, cleanYmd, isGiven, lockDrivers, lockOrders, removeFromHandover, type Tx } from './core';
 
 /**
  * Ахлах жолооч (хуучин ERP-ийн «Ахлах жолооч» хуудас):
@@ -160,18 +160,27 @@ export async function assignCore(actor: UserActor, ids: number[], driver: { id: 
   } finally { bustCounts(); kpiCache = null; bustUnassignedAlert(); }
 }
 
+/** Аудит #147: захиалгуудын одоогийн жолооч + шинэ жолоочийн түгжээ (бусад жолооч зэрэг ажиллана) */
+async function lockChunkDrivers(tx: Tx, ids: number[], extra: string[]) {
+  const pre = await tx.order.findMany({ where: { id: { in: ids } }, select: { driverId: true } });
+  return lockDrivers(tx, [...extra, ...pre.map((o) => o.driverId)]);
+}
+
 async function assignChunk(actor: UserActor, ids: number[], driver: { id: string; name: string }, opts: { pickup?: boolean }) {
   return inTx(async (tx) => {
-    await lockDelivery(tx);
+    const locked = await lockChunkDrivers(tx, ids, [driver.id]);
     await lockOrders(tx, ids);
     const orders = await tx.order.findMany({ where: { id: { in: ids } }, orderBy: { id: 'asc' } });
+    const hoCache = new Map<string, { id: number; status: string } | null>();
     const given = await givenHandovers(tx, orders);
     const today = ubDay(); const tomorrow = ubDay(new Date(), 1);
     const done: { id: number; number: string; date: string; movedNextDay: boolean }[] = [];
     const skipped: { id: number; number: string; reason: string }[] = [];
     for (const o of orders) {
       const d0 = ymdOf(o.deliveryDate);
-      const reason = o.status === 'PENDING_PAYMENT' ? 'Төлбөр хүлээж буй'
+      // Аудит #147: түгжээ хүлээх хооронд өөр жолоочид оноогдсон (жишээ нь хоёр жолооч зэрэг «Авах») — алгасна
+      const reason = o.driverId && !locked.has(o.driverId) ? 'Яг одоо өөр жолоочид хуваарилагдсан'
+        : o.status === 'PENDING_PAYMENT' ? 'Төлбөр хүлээж буй'
         : o.status === 'NEW' && d0 > tomorrow ? 'Он сар өдөртэй захиалга хуваарилах боломжгүй'
         : !['NEW', 'ASSIGNED'].includes(o.status) ? 'Хүргэлтэд гарсан / дууссан / цуцлагдсан'
         : o.status === 'ASSIGNED' && o.driverId === driver.id ? 'Аль хэдийн энэ жолоочид'
@@ -180,7 +189,7 @@ async function assignChunk(actor: UserActor, ids: number[], driver: { id: string
         : o.handoverId && given.has(o.handoverId) ? `Падаан (${given.get(o.handoverId)}) агуулахаас өгөгдсөн` : null;
       if (reason) { skipped.push({ id: o.id, number: o.number, reason }); continue; }
       if (o.handoverId) await removeFromHandover(tx, o.id, `Өөр жолоочид (${driver.name}) шилжсэн`);
-      const placed = await placeForDriver(tx, o.id, driver, d0 < today ? today : d0);
+      const placed = await placeForDriver(tx, o.id, driver, d0 < today ? today : d0, hoCache);
       await tx.order.update({ where: { id: o.id }, data: { status: 'ASSIGNED', driverId: driver.id, driverName: driver.name, assignedAt: new Date(), outForDeliveryAt: null, version: { increment: 1 } } });
       await writeAudit(actor, opts.pickup ? 'order.picked_up' : 'order.assigned', 'Order', String(o.id), {
         number: o.number, from: o.driverName ?? null, to: driver.name, date: placed.date, ...(placed.movedNextDay ? { note: 'Тэр өдрийн падаан өгөгдсөн тул маргааш' } : {}),
@@ -199,10 +208,12 @@ async function givenHandovers(tx: Tx, orders: { handoverId: number | null }[]) {
 }
 
 /** Огноог тогтоож, тэр өдрийн падаанд (өгөхөөс өмнө) нэмнэ; өгөгдсөн бол дараагийн өдөр (#65) */
-async function placeForDriver(tx: Tx, orderId: number, driver: { id: string }, wanted: string) {
+async function placeForDriver(tx: Tx, orderId: number, driver: { id: string }, wanted: string, cache?: Map<string, { id: number; status: string } | null>) {
   let date = wanted; let moved = false;
   for (let i = 0; i < 60; i++) {
-    const h = await tx.handover.findUnique({ where: { driverId_date: { driverId: driver.id, date: dateOnly(date) } }, select: { id: true, status: true } });
+    // Аудит #147: нэг хэсэгт ижил өдрийн падааныг дахин дахин уншихгүй (жолоочийн түгжээтэй тул өөрчлөгдөхгүй)
+    let h = cache?.get(date);
+    if (h === undefined) { h = await tx.handover.findUnique({ where: { driverId_date: { driverId: driver.id, date: dateOnly(date) } }, select: { id: true, status: true } }); cache?.set(date, h); }
     if (h && isGiven(h.status)) { date = addDays(date, 1); moved = true; continue; }
     await tx.order.update({ where: { id: orderId }, data: { deliveryDate: dateOnly(date) } });
     if (h) await addToHandover(tx, h.id, orderId);
@@ -239,9 +250,10 @@ export async function setDeliveryDate(actor: UserActor, input: { ids?: unknown; 
 
 async function dateChunk(actor: UserActor, ids: number[], date: string) {
   return inTx(async (tx) => {
-    await lockDelivery(tx);
+    const locked = await lockChunkDrivers(tx, ids, []);
     await lockOrders(tx, ids);
     const orders = await tx.order.findMany({ where: { id: { in: ids } }, orderBy: { id: 'asc' } });
+    assertLockedDrivers(locked, orders.map((o) => o.driverId));
     const given = await givenHandovers(tx, orders);
     const done: number[] = []; const skipped: { id: number; number: string; reason: string }[] = []; let unassigned = 0;
     const tomorrow = ubDay(new Date(), 1);

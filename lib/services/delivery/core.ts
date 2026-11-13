@@ -18,6 +18,28 @@ export async function lockDelivery(tx: Tx) {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(3::int4, 0::int4)`;
 }
 
+/**
+ * Аудит #147: жолооч бүрийн түгжээ — өглөө 50 жолооч зэрэг хүргэж, ахлах хуваарилж, агуулах падаан өгөхөд бие биеэ хүлээхгүй.
+ * Нийтлэг түгжээг (3, 0) «хуваалцах» горимоор (нийтлэг үйлдэл — жишээ нь шөнийн цэвэрлэгээ, өр — бүгдийг хүлээнэ),
+ * дараа нь тухайн жолооч(ид)-ын түгжээг (4, hash) тогтмол дарааллаар. Дараалал: жолооч → падаан → захиалга → бараа.
+ */
+export async function lockDrivers(tx: Tx, ids: (string | null | undefined)[]) {
+  await tx.$executeRaw`SET LOCAL lock_timeout = '8s'`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(3::int4, 0::int4)`;
+  const list = [...new Set(ids.filter((x): x is string => !!x))];
+  if (list.length) await tx.$queryRaw`SELECT count(pg_advisory_xact_lock(4::int4, k))::int AS n FROM (SELECT DISTINCT hashtext(x) AS k FROM unnest(${list}::text[]) AS x ORDER BY 1) s`;
+  return new Set(list);
+}
+/** Түгжсэн жолоочоос өөр жолоочид түгжээ хүлээх хооронд шилжсэн бол — дахин дарна (ховор) */
+export function assertLockedDrivers(locked: Set<string>, ids: (string | null | undefined)[]) {
+  if (ids.some((x) => x && !locked.has(x))) throw conflict('Захиалга яг одоо өөр жолоочид шилжлээ — дахин дарна уу', 'busy');
+}
+/** Нэг захиалгын үйлдэл: тухайн захиалгын жолооч(ид)-ыг түгжинэ (захиалгын мөрийг дараа нь lockOrder-оор) */
+export async function lockOrderDrivers(tx: Tx, orderId: number, extra: (string | null | undefined)[] = []) {
+  const pre = await tx.order.findUnique({ where: { id: orderId }, select: { driverId: true, postponedByDriverId: true } });
+  return lockDrivers(tx, [pre?.driverId, pre?.postponedByDriverId, ...extra]);
+}
+
 export async function lockOrders(tx: Tx, ids: number[]) {
   const sorted = [...new Set(ids)].sort((a, b) => a - b);
   if (!sorted.length) return [];

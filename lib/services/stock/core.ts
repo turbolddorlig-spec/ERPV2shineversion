@@ -130,6 +130,32 @@ export async function staffLocationId(tx: Tx, staff: { id: string; name: string 
  * Хөдөлгөөнүүдийг нэг гүйлгээнд бичнэ. Хүрэлцэхгүй бол бүх гүйлгээ буцна.
  * labels — алдааны мессежийн нэрс (байхгүй бол DB-ээс авна).
  */
+/**
+ * Аудит #147 (эзний шийдвэр): агуулах «Өгсөн» дарсан, жолооч хүлээн аваагүй (HANDED_OVER) падааны бараа — тавиураас гарсан,
+ * жолоочид хүлээгдэж буй тул нөөцлөгдсөн. Систем дэх үлдэгдэл хэвээр (жолооч хүлээн авахад л журналаар шилжинэ), харин
+ * тооллого, шилжүүлэг, зарлага, зээл, өөр падаан энэ барааг ашиглахгүй. Түлхүүр: `${locationId}:${variantId}`.
+ */
+export async function handedOverNeed(tx: Tx | typeof db, variantIds: number[], opts: { locationIds?: number[]; excludeHandoverId?: number } = {}): Promise<Map<string, number>> {
+  const vids = [...new Set(variantIds)];
+  if (!vids.length) return new Map();
+  const ex = opts.excludeHandoverId ?? 0;
+  const rows = await tx.$queryRaw<{ locationId: number; variantId: number; qty: number }[]>`
+    SELECT l.id AS "locationId", x."variantId", sum(x.qty)::int AS qty FROM (
+      SELECT h."warehouseId", ol."variantId", ol.qty FROM "Handover" h
+        JOIN "HandoverOrder" ho ON ho."handoverId" = h.id AND ho."removedAt" IS NULL
+        JOIN "OrderLine" ol ON ol."orderId" = ho."orderId"
+        WHERE h.status = 'HANDED_OVER' AND h.id <> ${ex} AND ol."variantId" = ANY(${vids}::int[])
+      UNION ALL
+      SELECT h."warehouseId", dl."variantId", dl.qty FROM "Handover" h
+        JOIN "DriverDoc" d ON d."handoverId" = h.id AND d.kind = 'EXTRA_TAKE' AND d.status = 'REQUESTED'
+        JOIN "DriverDocLine" dl ON dl."docId" = d.id
+        WHERE h.status = 'HANDED_OVER' AND h.id <> ${ex} AND dl."variantId" = ANY(${vids}::int[])
+    ) x JOIN "StockLocation" l ON l."warehouseId" = x."warehouseId"
+    ${opts.locationIds ? Prisma.sql`WHERE l.id = ANY(${opts.locationIds}::int[])` : Prisma.empty}
+    GROUP BY l.id, x."variantId"`;
+  return new Map(rows.map((r) => [`${r.locationId}:${r.variantId}`, r.qty]));
+}
+
 export async function applyMoves(tx: Tx, actor: { id: string; name: string }, doc: { type: string; id: number }, moves: MoveSpec[], labels?: Map<number, string>) {
   const list = moves.filter((m) => m.qty > 0).sort((a, b) => a.variantId - b.variantId || (a.fromId ?? 0) - (b.fromId ?? 0));
   // Аудит #143: хөдлөх бүх (байршил, бараа) мөрийг нэг дор, тогтмол дарааллаар түгжинэ — эсрэг чиглэлийн хоёр гүйлгээ
@@ -139,22 +165,50 @@ export async function applyMoves(tx: Tx, actor: { id: string; name: string }, do
     const pairs = keys.map((k) => { const [l, v] = k.split(':').map(Number); return Prisma.sql`(${l}::int, ${v}::int)`; });
     await tx.$queryRaw`SELECT 1 FROM "StockBalance" WHERE ("locationId", "variantId") IN (${Prisma.join(pairs)}) ORDER BY "locationId", "variantId" FOR UPDATE`;
   }
+  // Аудит #147: (байршил, бараа) тус бүрийн нийлбэрээр НЭГ хүсэлтээр — 120 бараатай падаан хүлээн авах 0.3 сек → хурдан
+  const dec = new Map<string, { loc: number; v: number; q: number }>();
+  const inc = new Map<string, { loc: number; v: number; q: number }>();
   for (const m of list) {
-    if (m.fromId !== null) {
-      const n = await tx.$executeRaw`
-        UPDATE "StockBalance" SET "qty" = "qty" - ${m.qty}, "updatedAt" = now()
-        WHERE "locationId" = ${m.fromId} AND "variantId" = ${m.variantId} AND "qty" >= ${m.qty}`;
-      if (n === 0) {
-        const have = (await tx.stockBalance.findUnique({ where: { locationId_variantId: { locationId: m.fromId, variantId: m.variantId } } }))?.qty ?? 0;
-        const loc = await tx.stockLocation.findUnique({ where: { id: m.fromId }, select: { name: true } });
-        const name = labels?.get(m.variantId) ?? (await variantLabels([m.variantId], tx)).get(m.variantId) ?? `#${m.variantId}`;
-        throw conflict(`«${name}» ${loc?.name ?? ''}-д хүрэлцэхгүй: байгаа ${have}, гаргах ${m.qty}`, 'insufficient_stock');
-      }
+    if (m.fromId !== null) { const k = `${m.fromId}:${m.variantId}`; const e = dec.get(k) ?? { loc: m.fromId, v: m.variantId, q: 0 }; e.q += m.qty; dec.set(k, e); }
+    if (m.toId !== null) { const k = `${m.toId}:${m.variantId}`; const e = inc.get(k) ?? { loc: m.toId, v: m.variantId, q: 0 }; e.q += m.qty; inc.set(k, e); }
+  }
+  if (dec.size) {
+    const vals = [...dec.values()].map((d) => Prisma.sql`(${d.loc}::int, ${d.v}::int, ${d.q}::int)`);
+    const done = await tx.$queryRaw<{ locationId: number; variantId: number }[]>`
+      UPDATE "StockBalance" b SET "qty" = b."qty" - x.q, "updatedAt" = now()
+      FROM (VALUES ${Prisma.join(vals)}) AS x(loc, v, q)
+      WHERE b."locationId" = x.loc AND b."variantId" = x.v AND b."qty" >= x.q
+      RETURNING b."locationId", b."variantId"`;
+    if (done.length !== dec.size) {
+      const ok = new Set(done.map((d) => `${d.locationId}:${d.variantId}`));
+      const bad = [...dec.entries()].find(([k]) => !ok.has(k))![1];
+      const have = (await tx.stockBalance.findUnique({ where: { locationId_variantId: { locationId: bad.loc, variantId: bad.v } } }))?.qty ?? 0;
+      const loc = await tx.stockLocation.findUnique({ where: { id: bad.loc }, select: { name: true } });
+      const name = labels?.get(bad.v) ?? (await variantLabels([bad.v], tx)).get(bad.v) ?? `#${bad.v}`;
+      throw conflict(`«${name}» ${loc?.name ?? ''}-д хүрэлцэхгүй: байгаа ${have}, гаргах ${bad.q}`, 'insufficient_stock');
     }
-    if (m.toId !== null) {
-      await tx.$executeRaw`
-        INSERT INTO "StockBalance" ("locationId", "variantId", "qty", "updatedAt") VALUES (${m.toId}, ${m.variantId}, ${m.qty}, now())
-        ON CONFLICT ("locationId", "variantId") DO UPDATE SET "qty" = "StockBalance"."qty" + EXCLUDED."qty", "updatedAt" = now()`;
+  }
+  if (inc.size) {
+    const vals = [...inc.values()].sort((a, b) => a.loc - b.loc || a.v - b.v).map((d) => Prisma.sql`(${d.loc}::int, ${d.v}::int, ${d.q}::int, now())`);
+    await tx.$executeRaw`
+      INSERT INTO "StockBalance" ("locationId", "variantId", "qty", "updatedAt") VALUES ${Prisma.join(vals)}
+      ON CONFLICT ("locationId", "variantId") DO UPDATE SET "qty" = "StockBalance"."qty" + EXCLUDED."qty", "updatedAt" = now()`;
+  }
+  // Аудит #147: агуулахаас гарах хөдөлгөөн (жолоочийн падаан хүлээн авахаас бусад) «Өгсөн» падааны барааг хөндөхгүй
+  const outs = doc.type === 'handover' ? [] : list.filter((m) => m.fromId !== null);
+  if (outs.length) {
+    const ho = await handedOverNeed(tx, outs.map((m) => m.variantId), { locationIds: [...new Set(outs.map((m) => m.fromId!))] });
+    if (ho.size) {
+      const keys = [...ho.keys()].map((k) => k.split(':').map(Number) as [number, number]);
+      const bals = await tx.stockBalance.findMany({ where: { OR: keys.map(([locationId, variantId]) => ({ locationId, variantId })) } });
+      const bm = new Map(bals.map((b) => [`${b.locationId}:${b.variantId}`, b.qty]));
+      const outKeys = new Set(outs.map((m) => `${m.fromId}:${m.variantId}`));
+      const bad = [...ho].filter(([k, q]) => outKeys.has(k) && (bm.get(k) ?? 0) < q);
+      if (bad.length) {
+        const vl = await variantLabels(bad.map(([k]) => Number(k.split(':')[1])), tx);
+        throw conflict(bad.map(([k, q]) => { const v = Number(k.split(':')[1]); const moved = outs.filter((m) => `${m.fromId}:${m.variantId}` === k).reduce((a, m) => a + m.qty, 0);
+          return `«${labels?.get(v) ?? vl.get(v) ?? `#${v}`}»: ${q} ширхэг жолоочид өгөгдсөн (хүлээн авахыг хүлээж буй) — гаргах боломжтой ${Math.max(0, (bm.get(k) ?? 0) + moved - q)}`; }).join('; '), 'handed_over_stock');
+      }
     }
   }
   if (list.length) {

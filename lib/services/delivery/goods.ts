@@ -10,7 +10,7 @@ import { applyMoves, stockCache } from '../stock/core';
 import { variantInfo } from '../stock/info';
 import { availableFor, inTx, lockVariants, type UserActor } from '../orders/core';
 import { bustCounts } from '../orders/queries';
-import { addDays, driverLocationId, lockDelivery, primaryWarehouse, type Tx } from './core';
+import { addDays, driverLocationId, lockDelivery, lockDrivers, lockHandover, primaryWarehouse, type Tx } from './core';
 import { driverGoods, PAYMENT_LABEL } from './driver';
 
 /**
@@ -153,7 +153,7 @@ export async function receiveReturn(actor: UserActor, input: { driverId?: unknow
   const note = String(input.note ?? '').trim().slice(0, 500) || null;
   const labels = await labelsOf(lines.map((l) => l.variantId));
   const doc = await inTx(async (tx) => {
-    await lockDelivery(tx);
+    await lockDrivers(tx, [driverId]); // Аудит #147: жолооч бүрээр
     const again = await tx.driverDoc.findUnique({ where: { idemKey } });
     if (again) return again;
     const g = await driverGoods(tx, driverId);
@@ -199,7 +199,7 @@ export async function extraTake(actor: UserActor, input: { lines?: unknown; note
   const note = String(input.note ?? '').trim().slice(0, 500) || null;
   const labels = await labelsOf(lines.map((l) => l.variantId));
   const doc = await inTx(async (tx) => {
-    await lockDelivery(tx);
+    await lockDrivers(tx, [actor.id]);
     const used = await tx.$queryRaw<{ n: number }[]>`
       SELECT COALESCE(sum(l.qty), 0)::int AS n FROM "DriverDoc" d JOIN "DriverDocLine" l ON l."docId" = d.id
       WHERE d."driverId" = ${actor.id}::uuid AND d.kind = 'EXTRA_TAKE' AND d.status <> 'CANCELLED' AND d."createdAt" >= ${ubDayStart(ubDay())}`;
@@ -221,6 +221,12 @@ export async function extraTake(actor: UserActor, input: { lines?: unknown; note
       if (h && (h.status === 'HANDED_OVER' || h.status === 'RECEIVED')) { date = addDays(date, 1); continue; }
       handoverId = h?.id ?? null;
       break;
+    }
+    // Аудит #147: агуулахын Check-тэй зэрэг ирвэл — падааны мөрийг түгжээд дахин шалгана (Check алдагдахгүй)
+    if (handoverId) {
+      await lockHandover(tx, handoverId);
+      const hs = await tx.handover.findUnique({ where: { id: handoverId }, select: { status: true } });
+      if (hs && (hs.status === 'HANDED_OVER' || hs.status === 'RECEIVED')) throw conflict('Падаан яг одоо агуулахаас өгөгдлөө — дахин илгээнэ үү', 'busy');
     }
     const d = await tx.driverDoc.create({
       data: { kind: 'EXTRA_TAKE', status: 'REQUESTED', date: dateOnly(date), handoverId, driverId: actor.id, driverName: actor.name, byId: actor.id, byName: actor.name, note, idemKey,
@@ -245,12 +251,13 @@ export async function extraCancel(actor: UserActor, docIdIn: unknown) {
   const id = Number(docIdIn);
   if (!Number.isInteger(id) || id <= 0) throw badRequest('Хүсэлт олдсонгүй');
   await inTx(async (tx) => {
-    await lockDelivery(tx);
+    await lockDrivers(tx, [actor.id]);
     const d = await tx.driverDoc.findUnique({ where: { id }, include: { lines: true } });
     if (!d || d.driverId !== actor.id || d.kind !== 'EXTRA_TAKE') throw badRequest('Хүсэлт олдсонгүй');
     if (d.status === 'CANCELLED') return;
     if (d.status !== 'REQUESTED') throw conflict('Падаанаар аль хэдийн авсан — үлдсэнийг буцаалтаар өгнө', 'already_given');
     if (d.handoverId) {
+      await lockHandover(tx, d.handoverId); // Аудит #147
       const h = await tx.handover.findUnique({ where: { id: d.handoverId }, select: { status: true } });
       if (h && (h.status === 'HANDED_OVER' || h.status === 'RECEIVED')) throw conflict('Агуулах падаанаар өгсөн — агуулахад хэлнэ үү', 'handed_over');
       await tx.handoverCheck.deleteMany({ where: { handoverId: d.handoverId, kind: 'EXTRA', variantId: { in: d.lines.map((l) => l.variantId) } } });
@@ -258,7 +265,7 @@ export async function extraCancel(actor: UserActor, docIdIn: unknown) {
     }
     await tx.stockReservation.deleteMany({ where: { ref: `extra:${id}` } });
     await tx.driverDoc.update({ where: { id }, data: { status: 'CANCELLED', handoverId: null } });
-    await writeAudit(actor, 'driver.extra_cancelled', 'DriverDoc', String(id), {}, tx, ['delivery']);
+    await writeAudit(actor, 'driver.extra_cancelled', 'DriverDoc', String(id), { date: d.date ? ymdOfDate(d.date) : null, lines: d.lines.map((l) => ({ variantId: l.variantId, qty: l.qty })) } as Prisma.InputJsonValue, tx, ['delivery']);
   });
   stockCache.today = null; bustCounts();
   return { ok: true };
@@ -279,7 +286,7 @@ export async function extraSale(actor: UserActor, input: { lines?: unknown; paym
   const prices = new Map((await db.productVariant.findMany({ where: { id: { in: lines.map((l) => l.variantId) } }, select: { id: true, priceOverride: true, product: { select: { price: true } } } }))
     .map((v) => [v.id, v.priceOverride ?? v.product.price]));
   const doc = await inTx(async (tx) => {
-    await lockDelivery(tx);
+    await lockDrivers(tx, [actor.id]);
     const again = await tx.driverDoc.findUnique({ where: { idemKey } });
     if (again) return again;
     const g = await driverGoods(tx, actor.id);
@@ -367,6 +374,7 @@ export async function expireExtraRequests(): Promise<number> {
       const d = await tx.driverDoc.findUnique({ where: { id }, include: { lines: true } });
       if (!d || d.status !== 'REQUESTED' || !d.date || ymdOfDate(d.date) >= today) return false;
       if (d.handoverId) {
+        await lockHandover(tx, d.handoverId); // Аудит #147
         const h = await tx.handover.findUnique({ where: { id: d.handoverId }, select: { status: true } });
         if (h && (h.status === 'HANDED_OVER' || h.status === 'RECEIVED')) return false;
         await tx.handoverCheck.deleteMany({ where: { handoverId: d.handoverId, kind: 'EXTRA', variantId: { in: d.lines.map((l) => l.variantId) } } });

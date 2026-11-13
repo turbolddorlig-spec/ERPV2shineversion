@@ -11,6 +11,7 @@ import { canReviewDiscounts } from '@/lib/permissions';
 import { alertBanner, reorderBanner } from '@/lib/services/outflow';
 import { supplierReorderBanner } from '@/lib/services/supplier-outflow';
 import { unassignedAlert } from '@/lib/services/delivery/assign';
+import { staleHandoverAlert } from '@/lib/services/delivery/handover';
 import { jobsAlert } from '@/lib/jobs';
 import { backupAlert } from '@/lib/services/backup-status';
 import { shortageSkipAlert } from '@/lib/services/accounting/debts';
@@ -22,7 +23,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Шалгаагүй барааны засварын тоо — шалгах эрхтэй хүнд цэс дээр харагдана
   const actor = { id: user.id, name: user.name, roles: user.roles };
   // Агуулахын «Өнөөдрийн ажил»-ын тоо (дүүргэх, ирэх шилжүүлэг, зээлийн хүсэлт, батлах тооллого)
-  const [pending, whWork, discounts, recAlert, issues, boost, reorder, unassigned, jobs, skip, backup] = await Promise.all([
+  const [pending, whWork, discounts, recAlert, issues, boost, reorder, unassigned, jobs, skip, backup, staleHo] = await Promise.all([
     unreviewedCount(actor).catch(() => 0),
     warehouseBadge(actor).catch(() => 0),
     // Супер админд: шалгаагүй үнийн хөнгөлөлт / хүргэлтийн өөрчлөлт (#43 2)
@@ -42,6 +43,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     shortageSkipAlert(user.roles).catch(() => null),
     // #132: нөөц хуулбар (26+ цаг, алдаа, Drive) — СА
     backupAlert(user.roles).catch(() => null),
+    // Аудит #147: агуулах өгсөн, жолооч 2 цагаас удаан хүлээн аваагүй падаан (агуулах, ахлах жолооч, СА, Админ)
+    staleHandoverAlert(user.roles).catch(() => null),
   ]);
   const nav: NavItem[] = visiblePages(user.roles).map((p) => ({
     key: p.key, label: p.label, short: p.short, href: p.href, group: p.group, icon: p.icon,
@@ -50,7 +53,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }));
   return (
     <AppShell user={{ name: user.name, roleLabels: user.roles.map((r) => ROLE_LABEL[r]) }} nav={nav}
-      jobsAlert={jobs} shortageSkip={skip} backupAlert={backup} boostAlert={boost} reorderAlert={reorder} assignAlert={unassigned} reorderHref={user.roles.includes('SUPPLIER') ? '/supplier' : '/goods-outflow?tab=reorder'}
+      jobsAlert={jobs} shortageSkip={skip} backupAlert={backup} boostAlert={boost} reorderAlert={reorder} assignAlert={unassigned} handoverAlert={staleHo} reorderHref={user.roles.includes('SUPPLIER') ? '/supplier' : '/goods-outflow?tab=reorder'}
       alert={recAlert ? { kind: recAlert.kind, count: recAlert.status?.count ?? 0, at: recAlert.status?.at ?? null, since: recAlert.status?.since ?? null } : null}>
       {children}
     </AppShell>

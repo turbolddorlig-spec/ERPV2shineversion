@@ -13,7 +13,7 @@ import {
   lockOrder, lockPhones, lockVariants, nextOrderNumber, orderSettings, paidOrderData, requireReason, staleError, uniqueViolation, type Tx, type UserActor, NO_PAGE_NAME, noPageId,
 } from './core';
 import { enqueueMeta, skipMeta } from './meta';
-import { addToHandover, isGiven, lockDelivery, removeFromHandover } from '../delivery/core';
+import { addToHandover, assertLockedDrivers, isGiven, lockOrderDrivers, removeFromHandover } from '../delivery/core';
 import { assertDayOpen } from '../accounting/lock';
 
 /**
@@ -246,9 +246,10 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
   const res = await inTx(async (tx) => {
     // Жолоочид оноосон захиалгын огноо өөрчлөгдвөл падаантай уялдана — хүргэлтийн түгжээг эхэлж авна
     const pre = await tx.order.findUnique({ where: { id }, select: { status: true } });
-    if (pre?.status === 'ASSIGNED') await lockDelivery(tx);
+    const dl = pre?.status === 'ASSIGNED' ? await lockOrderDrivers(tx, id) : null; // #147: жолоочийн түгжээ
     if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
     const o = await tx.order.findUniqueOrThrow({ where: { id }, include: { lines: true } });
+    if (dl) assertLockedDrivers(dl, [o.driverId]);
     if (o.version !== version) throw staleError();
     // Түгжээ авах хооронд жолоочид оноогдсон бол хүргэлтийн түгжээгүй үргэлжлүүлэхгүй (#124 В)
     if (o.status === 'ASSIGNED' && pre?.status !== 'ASSIGNED') throw staleError();
@@ -397,9 +398,10 @@ export async function cancelOrder(actor: UserActor | typeof SYSTEM_ACTOR & { rol
     const pre = await tx.order.findUnique({ where: { id }, select: { status: true } });
     const DELIV: OrderStatus[] = ['NEW', 'ASSIGNED', 'OUT_FOR_DELIVERY'];
     const locked = !!pre && DELIV.includes(pre.status);
-    if (locked) await lockDelivery(tx);
+    const dl = locked ? await lockOrderDrivers(tx, id) : null; // #147: жолоочийн түгжээ
     if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
     const o = await tx.order.findUniqueOrThrow({ where: { id } });
+    if (dl) assertLockedDrivers(dl, [o.driverId, o.postponedByDriverId]);
     if (o.status === 'CANCELLED') return { order: o, duplicate: true };
     // Түгжээ авах хооронд хуваарилагдсан / хүргэлтэд гарсан бол (#124-В) — дахин оролдуулна
     if (!locked && DELIV.includes(o.status) && !opts.system) throw staleError();

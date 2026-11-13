@@ -3,7 +3,7 @@ import { db } from '../../db';
 import { badRequest, conflict, notFound } from '../../errors';
 import { writeAudit } from '../../audit';
 import { canApproveStock, canOperateStock, canView } from '../../permissions';
-import { applyMoves, cleanId, cleanNote, inTx, MAX_QTY, requireRole, uniqueViolation, warehouseLocation, type UserActor } from './core';
+import { applyMoves, handedOverNeed, cleanId, cleanNote, inTx, MAX_QTY, requireRole, uniqueViolation, warehouseLocation, type UserActor } from './core';
 import { bustTodayCache } from './views';
 import { variantInfo } from './info';
 
@@ -70,7 +70,9 @@ export async function setCountLine(actor: UserActor, countIdInput: unknown, inpu
     const exists = await tx.stockCountLine.findUnique({ where: { countId_variantId: { countId, variantId } }, select: { id: true } });
     if (!exists && (await tx.stockCountLine.count({ where: { countId } })) >= MAX_COUNT_LINES) throw badRequest(`Нэг тооллогод ${MAX_COUNT_LINES} хүртэл бараа — илгээгээд дараагийн тооллогоор үргэлжлүүлнэ үү`, 'count_too_large');
     const { locationId } = await warehouseLocation(tx, c.warehouseId, { allowInactive: true });
-    const systemQty = (await tx.stockBalance.findUnique({ where: { locationId_variantId: { locationId, variantId } } }))?.qty ?? 0;
+    // Аудит #147: «Өгсөн» (жолооч хүлээн аваагүй) падааны бараа тавиурт байхгүй — системийн тооноос хасна (2 удаа хасагдахгүй)
+    const ho = (await handedOverNeed(tx, [variantId], { locationIds: [locationId] })).get(`${locationId}:${variantId}`) ?? 0;
+    const systemQty = Math.max(0, ((await tx.stockBalance.findUnique({ where: { locationId_variantId: { locationId, variantId } } }))?.qty ?? 0) - ho);
     const data = { systemQty, countedQty, countedAt: new Date(), countedById: actor.id, countedByName: actor.name };
     return tx.stockCountLine.upsert({ where: { countId_variantId: { countId, variantId } }, create: { countId, variantId, ...data }, update: data });
   });

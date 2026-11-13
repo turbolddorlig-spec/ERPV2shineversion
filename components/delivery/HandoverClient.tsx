@@ -13,7 +13,8 @@ import { OperatorNote } from '@/components/orders/OrdersClient';
 import { money, ubDateTime } from '@/lib/format';
 
 interface BDriver { id: string; name: string; phone: string; orders: number; trusted: boolean; approved: boolean; approvalNote: string | null; approvalBy: string | null; handover: { id: number; number: string; status: string } | null; stateLabel: string }
-interface Board { date: string; canOperate: boolean; canApprove: boolean; drivers: BDriver[] }
+type StaleHO = { id: number; number: string; date: string; driverId: string; driverName: string; handedOverAt: string; handedOverBy: string | null };
+interface Board { date: string; canOperate: boolean; canApprove: boolean; drivers: BDriver[]; staleHandedOver?: StaleHO[] }
 interface Item { variantId: number; code: string; name: string; label: string; qty: number; amount: number; thumb: string | null; image: string | null; shelfCode: string | null; checked: boolean; checkedBy: string | null; driverChecked: boolean }
 interface HOrder { orderId: number; position: number; number: string; phone: string; total: number; createdAt: string | null; status: string | null; note: string | null; isNew: boolean; removedAt: string | null; removeReason: string | null; lines: { name: string; label: string; code: string; qty: number; unitPrice: number }[] }
 interface Detail {
@@ -22,7 +23,7 @@ interface Detail {
   totals: { orders: number; pieces: number; amount: number; checked: number; driverChecked: number; kinds: number; extraPieces: number; extraAmount: number; extraRequests: number }; items: Item[]; extras: Item[]; orders: HOrder[];
 }
 interface Eligible { id: number; number: string; phone: string; items: number; total: number; note: string | null }
-interface Day { handover: Detail | null; eligible: Eligible[]; approval: { approved: boolean; source: string; note: string | null; byName: string | null } }
+interface Day { handover: Detail | null; shortages?: { code: string; name: string; need: number; have: number }[]; eligible: Eligible[]; approval: { approved: boolean; source: string; note: string | null; byName: string | null } }
 
 const ubToday = (add = 0) => new Date(Date.now() + 8 * 3600_000 + add * 86_400_000).toISOString().slice(0, 10);
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа гарлаа');
@@ -51,7 +52,7 @@ export function HandoverClient() {
     try {
       const d = await api<Day>(`/api/handover?driverId=${driverId}&date=${date}`);
       setDay(d); setSel(new Set(d.eligible.map((o) => o.id)));
-      if (d.handover) setShort((await api<{ shortages: typeof short }>(`/api/handover/${d.handover.id}`)).shortages); else setShort([]);
+      setShort(d.shortages ?? []); // Аудит #147: нэг хүсэлтээр
     } catch (e) { setError(msg(e)); }
   }, [driverId, date]);
   useEffect(() => { loadBoard(); }, [loadBoard]);
@@ -79,6 +80,15 @@ export function HandoverClient() {
         </div>
       </div>
 
+      {board?.staleHandedOver?.length ? (
+        <div role="alert" data-stale-handover className="rounded-xl border border-bad/40 bg-bad-soft px-4 py-2.5 text-[13px] font-semibold text-bad-ink">
+          🔴 Агуулах өгсөн боловч жолооч 2 цагаас удаан хүлээн аваагүй {board.staleHandedOver.length} падаан (бараа жолоочийн гарт, захиалга хүргэлтэд гараагүй):
+          <ul className="mt-1 flex flex-col gap-0.5 font-normal">
+            {board.staleHandedOver.slice(0, 10).map((x) => <li key={x.id} className="[overflow-wrap:anywhere]"><button type="button" className="font-bold underline" onClick={() => { setDate(x.date); setDriverId(x.driverId); }}>{x.number}</button> · {x.driverName} · {x.date} · өгсөн {new Date(x.handedOverAt).toLocaleTimeString('mn-MN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ulaanbaatar' })}{x.handedOverBy ? ` (${x.handedOverBy})` : ''}</li>)}
+          </ul>
+        </div>
+      ) : null}
+
       <div className="grid gap-3 rounded-xl border border-line bg-surface p-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)_minmax(0,1.4fr)]">
         <DriverPicker drivers={board?.drivers ?? []} value={driverId} onChange={(id) => { setDriverId(id); setFlash(null); setError(null); }} />
         <label className="flex flex-col gap-1"><span className="text-[12px] font-semibold text-muted">Огноо</span>
@@ -98,7 +108,7 @@ export function HandoverClient() {
                   <Button variant="primary" loading={busy} disabled={h.totals.checked < h.totals.kinds} title={h.totals.checked < h.totals.kinds ? 'Бүх барааг Check хийнэ үү' : undefined}
                     className="!bg-ok !text-white" onClick={() => run(() => api(`/api/handover/${h.id}/confirm`, { method: 'POST', json: {} }), `${h.driverName}-д өгсөн — жолооч утсаараа хүлээн авна`)}>✓ Барааг бүрэн өгсөн</Button>
                 </> : null}
-                {h.status === 'HANDED_OVER' ? <Button loading={busy} onClick={() => { if (confirm('Жолооч хараахан хүлээн аваагүй — падаан ноорог болно (бараа хөдлөөгүй). Үргэлжлүүлэх үү?')) run(() => api(`/api/handover/${h.id}/revert`, { method: 'POST', json: {} }), 'Ноорог болголоо'); }}>Буцаах</Button> : null}
+                {h.status === 'HANDED_OVER' ? <Button loading={busy} onClick={() => { if (confirm('Жолооч хараахан хүлээн аваагүй — падаан ноорог болно. Жолоочид өгсөн барааг ЗААВАЛ тавиурт буцааж авна уу (системд бараа агуулахад хэвээр). Үргэлжлүүлэх үү?')) run(() => api(`/api/handover/${h.id}/revert`, { method: 'POST', json: {} }), 'Ноорог болголоо'); }}>Буцаах</Button> : null}
               </>
             ) : null}
             {h ? <a href={`/print/handover/${h.id}`} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center gap-1.5 rounded-[11px] border border-line bg-surface px-4 font-semibold"><Icon name="file" size={16} />Хэвлэх</a> : null}

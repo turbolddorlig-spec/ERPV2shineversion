@@ -9,7 +9,7 @@ import { inTx, lockOrder, requireReason, type UserActor } from '../orders/core';
 import { bustCounts, serializeOrder } from '../orders/queries';
 import { skipMeta } from '../orders/meta';
 import { assignCore } from './assign';
-import { addDays, driverLocationId, isGiven, lockDelivery, removeFromHandover, type Tx } from './core';
+import { addDays, assertLockedDrivers, driverLocationId, isGiven, lockOrderDrivers, removeFromHandover, type Tx } from './core';
 import { assertDayOpen } from '../accounting/lock';
 import { syncShortageDebts } from '../accounting/debts';
 import { computeDay } from '../accounting/calc';
@@ -43,9 +43,11 @@ function cleanId(v: unknown): number {
 
 /** Түгжээд, өөрийн захиалгыг уншина (өөр жолоочийнх бол 404 — хэн нэгний захиалгыг харуулахгүй) */
 async function loadOwn(tx: Tx, actor: UserActor, id: number, by: 'driver' | 'postponed' = 'driver', ob?: OnBehalf): Promise<OrderL> {
-  await lockDelivery(tx);
+  // Аудит #147: зөвхөн энэ захиалгын жолоочийн түгжээ — бусад жолооч зэрэг хүргэнэ
+  const locked = await lockOrderDrivers(tx, id, ob ? [] : [actor.id]);
   if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
   const o = await tx.order.findUniqueOrThrow({ where: { id }, include: { lines: { orderBy: { id: 'asc' } } } });
+  assertLockedDrivers(locked, [o.driverId, o.postponedByDriverId]);
   const owner = by === 'driver' ? o.driverId : o.postponedByDriverId;
   if (ob ? !owner : owner !== actor.id) throw notFound('Захиалга олдсонгүй');
   return o;
@@ -278,9 +280,10 @@ export async function postponeOrder(actor: UserActor, idIn: unknown, input: { ve
   assertDriver(actor);
   const id = cleanId(idIn);
   const r = await inTx(async (tx) => {
-    await lockDelivery(tx);
+    const locked = await lockOrderDrivers(tx, id, [actor.id]);
     if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
     const o = await tx.order.findUniqueOrThrow({ where: { id }, include: { lines: true } });
+    assertLockedDrivers(locked, [o.driverId, o.postponedByDriverId]);
     // Давхар дарахад: аль хэдийн энэ жолооч хойшлуулсан
     if (o.status === 'NEW' && o.postponedByDriverId === actor.id && o.postponedAt && Date.now() - o.postponedAt.getTime() < 60_000) return { order: o, duplicate: true };
     if (o.driverId !== actor.id) throw notFound('Захиалга олдсонгүй');
@@ -389,9 +392,10 @@ export async function resolveIssue(actor: UserActor, idIn: unknown, input: { act
   const fault = action === 'cancel' ? (String(input.fault ?? '') as IssueFault) : null;
   if (fault !== null && !(fault in FAULT_LABEL)) throw badRequest('Хэний алдаа болохыг сонгоно уу', 'fault_required');
   const r = await inTx(async (tx) => {
-    await lockDelivery(tx);
+    const locked = await lockOrderDrivers(tx, id);
     if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
     const o = await tx.order.findUniqueOrThrow({ where: { id } });
+    assertLockedDrivers(locked, [o.driverId, o.postponedByDriverId]);
     if (o.issueStatus !== 'PENDING') return { order: o, duplicate: true, penaltyWarning: null as string | null };
     let penaltyWarning: string | null = null;
     const base = { issueResolvedAt: new Date(), issueResolvedByName: actor.name, issueResolveNote: note };
