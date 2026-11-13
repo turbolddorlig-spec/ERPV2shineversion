@@ -12,7 +12,7 @@ const MATRIX: Record<PageKey, string> = {
   products:       'E E - - - - - E E E V -',
   'goods-outflow':'E E - - - - - - E E - -',
   warehouse:      'E E - - - - V E - - - -',
-  loans:          'E E E E - - E E E E - -',
+  loans:          'E E E E E - E E E E - -', // #149: ахлах жолооч зээлнэ
   reports:        'E - - - - - - - E E - -',
   handover:       'E E - - - - V E - - - -',
   'driver-lead':  'E E - - E - - - - - - -',
