@@ -254,6 +254,7 @@ function DayTab({ detail, date, setDate, q, post }: { detail: Detail; date: stri
   const [day, setDay] = useState<Day | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [ov, setOv] = useState<Line | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
   const load = useCallback(async () => { try { setDay(await api(`/api/supplier?${q}&day=${date}`)); setErr(null); } catch (e) { setErr(msg(e)); } }, [q, date]);
   useEffect(() => { void load(); }, [load, detail]);
   const locked = day?.status === 'TRANSFERRED';
@@ -330,10 +331,18 @@ function DayTab({ detail, date, setDate, q, post }: { detail: Detail; date: stri
               <div className="flex flex-col"><span className="font-semibold text-ink">Шилжүүлэх дүн</span><b className="text-[20px] text-accent">{money(day.payable)}</b></div>
             </div>
             {day.carry < 0 ? <Notice tone="warn">Хасалт шилжүүлэх дүнгээс их — {money(-day.carry)} нь дараагийн шилжүүлгээс хасагдана.</Notice> : null}
+            {/* Аудит #151 (эзний шийдвэр): өмнөх өртэй (хасах) өдрүүд энэ шилжүүлгээс автоматаар хасагдана — тайлбартай */}
+            {(() => {
+              const neg = !locked ? detail.openDays.filter((o) => o.date < date && o.net < 0 && o.unfinished === 0) : [];
+              if (!neg.length) return null;
+              const sum = neg.reduce((a, o) => a + o.net, 0);
+              return <Notice tone="warn">Өмнөх өртэй өдөр автоматаар хасагдана: {neg.map((o) => `${o.date} (${money(o.net)})`).join(', ')}. Шилжүүлэх дүн ойролцоогоор {money(Math.max(0, day.payable + sum))} болно (тус бүрийн тайлбар «Буцаалт» табд).</Notice>;
+            })()}
+            {flash ? <Notice tone="ok">{flash}</Notice> : null}
             {detail.admin ? (
               <div className="flex flex-wrap justify-end gap-2">
                 {locked && detail.isSuperAdmin ? <Button size="sm" onClick={() => { if (confirm('Шилжүүлсэн тэмдгийг буцаах уу? (Зөвхөн хамгийн сүүлд шилжүүлсэн өдөр)')) void post({ action: 'undo-transfer', date }, 'Буцаалаа').then(() => load()); }}>Шилжүүлснийг буцаах</Button> : null}
-                {!locked ? <Button variant="primary" disabled={day.unfinished > 0 || (day.lines.length === 0 && day.adjustments.length === 0)} onClick={() => { if (confirm(`${date}-ны ${money(day.payable)}-ийг нийлүүлэгчид шилжүүлсэн гэж тэмдэглэх үү? Үүний дараа энэ өдөр түгжигдэнэ.`)) void post({ action: 'transfer', date, version: day.version }, 'Шилжүүлсэн гэж тэмдэглэлээ').then(() => load()); }}>Шилжүүлсэн гэж тэмдэглэх</Button> : null}
+                {!locked ? <Button variant="primary" disabled={day.unfinished > 0 || (day.lines.length === 0 && day.adjustments.length === 0)} onClick={() => { if (confirm(`${date}-ны ${money(day.payable)}-ийг нийлүүлэгчид шилжүүлсэн гэж тэмдэглэх үү? Үүний дараа энэ өдөр түгжигдэнэ.`)) void post({ action: 'transfer', date, version: day.version }).then((r) => { const nt = (r?.netted as { date: string; amount: number }[] | undefined) ?? []; setFlash(nt.length ? `Шилжүүлсэн гэж тэмдэглэлээ. Өмнөх өртэй өдөр автоматаар хасагдав: ${nt.map((x) => `${x.date} ${money(x.amount)}`).join(', ')}` : r ? 'Шилжүүлсэн гэж тэмдэглэлээ' : null); return load(); }); }}>Шилжүүлсэн гэж тэмдэглэх</Button> : null}
               </div>
             ) : null}
           </div>
@@ -434,6 +443,7 @@ function ProductsTab({ d, post }: { d: Detail; post: Post }) {
   const [q, setQ] = useState('');
   const [res, setRes] = useState<{ id: number; code: string; name: string; price: number; shop: { id: number; name: string } | null }[]>([]);
   const [from, setFrom] = useState(d.today);
+  const [reason, setReason] = useState('');
   const [showOld, setShowOld] = useState(false);
   useEffect(() => {
     if (!q.trim()) { setRes([]); return; }
@@ -449,11 +459,13 @@ function ProductsTab({ d, post }: { d: Detail; post: Post }) {
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Барааны нэр, код" className={clsx(inputCls, 'flex-1')} aria-label="Бараа хайх" />
           <label className="flex items-center gap-2 text-[12.5px] text-muted">Эхлэх өдөр<input type="date" value={from} onChange={(e) => e.target.value && setFrom(e.target.value)} className={inputCls} /></label>
         </div>
+        {/* Аудит #151: хуучин огноогоор (90 хоног хүртэл) — тэр өдрөөс хойшхи борлуулалтыг нөхөж олгоно, шалтгаан заавал */}
+        {from < d.today ? <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} placeholder="Хуучин огноогоор оноох шалтгаан (тэр өдрөөс хойшхи борлуулалтыг нийлүүлэгчид нөхөж олгоно)" aria-label="Шалтгаан" className={inputCls} /> : null}
         {res.map((p) => (
           <div key={p.id} className="flex min-w-0 flex-wrap items-center gap-2 border-t border-line pt-2">
             <div className="min-w-0 flex-1"><b className="break-words text-[13.5px]">{p.name}</b><div className="text-[12px] text-muted">{p.code} · {money(p.price)}</div></div>
             {p.shop ? <Badge tone={p.shop.id === d.shop.id ? 'ok' : 'warn'}>{p.shop.id === d.shop.id ? 'Энэ дэлгүүрт' : `«${p.shop.name}»-д оноогдсон`}</Badge>
-              : <Button size="sm" variant="primary" onClick={() => void post({ action: 'assign', productId: p.id, fromDate: from }, `«${p.name}» нэмэгдлээ`).then((r) => { if (r) setQ(''); })}>Нэмэх</Button>}
+              : <Button size="sm" variant="primary" onClick={() => void post({ action: 'assign', productId: p.id, fromDate: from, reason }, `«${p.name}» нэмэгдлээ`).then((r) => { if (r) setQ(''); })}>Нэмэх</Button>}
           </div>
         ))}
         <p className="text-[12px] text-subtle">Нэг бараа зөвхөн нэг нийлүүлэгчид — өөр дэлгүүрт оноогдсон барааг эхлээд тэндээс хасна.</p>

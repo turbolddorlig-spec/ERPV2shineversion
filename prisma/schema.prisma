@@ -1549,6 +1549,8 @@ model ReorderOrder {
   scope       String    @default("OWNER")
   /// Өнгө / хэмжээ тус бүрээр «Захиалсан» (#128); null = бараа бүхэлдээ (хуучин тэмдэг)
   variantId   Int?
+  /// Аудит #151: нийлүүлэгчийн тэмдэг аль дэлгүүрийнх (өөр нийлүүлэгч харах, цуцлахгүй)
+  shopId      Int?
 
   @@index([productId, orderedAt])
 }

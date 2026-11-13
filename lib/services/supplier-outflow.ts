@@ -19,7 +19,8 @@ import type { UserActor } from './users';
 async function ctx(actor: UserActor, shopIdIn: unknown) {
   const shop = await shopOf(actor, shopIdIn);
   const today = ubDay();
-  const asg = await db.supplierProduct.findMany({ where: { shopId: shop.id, OR: [{ toDate: null }, { toDate: { gt: dateOnly(today) } }] }, select: { productId: true } });
+  // Аудит #151: одоо (өнөөдрөөс) идэвхтэй оноолт л — шилжиж буй барааг хоёр дэлгүүр зэрэг «өөрийн» гэж үзэхгүй
+  const asg = await db.supplierProduct.findMany({ where: { shopId: shop.id, fromDate: { lte: dateOnly(today) }, OR: [{ toDate: null }, { toDate: { gt: dateOnly(today) } }] }, select: { productId: true } });
   return { shop, today, ids: asg.map((a) => a.productId), isOwner: shop.userId === actor.id };
 }
 
@@ -61,16 +62,16 @@ export async function supplierOutflow(actor: UserActor, shopIdIn: unknown) {
 const own = (ids: number[], productId: unknown) => { if (!ids.includes(Number(productId))) throw forbidden('Таны бараа биш'); };
 
 export async function supplierReorderDetail(actor: UserActor, shopIdIn: unknown, productIdIn: unknown) {
-  const { ids } = await ctx(actor, shopIdIn); own(ids, productIdIn);
-  return reorderDetailOf(productIdIn, 'SUPPLIER');
+  const { ids, shop } = await ctx(actor, shopIdIn); own(ids, productIdIn);
+  return reorderDetailOf(productIdIn, 'SUPPLIER', shop.id);
 }
 export async function supplierReorder(actor: UserActor, shopIdIn: unknown, b: { productId?: unknown; variantId?: unknown; qty?: unknown; expectedDay?: unknown; note?: unknown }) {
-  const { ids } = await ctx(actor, shopIdIn); own(ids, b.productId);
-  return createReorder(actor, b, 'SUPPLIER');
+  const { ids, shop } = await ctx(actor, shopIdIn); own(ids, b.productId);
+  return createReorder(actor, b, 'SUPPLIER', shop.id);
 }
 export async function supplierReorderCancel(actor: UserActor, shopIdIn: unknown, idIn: unknown) {
-  const { ids } = await ctx(actor, shopIdIn);
-  return cancelReorderOf(actor, idIn, new Set(ids), 'SUPPLIER');
+  const { ids, shop } = await ctx(actor, shopIdIn);
+  return cancelReorderOf(actor, idIn, new Set(ids), 'SUPPLIER', shop.id);
 }
 /** Өөрийн өртөг — зөвхөн тэр нийлүүлэгч (Админ, Супер админ ч бичихгүй, харахгүй) */
 export async function saveOwnCost(actor: UserActor, b: { productId?: unknown; cost?: unknown }) {

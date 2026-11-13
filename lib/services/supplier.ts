@@ -6,6 +6,7 @@ import { canEdit, canView } from '../permissions';
 import { dateOnly, isYmd, ubDay, ubDayStart, ymdOf } from '../ubdate';
 import { addDays } from './delivery/core';
 import { createUser, resetPassword, type UserActor } from './users';
+import { withHeavy } from '../heavy';
 
 type Tx = Prisma.TransactionClient;
 
@@ -46,7 +47,7 @@ async function liveItems(tx: Tx | typeof db, shopId: number, from: string, to: s
   const rows = await tx.$queryRaw<{ date: Date; source: string; orderNumber: string; productId: number; qty: number; sales: number }[]>`
     WITH asg AS (SELECT "productId", "fromDate", "toDate" FROM "SupplierProduct" WHERE "shopId" = ${shopId})
     SELECT h.date, 'o:' || o.id AS source, o.number AS "orderNumber", l."productId",
-           sum(l.qty - l."refusedQty")::int AS qty, sum((l.qty - l."refusedQty") * l."unitPrice")::int AS sales
+           sum(l.qty - l."refusedQty")::int AS qty, sum((l.qty - l."refusedQty") * l."unitPrice")::bigint AS sales
     FROM "Handover" h
     JOIN "HandoverOrder" ho ON ho."handoverId" = h.id AND ho."removedAt" IS NULL
     JOIN "Order" o ON o.id = ho."orderId" AND o."handoverId" = h.id AND o.status = 'DELIVERED'
@@ -56,7 +57,7 @@ async function liveItems(tx: Tx | typeof db, shopId: number, from: string, to: s
     GROUP BY 1, 2, 3, 4 HAVING sum(l.qty - l."refusedQty") > 0
     UNION ALL
     SELECT (d."createdAt" + interval '8 hours')::date, 'd:' || d.id, 'Нэмэлт борлуулалт · ' || d."driverName", v."productId",
-           sum(dl.qty)::int, sum(dl.qty * dl."unitPrice")::int
+           sum(dl.qty)::int, sum(dl.qty * dl."unitPrice")::bigint
     FROM "DriverDoc" d
     JOIN "DriverDocLine" dl ON dl."docId" = d.id
     JOIN "ProductVariant" v ON v.id = dl."variantId"
@@ -64,7 +65,7 @@ async function liveItems(tx: Tx | typeof db, shopId: number, from: string, to: s
       AND (a."toDate" IS NULL OR a."toDate" > (d."createdAt" + interval '8 hours')::date)
     WHERE d.kind = 'EXTRA_SALE' AND d.status = 'DONE' AND d."createdAt" >= ${ubDayStart(from)} AND d."createdAt" < ${ubDayStart(addDays(to, 1))}
     GROUP BY 1, 2, 3, 4 HAVING sum(dl.qty) > 0`;
-  return rows.map((r) => ({ ...r, date: ymdOf(r.date) }));
+  return rows.map((r) => ({ ...r, sales: Number(r.sales), date: ymdOf(r.date) }));
 }
 
 /** Цуцалсан тоо (падаанд байсан, цуцлагдсан + хүлээж аваагүй) ба дуусаагүй захиалгын тоо */
@@ -192,9 +193,33 @@ function adjView(a: Prisma.SupplierAdjustmentGetPayload<object>, appliedDates: M
  * Сүүлийн 90 хоногт шилжүүлсэн өдрүүдийн хуулбарыг одоогийн байдалтай харьцуулна:
  * хүргэсний дараа цуцлагдсан/хүлээж аваагүй → БУЦААЛТ (−, зөвхөн нийлүүлэгчийн барааны цэвэр дүн), хожим хүргэгдсэн → НЭМЭГДЭЛ (+).
  */
-export async function syncAdjustments(shopId: number) {
+/**
+ * Аудит #151: харах (GET) хүсэлт бүр 90 хоногийг дахин тооцоолж дэлгүүрийг түгжихгүй — 60 сек тутам нэг удаа, өөр хүсэлт
+ * тооцоолж байвал хүлээхгүй (арын ажил 5 мин тутам бүх дэлгүүрийг шинэчилнэ). Шилжүүлэх, засахад үргэлж бүтэн тооцоолно.
+ */
+const lastSync = new Map<number, number>();
+/** Тестэд санах ойгүй (шууд тоо) */
+const CACHE_MS = process.env.NODE_ENV === 'test' ? 0 : 60_000;
+export async function syncIfStale(shopId: number) {
+  if (CACHE_MS && Date.now() - (lastSync.get(shopId) ?? 0) < CACHE_MS) return 0;
+  lastSync.set(shopId, Date.now());
+  return syncAdjustments(shopId, { tryLock: true }).catch((e) => { lastSync.delete(shopId); console.error('[supplier] sync', (e as Error).message); return 0; });
+}
+/** Арын ажил: бүх идэвхтэй дэлгүүр */
+export async function syncAllShops() {
+  const shops = await db.supplierShop.findMany({ where: { isActive: true }, select: { id: true } });
+  let n = 0;
+  for (const s of shops) { n += await syncAdjustments(s.id, { tryLock: true }).catch(() => 0); lastSync.set(s.id, Date.now()); }
+  return n;
+}
+
+export async function syncAdjustments(shopId: number, opts: { tryLock?: boolean } = {}) {
   return db.$transaction(async (tx) => {
-    await lockShop(tx, shopId);
+    await tx.$executeRaw`SET LOCAL lock_timeout = '8s'`;
+    if (opts.tryLock) {
+      const [g] = await tx.$queryRaw<{ ok: boolean }[]>`SELECT pg_try_advisory_xact_lock(7300, ${shopId}::int) AS ok`;
+      if (!g?.ok) return 0; // өөр хүсэлт яг одоо тооцоолж байна
+    } else await lockShop(tx, shopId);
     const since = addDays(ubDay(), -SYNC_DAYS);
     const days = await tx.supplierDay.findMany({ where: { shopId, status: DONE, date: { gte: dateOnly(since) } }, include: { items: true } });
     if (!days.length) return 0;
@@ -219,7 +244,13 @@ export async function syncAdjustments(shopId: number) {
         const name = info.get(pid)?.name ?? String(pid);
         const orderNumber = item?.orderNumber ?? l!.orderNumber;
         const per = deds.get(pid);
-        const perUnitDed = item && item.qty > 0 ? item.deduction / item.qty : (per ? per.operatorCost + per.deliveryCost + per.marketingCost + per.otherCost : 0);
+        // Аудит #151: шилжүүлсэн өдрийн суутгал (Супер админы гараар засварыг оруулаад) — одоогийн тохиргоогоор биш
+        const dayOv = ((day.overrides ?? {}) as Record<string, Override>)[String(pid)];
+        const snapLine = ((day.snapshot as unknown as DayCalc | null)?.lines ?? []).find((x) => x.productId === pid && x.qty > 0);
+        const perUnitDed = item && item.qty > 0 ? item.deduction / item.qty
+          : dayOv?.perUnit ? dayOv.operatorCost + dayOv.deliveryCost + dayOv.marketingCost + dayOv.otherCost
+          : snapLine ? snapLine.deduction / snapLine.qty
+          : (per ? per.operatorCost + per.deliveryCost + per.marketingCost + per.otherCost : 0);
         const x = Math.abs(diff);
         let sales: number;
         let deduction = Math.round(perUnitDed * x);
@@ -282,26 +313,30 @@ async function pendingAdjustments(tx: Tx | typeof db, shopId: number) {
 export async function dayView(actor: UserActor, shopIdIn: unknown, dateIn: unknown): Promise<DayCalc> {
   const shop = await shopOf(actor, shopIdIn);
   const date = cleanDate(dateIn);
-  await syncAdjustments(shop.id);
+  await syncIfStale(shop.id);
   return computeDayTx(db, shop.id, date);
 }
 
 async function computeDayTx(tx: Tx | typeof db, shopId: number, date: string): Promise<DayCalc> {
+  return (await computeDayFull(tx, shopId, date)).calc;
+}
+/** Аудит #151: тооцоо ба захиалга бүрийн мөрийг НЭГ уншилтаас (шилжүүлэх мөчид зөрөхгүй) */
+async function computeDayFull(tx: Tx | typeof db, shopId: number, date: string, opts: { noAdjustments?: boolean } = {}): Promise<{ calc: DayCalc; items: LiveItem[] }> {
   const row = await tx.supplierDay.findUnique({ where: { shopId_date: { shopId, date: dateOnly(date) } } });
   if (row?.status === DONE && row.snapshot) {
     const snap = row.snapshot as unknown as DayCalc;
     const applied = await tx.supplierAdjustment.findMany({ where: { appliedDayId: row.id }, orderBy: { id: 'asc' } });
     const later = await tx.supplierAdjustment.findMany({ where: { sourceDayId: row.id, kind: { not: 'CARRY' } }, orderBy: { id: 'asc' } });
     const ad = new Map(await appliedDateMap(tx, later));
-    return { ...snap, status: DONE, adjustments: applied.map((a) => adjView(a, new Map())), laterChanges: later.map((a) => adjView(a, ad)), transferredAt: row.transferredAt, transferredByName: row.transferredByName, version: row.version };
+    return { calc: { ...snap, status: DONE, adjustments: applied.map((a) => adjView(a, new Map())), laterChanges: later.map((a) => adjView(a, ad)), transferredAt: row.transferredAt, transferredByName: row.transferredByName, version: row.version }, items: [] };
   }
   const live = (await computeLive(tx, shopId, date, date, row ? [row] : [])).get(date) ?? { lines: [], unfinished: 0, items: [] };
-  const adjustments = await pendingAdjustments(tx, shopId);
+  const adjustments = opts.noAdjustments ? [] : await pendingAdjustments(tx, shopId);
   const totals = totalsOf(live.lines);
   const adjTotal = adjustments.reduce((a, x) => a + x.amount, 0);
   const raw = totals.net + adjTotal;
-  return { shopId, date, status: OPEN, lines: live.lines, totals, unfinished: live.unfinished, adjustments, adjTotal,
-    payable: Math.max(0, raw), carry: Math.min(0, raw), transferredAt: null, transferredByName: null, version: row?.version ?? 0 };
+  return { calc: { shopId, date, status: OPEN, lines: live.lines, totals, unfinished: live.unfinished, adjustments, adjTotal,
+    payable: Math.max(0, raw), carry: Math.min(0, raw), transferredAt: null, transferredByName: null, version: row?.version ?? 0 }, items: live.items };
 }
 
 async function appliedDateMap(tx: Tx | typeof db, adj: { appliedDayId: number | null }[]) {
@@ -372,19 +407,19 @@ async function orderStats(tx: Tx | typeof db, shopId: number | null, shops: { id
              count(*) FILTER (WHERE x.status = 'CANCELLED')::int AS cancelled,
              count(*) FILTER (WHERE x.status IN ('ASSIGNED', 'OUT_FOR_DELIVERY'))::int AS "onRoad",
              count(*) FILTER (WHERE x.status = 'NEW')::int AS pending,
-             coalesce(sum(x.amount), 0)::int AS amount
+             coalesce(sum(x.amount), 0)::bigint AS amount
       FROM (SELECT o.status, ${amountSql} AS amount FROM "Order" o WHERE ${counted}) x
       ${shopId === null ? Prisma.empty : Prisma.sql`WHERE x.amount IS NOT NULL`}`;
-    const day: OrderDay = { label: labels[i]!, date: d, ...r! };
+    const day: OrderDay = { label: labels[i]!, date: d, ...r!, amount: Number(r!.amount) };
     if (shopId === null && shops.length) {
       const per = await tx.$queryRaw<{ shopId: number; total: number; amount: number }[]>`
-        SELECT a."shopId", count(DISTINCT o.id)::int AS total, coalesce(sum(l.qty * l."unitPrice"), 0)::int AS amount
+        SELECT a."shopId", count(DISTINCT o.id)::int AS total, coalesce(sum(l.qty * l."unitPrice"), 0)::bigint AS amount
         FROM "Order" o JOIN "OrderLine" l ON l."orderId" = o.id
         JOIN "SupplierProduct" a ON a."productId" = l."productId" AND a."fromDate" <= ${dateOnly(d)}::date AND (a."toDate" IS NULL OR a."toDate" > ${dateOnly(d)}::date)
         WHERE ${counted} AND a."shopId" = ANY(${shops.map((x) => x.id)}::int[])
         GROUP BY 1`;
       const m = new Map(per.map((x) => [x.shopId, x]));
-      day.shops = shops.map((x) => ({ id: x.id, name: x.name, total: m.get(x.id)?.total ?? 0, amount: m.get(x.id)?.amount ?? 0 }));
+      day.shops = shops.map((x) => ({ id: x.id, name: x.name, total: m.get(x.id)?.total ?? 0, amount: Number(m.get(x.id)?.amount ?? 0) }));
     }
     out.push(day);
   }
@@ -402,8 +437,18 @@ async function balanceOf(tx: Tx | typeof db, shopId: number) {
 }
 
 /** Удирдлагын самбар + дэлгүүрийн жагсаалт */
+const ovCache: { at: number; v: Awaited<ReturnType<typeof overviewRaw>> | null } = { at: 0, v: null };
 export async function overview(actor: UserActor) {
   assertAdmin(actor);
+  // Аудит #151: бүх дэлгүүрийн 90 хоногийг хүсэлт бүрт дахин тооцоолохгүй — 60 сек санах ой, хүнд ажлын хязгаар
+  if (!ovCache.v || Date.now() - ovCache.at > CACHE_MS || !CACHE_MS) {
+    ovCache.v = await withHeavy(() => overviewRaw(), { name: 'supplier-overview', max: 1 });
+    ovCache.at = Date.now();
+  }
+  return { ...ovCache.v, isSuperAdmin: isSA(actor) };
+}
+export function bustSupplierOverview() { ovCache.v = null; }
+async function overviewRaw() {
   const shops = await db.supplierShop.findMany({ orderBy: [{ isActive: 'desc' }, { name: 'asc' }] });
   const counts = await db.supplierProduct.groupBy({ by: ['shopId'], where: { toDate: null }, _count: true });
   const cnt = new Map(counts.map((c) => [c.shopId, c._count]));
@@ -412,7 +457,7 @@ export async function overview(actor: UserActor) {
   let monthSales = 0, monthNet = 0, todaySales = 0, todayNet = 0, balance = 0;
   const rows = [];
   for (const s of shops) {
-    if (s.isActive) await syncAdjustments(s.id);
+    if (s.isActive) await syncIfStale(s.id);
     const b = s.isActive ? await balanceOf(db, s.id) : null;
     const month = b ? b.days.filter((d) => d.date >= monthStart) : [];
     const td = month.find((d) => d.date === today);
@@ -426,14 +471,14 @@ export async function overview(actor: UserActor) {
   return {
     stats: { activeShops: shops.filter((s) => s.isActive).length, monthSales, monthNet, todaySales, todayNet, balance },
     orderDays: await orderStats(db, null, shops.filter((s) => s.isActive).map((s) => ({ id: s.id, name: s.name }))),
-    shops: rows, isSuperAdmin: isSA(actor), today, defaults: await getDefaults(db),
+    shops: rows, isSuperAdmin: false, today, defaults: await getDefaults(db),
   };
 }
 
 /** Дэлгүүрийн дэлгэрэнгүй (удирдлага) эсвэл нийлүүлэгчийн өөрийн самбар */
 export async function shopDetail(actor: UserActor, shopIdIn?: unknown) {
   const shop = await shopOf(actor, shopIdIn);
-  await syncAdjustments(shop.id);
+  await syncIfStale(shop.id);
   const admin = canEdit(actor.roles, 'supplier');
   const [assignments, deds, b, adjAll, login] = await Promise.all([
     db.supplierProduct.findMany({ where: { shopId: shop.id }, orderBy: [{ toDate: { sort: 'asc', nulls: 'first' } }, { id: 'desc' }] }),
@@ -518,18 +563,26 @@ export async function searchProducts(actor: UserActor, qIn: unknown) {
   return ps.map((p) => ({ ...p, shop: om.get(p.id) ?? null }));
 }
 
-export async function assignProduct(actor: UserActor, b: { shopId?: unknown; productId?: unknown; fromDate?: unknown }) {
+export async function assignProduct(actor: UserActor, b: { shopId?: unknown; productId?: unknown; fromDate?: unknown; reason?: unknown }) {
   assertAdmin(actor);
   const shopId = shopIdOf(b.shopId);
   const productId = Number(b.productId);
   if (!Number.isInteger(productId) || productId <= 0) throw badRequest('Бараа сонгоно уу');
   const fromDate = b.fromDate ? cleanDate(b.fromDate, 'Эхлэх огноо') : ubDay();
+  // Аудит #151 (эзний шийдвэр): хуучин огноогоор оноох (тэр өдрөөс хойшхи борлуулалтыг нөхөж олгоно) — хамгийн ихдээ 90 хоног, шалтгаантай
+  const reason = cleanText(b.reason, 300);
+  if (fromDate < ubDay()) {
+    if (fromDate < addDays(ubDay(), -SYNC_DAYS)) throw badRequest(`Хуучин огноогоор хамгийн ихдээ ${SYNC_DAYS} хоногийн өмнөөс ононо`, 'too_old');
+    if (reason.length < 5) throw badRequest('Хуучин огноогоор оноох шалтгаанаа бичнэ үү (тэр өдрөөс хойшхи борлуулалтыг нийлүүлэгчид нөхөж олгоно)', 'reason_required');
+  }
   try {
     return await db.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(7301, ${productId}::int)`;
-      const [shop, product] = await Promise.all([tx.supplierShop.findUnique({ where: { id: shopId } }), tx.product.findUnique({ where: { id: productId }, select: { id: true, code: true, name: true } })]);
+      const [shop, product] = await Promise.all([tx.supplierShop.findUnique({ where: { id: shopId } }), tx.product.findUnique({ where: { id: productId }, select: { id: true, code: true, name: true, status: true } })]);
       if (!shop) throw notFound('Дэлгүүр олдсонгүй');
       if (!product) throw notFound('Бараа олдсонгүй');
+      if (!shop.isActive) throw badRequest('Идэвхгүй дэлгүүрт бараа оноохгүй', 'inactive_shop');
+      if (product.status === 'ARCHIVED') throw badRequest('Архивласан барааг оноохгүй', 'archived');
       const open = await tx.supplierProduct.findFirst({ where: { productId, toDate: null }, include: { shop: { select: { name: true } } } });
       if (open) {
         throw conflict(open.shopId === shopId
@@ -541,12 +594,16 @@ export async function assignProduct(actor: UserActor, b: { shopId?: unknown; pro
         throw badRequest(`Энэ бараа ${ymdOf(last.toDate)}-ны өмнө өөр дэлгүүрт хамаарч байсан тул эхлэх огноо ${ymdOf(last.toDate)}-аас хойш байна`);
       }
       const a = await tx.supplierProduct.create({ data: { shopId, productId, fromDate: dateOnly(fromDate), createdByName: actor.name } });
-      // Анхдагч суутгал автоматаар (#100) — өмнө тохируулсан бол хэвээр
+      // Анхдагч суутгал автоматаар (#100) — өмнө тохируулсан бол хэвээр.
+      // Аудит #151 (эзний шийдвэр): өөр дэлгүүрээс шилжиж ирвэл Супер админы тавьсан хуучин суутгал нь дагана
+      let carried: string | null = null;
       if (!(await tx.supplierDeduction.findUnique({ where: { shopId_productId: { shopId, productId } } }))) {
-        const def = await getDefaults(tx);
-        await tx.supplierDeduction.create({ data: { shopId, productId, ...def, updatedByName: `${actor.name} (анхдагч)` } });
+        const prev = await tx.supplierDeduction.findFirst({ where: { productId, shopId: { not: shopId } }, orderBy: { updatedAt: 'desc' } });
+        const v = prev ? { operatorCost: prev.operatorCost, deliveryCost: prev.deliveryCost, marketingCost: prev.marketingCost, otherCost: prev.otherCost, otherNote: prev.otherNote } : await getDefaults(tx);
+        if (prev) carried = `дэлгүүр #${prev.shopId}-ийн суутгал дагав`;
+        await tx.supplierDeduction.create({ data: { shopId, productId, ...v, updatedByName: prev ? `${actor.name} (өмнөх дэлгүүрээс)` : `${actor.name} (анхдагч)` } });
       }
-      await writeAudit(actor, 'supplier.product_assigned', 'SupplierShop', String(shopId), { product: `${product.code} ${product.name}`, fromDate }, tx);
+      await writeAudit(actor, 'supplier.product_assigned', 'SupplierShop', String(shopId), { product: `${product.code} ${product.name}`, fromDate, ...(fromDate < ubDay() ? { backdated: true, reason } : {}), ...(carried ? { deduction: carried } : {}) }, tx, ['money']);
       return { id: a.id };
     });
   } catch (e) {
@@ -572,6 +629,38 @@ export async function unassignProduct(actor: UserActor, idIn: unknown) {
   });
 }
 
+/**
+ * Аудит #151 (эзний шийдвэр «өнөөдрөөс»): суутгал өөрчлөгдөхөд өмнөх (шилжүүлээгүй) өдрүүдийн дүн өөрчлөгдөхгүй —
+ * тэр өдрүүдэд хуучин 1 ширхэгийн суутгалыг өдрийн тэмдэглэл болгон хадгална (Супер админы гараар засвар байвал хэвээр).
+ */
+type DedVals = { operatorCost: number; deliveryCost: number; marketingCost: number; otherCost: number };
+async function freezePastDeductions(tx: Tx, shopId: number, olds: Map<number, DedVals>) {
+  if (!olds.size) return 0;
+  const today = ubDay();
+  const from = addDays(today, -SYNC_DAYS); const to = addDays(today, -1);
+  const items = (await liveItems(tx, shopId, from, to)).filter((i) => olds.has(i.productId));
+  const byDate = new Map<string, Set<number>>();
+  for (const i of items) { const set = byDate.get(i.date) ?? new Set<number>(); set.add(i.productId); byDate.set(i.date, set); }
+  let n = 0;
+  for (const [date, pids] of byDate) {
+    const row = await tx.supplierDay.findUnique({ where: { shopId_date: { shopId, date: dateOnly(date) } } });
+    if (row?.status === DONE) continue;
+    const ov = { ...((row?.overrides ?? {}) as Record<string, Override>) };
+    let changed = false;
+    for (const pid of pids) {
+      if (ov[String(pid)]) continue;
+      const o = olds.get(pid)!;
+      ov[String(pid)] = { ...o, note: 'Суутгал өөрчлөгдөхөөс өмнөх (автомат)', perUnit: true };
+      changed = true; n++;
+    }
+    if (!changed) continue;
+    const json = ov as unknown as Prisma.InputJsonValue;
+    if (row) await tx.supplierDay.update({ where: { id: row.id }, data: { overrides: json, version: { increment: 1 } } });
+    else await tx.supplierDay.create({ data: { shopId, date: dateOnly(date), overrides: json } });
+  }
+  return n;
+}
+
 export async function saveDeduction(actor: UserActor, b: Record<string, unknown>) {
   assertSA(actor);
   const shopId = shopIdOf(b.shopId);
@@ -583,7 +672,9 @@ export async function saveDeduction(actor: UserActor, b: Record<string, unknown>
     marketingCost: cleanInt(b.marketingCost, 'Маркетинг', 10_000_000), otherCost: cleanInt(b.otherCost, 'Бусад', 10_000_000), otherNote: cleanText(b.otherNote, 200),
   };
   await db.$transaction(async (tx) => {
+    await lockShop(tx, shopId);
     const old = await tx.supplierDeduction.findUnique({ where: { shopId_productId: { shopId, productId } } });
+    if (old) await freezePastDeductions(tx, shopId, new Map([[productId, { operatorCost: old.operatorCost, deliveryCost: old.deliveryCost, marketingCost: old.marketingCost, otherCost: old.otherCost }]]));
     await tx.supplierDeduction.upsert({ where: { shopId_productId: { shopId, productId } }, create: { shopId, productId, ...data, updatedByName: actor.name }, update: { ...data, updatedByName: actor.name } });
     await writeAudit(actor, 'supplier.deduction_saved', 'SupplierShop', String(shopId), { productId, before: old ? { operatorCost: old.operatorCost, deliveryCost: old.deliveryCost, marketingCost: old.marketingCost, otherCost: old.otherCost } : null, after: data }, tx);
   });
@@ -612,19 +703,28 @@ export async function setDefaults(actor: UserActor, b: Record<string, unknown>) 
     const json = v as unknown as Prisma.InputJsonValue;
     await tx.appSetting.upsert({ where: { key: KEY_DEFAULT }, create: { key: KEY_DEFAULT, value: json, updatedById: actor.id }, update: { value: json, updatedById: actor.id } });
     let updated = 0;
+    const prevs: { shopId: number; productId: number; before: DedVals | null }[] = [];
     if (applyAll) {
       const tomorrow = dateOnly(addDays(ubDay(), 1));
       const act = await tx.supplierProduct.findMany({ where: { OR: [{ toDate: null }, { toDate: { gte: tomorrow } }] }, select: { shopId: true, productId: true } });
       const seen = new Set<string>();
+      const olds = await tx.supplierDeduction.findMany({ where: { OR: act.map((a) => ({ shopId: a.shopId, productId: a.productId })) } });
+      const om = new Map(olds.map((o) => [`${o.shopId}:${o.productId}`, o]));
+      // Аудит #151: өмнөх өдрүүдэд хуучин суутгал хэвээр (дэлгүүр тус бүрээр)
+      const byShop = new Map<number, Map<number, DedVals>>();
+      for (const o of olds) { const m = byShop.get(o.shopId) ?? new Map(); m.set(o.productId, { operatorCost: o.operatorCost, deliveryCost: o.deliveryCost, marketingCost: o.marketingCost, otherCost: o.otherCost }); byShop.set(o.shopId, m); }
+      for (const [sid, m] of byShop) { await lockShop(tx, sid); await freezePastDeductions(tx, sid, m); }
       for (const a of act) {
         const k = `${a.shopId}:${a.productId}`; if (seen.has(k)) continue; seen.add(k);
+        const o = om.get(k);
+        prevs.push({ ...a, before: o ? { operatorCost: o.operatorCost, deliveryCost: o.deliveryCost, marketingCost: o.marketingCost, otherCost: o.otherCost } : null });
         await tx.supplierDeduction.upsert({ where: { shopId_productId: { shopId: a.shopId, productId: a.productId } }, create: { ...a, ...v, updatedByName: actor.name }, update: { ...v, updatedByName: actor.name } });
         updated++;
       }
     }
-    await writeAudit(actor, 'supplier.default_deduction', 'AppSetting', KEY_DEFAULT, { before, after: v, applyAll, updated } as unknown as Prisma.InputJsonValue, tx, ['money']);
+    await writeAudit(actor, 'supplier.default_deduction', 'AppSetting', KEY_DEFAULT, { before, after: v, applyAll, updated, items: prevs.slice(0, 500) } as unknown as Prisma.InputJsonValue, tx, ['money']);
     return { ok: true, updated };
-  });
+  }, { timeout: 60_000, maxWait: 10_000 });
 }
 
 /** Тухайн өдрийн суутгалыг гараар засах — ЗӨВХӨН Супер админ (#98); шилжүүлсэн өдөрт болохгүй */
@@ -645,7 +745,7 @@ export async function overrideDay(actor: UserActor, b: Record<string, unknown>) 
     await lockShop(tx, shopId);
     const row = await tx.supplierDay.findUnique({ where: { shopId_date: { shopId, date: dateOnly(date) } } });
     if (row?.status === DONE) throw new AppError(423, 'Шилжүүлсэн өдрийг засахгүй (түгжигдсэн)', 'locked');
-    if (row && b.version !== undefined && Number(b.version) !== row.version) throw conflict('Өөр хүн өөрчилсөн байна — дахин ачаална уу', 'stale');
+    if (row && (b.version === undefined || Number(b.version) !== row.version)) throw conflict('Өөр хүн өөрчилсөн байна — дахин ачаална уу', 'stale');
     const before = await computeDayTx(tx, shopId, date);
     const line = before.lines.find((l) => l.productId === productId);
     if (!line) throw badRequest('Энэ өдөр энэ бараа зарагдаагүй');
@@ -660,7 +760,7 @@ export async function overrideDay(actor: UserActor, b: Record<string, unknown>) 
       after: ov ?? 'тохиргоогоор', note: ov?.note ?? null,
     }, tx, ['money']);
     return { ok: true };
-  });
+  }, { timeout: 20_000, maxWait: 10_000 });
 }
 
 /** «Шилжүүлсэн» — өдөр түгжигдэнэ; хүлээгдэж буй буцаалт/нэмэгдэл энэ шилжүүлэгт тооцогдоно */
@@ -669,48 +769,67 @@ export async function transferDay(actor: UserActor, b: Record<string, unknown>) 
   const shopId = shopIdOf(b.shopId);
   const date = cleanDate(b.date);
   if (date > ubDay()) throw badRequest('Ирээдүйн өдрийг шилжүүлэхгүй');
+  // Аудит #151: 90 хоногоос хуучин өдрийг шилжүүлэхгүй (дараа нь гарсан буцаалт тооцогдохгүй болдог)
+  if (date < addDays(ubDay(), -SYNC_DAYS)) throw badRequest(`${SYNC_DAYS} хоногоос хуучин өдрийг шилжүүлэхгүй`, 'too_old');
+  // Давхар дарахад бүтэн тооцоо хийхгүй — эхлээд шалгана
+  const pre = await db.supplierDay.findUnique({ where: { shopId_date: { shopId, date: dateOnly(date) } }, select: { status: true } });
+  if (pre?.status === DONE) throw conflict('Энэ өдөр аль хэдийн шилжүүлсэн', 'already_transferred');
   await syncAdjustments(shopId);
-  return db.$transaction(async (tx) => {
+  const r = await db.$transaction(async (tx) => {
+    await tx.$executeRaw`SET LOCAL lock_timeout = '8s'`;
     await lockShop(tx, shopId);
     const row = await tx.supplierDay.findUnique({ where: { shopId_date: { shopId, date: dateOnly(date) } } });
     if (row?.status === DONE) throw conflict('Энэ өдөр аль хэдийн шилжүүлсэн', 'already_transferred');
-    if (row && b.version !== undefined && Number(b.version) !== row.version) throw conflict('Өөр хүн өөрчилсөн байна — дахин ачаална уу', 'stale');
-    const calc = await computeDayTx(tx, shopId, date);
-    if (calc.unfinished > 0) throw badRequest(`Энэ падааны ${calc.unfinished} захиалга дуусаагүй байна (хүргэлтэд эсвэл хүлээн аваагүй). Бүгд дууссаны дараа шилжүүлнэ.`, 'unfinished');
-    if (calc.lines.length === 0 && calc.adjustments.length === 0) throw badRequest('Энэ өдөр шилжүүлэх зүйл алга');
-    const live = (await computeLive(tx, shopId, date, date, row ? [row] : [])).get(date);
-    const raw = calc.totals.net + calc.adjTotal;
-    const payable = Math.max(0, raw);
-    const day = row
-      ? await tx.supplierDay.update({ where: { id: row.id }, data: { status: DONE } })
-      : await tx.supplierDay.create({ data: { shopId, date: dateOnly(date), status: DONE } });
-    // Захиалга бүрт ногдох суутгал (мөрийн нийт суутгалыг тоогоор хувааж, нийлбэр яг тэнцэнэ)
-    const byProduct = new Map<number, LiveItem[]>();
-    for (const i of live?.items ?? []) { const a = byProduct.get(i.productId) ?? []; a.push(i); byProduct.set(i.productId, a); }
-    for (const l of calc.lines) {
-      const list = byProduct.get(l.productId) ?? [];
-      let left = l.deduction;
-      list.forEach((i, idx) => {
-        const share = idx === list.length - 1 ? left : Math.round((l.deduction * i.qty) / (l.qty || 1));
-        left -= share;
-        (i as LiveItem & { deduction: number }).deduction = share;
-      });
+    // Аудит #151: хувилбар заавал (өөр хүн дөнгөж өөрчилсөн бол хуучин дүнгээр шилжүүлэхгүй)
+    if (row && (b.version === undefined || Number(b.version) !== row.version)) throw conflict('Өөр хүн өөрчилсөн байна — дахин ачаална уу', 'stale');
+    // Аудит #151 (эзний шийдвэр): өмнөх хасах (нийлүүлэгч өртэй) шилжүүлээгүй өдрүүдийг автоматаар хамт тооцож хасна
+    const netted: { date: string; amount: number }[] = [];
+    const earlier = await rangeDays(tx, shopId, addDays(ubDay(), -SYNC_DAYS), addDays(date, -1));
+    for (const d of earlier.filter((x) => x.status === OPEN && x.net < 0 && x.unfinished === 0).sort((x, y) => x.date.localeCompare(y.date))) {
+      const r0 = await tx.supplierDay.findUnique({ where: { shopId_date: { shopId, date: dateOnly(d.date) } } });
+      const res = await transferInTx(tx, actor, shopId, d.date, r0, { noAdjustments: true, note: `${date}-ны шилжүүлэгт автоматаар хасагдав` });
+      netted.push({ date: d.date, amount: res.raw });
     }
-    const items = (live?.items ?? []).map((i) => ({ dayId: day.id, source: i.source, orderNumber: i.orderNumber, productId: i.productId, qty: i.qty, sales: i.sales, deduction: (i as LiveItem & { deduction?: number }).deduction ?? 0 }));
-    if (items.length) await tx.supplierDayItem.createMany({ data: items });
-    if (calc.adjustments.length) await tx.supplierAdjustment.updateMany({ where: { id: { in: calc.adjustments.map((a) => a.id) }, appliedDayId: null }, data: { appliedDayId: day.id } });
-    if (raw < 0) {
-      await tx.supplierAdjustment.create({ data: { shopId, kind: 'CARRY', sourceDayId: day.id, sourceDate: dateOnly(date), amount: raw,
-        reason: `${date}-ны шилжүүлэгт багтаагүй хасалт ${money(-raw)} — дараагийн шилжүүлгээс хасагдана` } });
-    }
-    const snapshot = { ...calc, status: DONE, payable, carry: Math.min(0, raw) } as unknown as Prisma.InputJsonValue;
-    const now = new Date();
-    await tx.supplierDay.update({ where: { id: day.id }, data: {
-      snapshot, sales: calc.totals.sales, deductions: calc.totals.deductions, net: calc.totals.net, adjustments: calc.adjTotal, payable,
-      transferredAt: now, transferredByName: actor.name, version: { increment: 1 } } });
-    await writeAudit(actor, 'supplier.transferred', 'SupplierShop', String(shopId), { date, sales: calc.totals.sales, deductions: calc.totals.deductions, net: calc.totals.net, adjustments: calc.adjTotal, payable }, tx, ['money']);
-    return { ok: true, payable };
-  }, { timeout: 30_000 });
+    const res = await transferInTx(tx, actor, shopId, date, row, {});
+    return { ok: true, payable: res.payable, netted };
+  }, { timeout: 30_000, maxWait: 10_000 });
+  bustSupplierOverview();
+  return r;
+}
+
+async function transferInTx(tx: Tx, actor: UserActor, shopId: number, date: string, row: DayRowDb | null, opts: { noAdjustments?: boolean; note?: string }) {
+  const { calc, items: liveItemsList } = await computeDayFull(tx, shopId, date, { noAdjustments: opts.noAdjustments });
+  if (calc.unfinished > 0) throw badRequest(`${date}: падааны ${calc.unfinished} захиалга дуусаагүй байна (хүргэлтэд эсвэл хүлээн аваагүй). Бүгд дууссаны дараа шилжүүлнэ.`, 'unfinished');
+  if (calc.lines.length === 0 && calc.adjustments.length === 0) throw badRequest('Энэ өдөр шилжүүлэх зүйл алга');
+  const raw = calc.totals.net + calc.adjTotal;
+  const payable = Math.max(0, raw);
+  const day = row
+    ? await tx.supplierDay.update({ where: { id: row.id }, data: { status: DONE } })
+    : await tx.supplierDay.create({ data: { shopId, date: dateOnly(date), status: DONE } });
+  // Захиалга бүрт ногдох суутгал (мөрийн нийт суутгалыг тоогоор хувааж, нийлбэр яг тэнцэнэ)
+  const byProduct = new Map<number, LiveItem[]>();
+  for (const i of liveItemsList) { const a = byProduct.get(i.productId) ?? []; a.push(i); byProduct.set(i.productId, a); }
+  const share = new Map<LiveItem, number>();
+  for (const l of calc.lines) {
+    const list = byProduct.get(l.productId) ?? [];
+    let left = l.deduction;
+    list.forEach((i, idx) => { const v = idx === list.length - 1 ? left : Math.round((l.deduction * i.qty) / (l.qty || 1)); left -= v; share.set(i, v); });
+  }
+  const items = liveItemsList.map((i) => ({ dayId: day.id, source: i.source, orderNumber: i.orderNumber, productId: i.productId, qty: i.qty, sales: i.sales, deduction: share.get(i) ?? 0 }));
+  if (items.length) await tx.supplierDayItem.createMany({ data: items });
+  if (calc.adjustments.length) await tx.supplierAdjustment.updateMany({ where: { id: { in: calc.adjustments.map((a) => a.id) }, appliedDayId: null }, data: { appliedDayId: day.id } });
+  if (raw < 0) {
+    await tx.supplierAdjustment.create({ data: { shopId, kind: 'CARRY', sourceDayId: day.id, sourceDate: dateOnly(date), amount: raw,
+      reason: opts.note
+        ? `${date}-ны өдөр нийлүүлэгч ${money(-raw)} өртэй гарсан (борлуулалт ${money(calc.totals.sales)} − суутгал ${money(calc.totals.deductions)}) — ${opts.note}`
+        : `${date}-ны шилжүүлэгт багтаагүй хасалт ${money(-raw)} — дараагийн шилжүүлгээс хасагдана` } });
+  }
+  const snapshot = { ...calc, status: DONE, payable, carry: Math.min(0, raw) } as unknown as Prisma.InputJsonValue;
+  await tx.supplierDay.update({ where: { id: day.id }, data: {
+    snapshot, sales: calc.totals.sales, deductions: calc.totals.deductions, net: calc.totals.net, adjustments: calc.adjTotal, payable,
+    transferredAt: new Date(), transferredByName: actor.name, version: { increment: 1 } } });
+  await writeAudit(actor, 'supplier.transferred', 'SupplierShop', String(shopId), { date, sales: calc.totals.sales, deductions: calc.totals.deductions, net: calc.totals.net, adjustments: calc.adjTotal, payable, ...(opts.note ? { auto: opts.note } : {}) }, tx, ['money']);
+  return { raw, payable };
 }
 
 /** «Шилжүүлсэн»-ийг буцаах — зөвхөн Супер админ, зөвхөн хамгийн сүүлд шилжүүлсэн өдөр (дараагийнх нь хөндөгдөхгүй) */
@@ -732,20 +851,26 @@ export async function undoTransfer(actor: UserActor, b: Record<string, unknown>)
     await tx.supplierDay.update({ where: { id: row.id }, data: { status: OPEN, snapshot: Prisma.DbNull, sales: 0, deductions: 0, net: 0, adjustments: 0, payable: 0, transferredAt: null, transferredByName: null, version: { increment: 1 } } });
     await writeAudit(actor, 'supplier.transfer_undone', 'SupplierShop', String(shopId), { date, payable: row.payable }, tx, ['money']);
     return { ok: true };
-  });
+  }, { timeout: 20_000, maxWait: 10_000 });
 }
 
 // ───────────── Нэвтрэх эрх ─────────────
 
+const creatingLogin = new Set<number>();
 export async function createLogin(actor: UserActor, b: { shopId?: unknown; name?: unknown; phone?: unknown }) {
   assertAdmin(actor);
   const shopId = shopIdOf(b.shopId);
   const shop = await db.supplierShop.findUnique({ where: { id: shopId } });
   if (!shop) throw notFound('Дэлгүүр олдсонгүй');
   if (shop.userId) throw conflict('Нэвтрэх эрх аль хэдийн үүссэн');
-  const r = await createUser(actor, { name: b.name || shop.contactName || shop.name, phone: b.phone, roles: ['SUPPLIER'] });
+  // Аудит #151: зэрэг дарахад хоёр эрх үүсэхгүй — дэлгүүрийн түгжээ
+  if (creatingLogin.has(shopId)) throw conflict('Нэвтрэх эрх яг одоо үүсгэж байна', 'busy');
+  creatingLogin.add(shopId);
+  let r: Awaited<ReturnType<typeof createUser>>;
+  try { r = await createUser(actor, { name: b.name || shop.contactName || shop.name, phone: b.phone, roles: ['SUPPLIER'] }); } finally { creatingLogin.delete(shopId); }
   await db.$transaction(async (tx) => {
-    await tx.supplierShop.update({ where: { id: shopId }, data: { userId: r.user.id, version: { increment: 1 } } });
+    const n = await tx.supplierShop.updateMany({ where: { id: shopId, userId: null }, data: { userId: r.user.id, version: { increment: 1 } } });
+    if (!n.count) { await tx.user.update({ where: { id: r.user.id }, data: { isActive: false } }); throw conflict('Нэвтрэх эрх аль хэдийн үүссэн'); }
     await writeAudit(actor, 'supplier.login_created', 'SupplierShop', String(shopId), { phone: r.user.phone }, tx);
   });
   return { phone: r.user.phone, temporaryPassword: r.temporaryPassword };

@@ -1144,7 +1144,7 @@ export async function markReordered(actor: UserActor, b: { productId?: unknown; 
   return createReorder(actor, b);
 }
 /** Эрх шалгасны дараа (СА эсвэл тухайн барааны нийлүүлэгч) */
-export async function createReorder(actor: UserActor, b: { productId?: unknown; variantId?: unknown; qty?: unknown; expectedDay?: unknown; note?: unknown }, scope: ReorderScope = 'OWNER') {
+export async function createReorder(actor: UserActor, b: { productId?: unknown; variantId?: unknown; qty?: unknown; expectedDay?: unknown; note?: unknown }, scope: ReorderScope = 'OWNER', shopId: number | null = null) {
   const productId = Number(b.productId);
   const product = Number.isInteger(productId) ? await db.product.findUnique({ where: { id: productId }, select: { id: true, name: true } }) : null;
   if (!product) throw notFound('Бараа олдсонгүй');
@@ -1166,7 +1166,7 @@ export async function createReorder(actor: UserActor, b: { productId?: unknown; 
     const cur = await tx.reorderOrder.findFirst({ where: { productId, scope, variantId, receivedAt: null, cancelledAt: null } });
     if (cur) throw conflict(variantId ? `«${label}» аль хэдийн «Захиалсан» байна — эхлээд цуцална уу` : 'Энэ бараа аль хэдийн «Захиалсан» байна — эхлээд цуцална уу');
     if (!variantId && (await tx.reorderOrder.count({ where: { productId, scope, variantId: { not: null }, receivedAt: null, cancelledAt: null } }))) throw conflict('Өнгө тус бүрээр захиалсан байна — өнгө бүрээр нь тэмдэглэнэ үү');
-    const r = await tx.reorderOrder.create({ data: { productId, variantId, qty, expectedDay, note, byName: actor.name, scope } });
+    const r = await tx.reorderOrder.create({ data: { productId, variantId, qty, expectedDay, note, byName: actor.name, scope, shopId } });
     await writeAudit(actor, 'outflow.reorder', 'ReorderOrder', String(r.id), { productId, name: product.name, variant: label || null, qty, expectedDay, note, scope }, tx);
     return r;
   });
@@ -1179,10 +1179,12 @@ export async function cancelReorder(actor: UserActor, idIn: unknown) {
   assertSA(actor);
   return cancelReorderOf(actor, idIn);
 }
-export async function cancelReorderOf(actor: UserActor, idIn: unknown, productIds?: Set<number>, scope: ReorderScope = 'OWNER') {
+export async function cancelReorderOf(actor: UserActor, idIn: unknown, productIds?: Set<number>, scope: ReorderScope = 'OWNER', shopId: number | null = null) {
   const id = Number(idIn);
   const cur = Number.isInteger(id) ? await db.reorderOrder.findUnique({ where: { id } }) : null;
   if (cur && productIds && !productIds.has(cur.productId)) throw forbidden('Таны бараа биш');
+  // Аудит #151: өөр нийлүүлэгчийн тэмдгийг цуцлахгүй
+  if (cur && scope === 'SUPPLIER' && shopId !== null && cur.shopId !== null && cur.shopId !== shopId) throw forbidden('Энэ тэмдгийг цуцлах эрхгүй');
   if (cur && cur.scope !== scope) throw forbidden('Энэ тэмдгийг цуцлах эрхгүй');
   if (!cur || cur.receivedAt || cur.cancelledAt) throw notFound('Идэвхтэй захиалга олдсонгүй');
   await db.$transaction(async (tx) => {
@@ -1198,11 +1200,12 @@ export async function reorderDetail(actor: UserActor, productIdIn: unknown) {
   assertSA(actor);
   return reorderDetailOf(productIdIn);
 }
-export async function reorderDetailOf(productIdIn: unknown, scope: ReorderScope = 'OWNER') {
+export async function reorderDetailOf(productIdIn: unknown, scope: ReorderScope = 'OWNER', shopId: number | null = null) {
   const id = Number(productIdIn);
   const m = await computeReorder();
   const cfg = await getConfig();
-  const history = await db.reorderOrder.findMany({ where: { productId: id, scope }, orderBy: { orderedAt: 'desc' }, take: 10 });
+  // Аудит #151: нийлүүлэгч зөвхөн өөрийн дэлгүүрийн тэмдгийн түүхийг харна
+  const history = await db.reorderOrder.findMany({ where: { productId: id, scope, ...(scope === 'SUPPLIER' && shopId !== null ? { shopId } : {}) }, orderBy: { orderedAt: 'desc' }, take: 10 });
   const x = m.get(id);
   const info = x && scope === 'SUPPLIER' ? { ...x, level: x.sup.level, order: x.sup.order, days: x.sup.days, worstLabel: x.sup.worstLabel, variants: x.variants.map((v) => ({ ...v, level: v.supLevel, order: v.supOrder })) } : x;
   return { info: info ?? null, leadDays: cfg.leadDays, urgentDays: cfg.urgentDays, defaultExpected: addDays(ubDay(), cfg.leadDays), history };
