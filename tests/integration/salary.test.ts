@@ -73,6 +73,8 @@ describe('хагас сар, тогтмол цалин', () => {
     const b = await S.salaryBoard(acc, ym);
     expect(b.rows.find((x) => x.key === key)?.periods[0]?.transferSalary).toBe(700_000);
     expect(b.rows.some((x) => x.key === `u:${drv.id}`)).toBe(false); // жолооч «Тооцоо»-д
+    await err(S.setTransferred(acc, r2.id, true), 409, 'not_locked'); // #146: зөвхөн цоожтой
+    await S.lockSalary(acc, r2.id);
     await S.setTransferred(acc, r2.id, true);
     expect((await S.salaryBoard(acc, ym)).totals.transferred).toBe(700_000);
   });

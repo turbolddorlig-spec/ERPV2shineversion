@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
       case 'external-remove': return json(await S.removeExternal(ctx.actor, b.id));
       case 'debt': return json(await S.addDebt(ctx.actor, b));
       case 'transferred': return json(await S.setTransferred(ctx.actor, b.id, b.value));
-      case 'lock': return json(await S.lockSalary(ctx.actor, b.id));
+      case 'lock': return json(await S.lockSalary(ctx.actor, b.id, b.version));
       case 'unlock': return json(await S.unlockSalary(ctx.actor, b.id, b));
       case 'lock-code': return json(await S.setLockCode(ctx.actor, b));
       default: throw notFound();

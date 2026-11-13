@@ -20,8 +20,12 @@ const shiftYm = (ym: string, n: number) => { const [y, m] = ym.split('-').map(Nu
 const MONTHS = ['1-р сар', '2-р сар', '3-р сар', '4-р сар', '5-р сар', '6-р сар', '7-р сар', '8-р сар', '9-р сар', '10-р сар', '11-р сар', '12-р сар'];
 const ymLabel = (ym: string) => `${ym.slice(0, 4)} оны ${MONTHS[Number(ym.slice(5)) - 1]}`;
 
-interface PeriodCell { id: number; transferSalary: number; transferred: boolean; isLocked: boolean; orderCount: number; totalDeductions: number; penaltyDeducted: number }
-interface BoardRow { key: string; name: string; phone?: string; role: string; roleLabel: string; external: boolean; configured: boolean; salaryType: string; baseSalary: number; periods: (PeriodCell | null)[] }
+type Change = { field: string; label: string; from: unknown; to: unknown };
+interface PeriodCell { id: number; transferSalary: number; transferred: boolean; isLocked: boolean; orderCount: number; totalDeductions: number; penaltyDeducted: number; changes: Change[] | null; noSa: boolean; changedByName: string | null; bankMismatch: string | null }
+interface BoardRow { key: string; name: string; phone?: string; role: string; roleLabel: string; external: boolean; configured: boolean; salaryType: string; baseSalary: number; inactive?: boolean; configChanged: Change[] | null; configNoSa: boolean; configByName: string | null; periods: (PeriodCell | null)[] }
+/** Аудит #146: Супер админы бодсоноос өөрчлөгдсөн зүйлс — «Шилжүүлэх 500,000₮ → 900,000₮» */
+const chVal = (c: Change, v: unknown) => (c.field === 'bankAccount' || c.field === 'salaryType' ? String(v ?? '—') || '—' : c.field === 'workingDays' ? `${v ?? 0} өдөр` : money(Number(v ?? 0)));
+const chText = (ch: Change[]) => ch.map((c) => `${c.label} ${chVal(c, c.from)} → ${chVal(c, c.to)}`).join(' · ');
 interface Board { ym: string; periods: { start: string; end: string; label: string; half: 1 | 2 }[]; rows: BoardRow[]; totals: { p1: number; p2: number; all: number; transferred: number }; driverPenalties: { userId: string; name: string; count: number; amount: number; deducted: number }[]; hasLockCode: boolean; isSuperAdmin: boolean }
 const GROUPS: [string, string, (r: BoardRow) => boolean][] = [
   ['all', 'Бүгд', () => true], ['opp', 'Оператор', (r) => r.role.startsWith('OPERATOR')], ['mk', 'Маркетинг', (r) => r.role.startsWith('MARKETING')],
@@ -80,6 +84,10 @@ export function SalaryClient() {
               <div key={l} className={clsx('min-w-0 rounded-[16px] px-4 py-3', big ? 'bg-ink text-on-ink' : 'border border-line bg-surface')}><div className={clsx('text-[12.5px] font-semibold', big ? 'opacity-75' : 'text-muted')}>{l}</div><div className="truncate text-[22px] font-extrabold">{money(v)}</div></div>
             ))}
           </section>
+          {(() => {
+            const n = d.rows.reduce((s2, r) => s2 + r.periods.filter((c) => c && (c.changes || c.noSa)).length + (r.configChanged || r.configNoSa ? 1 : 0), 0);
+            return n ? <p data-salary-changed className="rounded-[14px] border border-warn/40 bg-warn-soft px-4 py-2.5 text-[13.5px] font-semibold text-warn">🟠 Супер админы бодсоноос өөрчлөгдсөн {n} зүйл байна — доорх «Өөрчлөгдсөн» тэмдгийг шалгана уу</p> : null;
+          })()}
           <section className="overflow-hidden rounded-[20px] border border-line bg-surface shadow-card">
             <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2.5">
               <div className="flex max-w-full gap-1 overflow-x-auto">{GROUPS.map(([k, l]) => <button key={k} onClick={() => setGroup(k)} className={clsx('h-8 shrink-0 rounded-full px-3 text-[13px] font-bold', group === k ? 'bg-ink text-on-ink' : 'text-muted hover:bg-surface2')}>{l}</button>)}</div>
@@ -94,8 +102,9 @@ export function SalaryClient() {
                       <span className="[overflow-wrap:anywhere]">{r.roleLabel}</span>
                       {r.configured ? <span>· {r.salaryType === 'ORDER_BASED' ? 'Захиалгаар' : `Тогтмол ${money(r.baseSalary)}`}</span> : <Badge tone="warn">Тохиргоогүй</Badge>}
                       <button onClick={() => setCfg(r)} className="font-semibold text-accent-ink">Тохируулах</button>
-                      {r.external ? <button onClick={() => { if (window.confirm(`${r.name}-г хасах уу?`)) void post({ action: 'external-remove', id: Number(r.key.slice(2)) }); }} className="font-semibold text-bad-ink">Хасах</button> : null}
+                      {r.external && !r.inactive ? <button onClick={() => { if (window.confirm(`${r.name}-г хасах уу?`)) void post({ action: 'external-remove', id: Number(r.key.slice(2)) }); }} className="font-semibold text-bad-ink">Хасах</button> : null}
                     </div>
+                    {r.configChanged || r.configNoSa ? <p className="mt-1 text-[12px] font-semibold text-warn [overflow-wrap:anywhere]">🟠 Тохиргоо {r.configNoSa ? 'Супер админ тохируулаагүй' : `өөрчлөгдсөн: ${chText(r.configChanged!)}`}{r.configByName ? ` · ${r.configByName}` : ''}</p> : null}
                   </div>
                   {[1, 2].map((h) => {
                     const c = r.periods[h - 1];
@@ -105,8 +114,10 @@ export function SalaryClient() {
                           <span className="block text-[11.5px] font-semibold text-subtle">{h === 1 ? '1–15' : `16–сүүл`}</span>
                           {c ? <b className="block text-[16px]">{money(c.transferSalary)}</b> : <span className="text-[13px] text-muted">Бодох →</span>}
                           {c?.orderCount ? <span className="block text-[11.5px] text-subtle">{c.orderCount} захиалга</span> : null}
+                          {c && (c.changes || c.noSa) ? <span data-changed className="mt-0.5 block text-[11.5px] font-semibold text-warn [overflow-wrap:anywhere]">{c.noSa ? 'Супер админ бодоогүй' : chText(c.changes!)}{c.changedByName ? ` · ${c.changedByName}` : ''}</span> : null}
+                          {c?.bankMismatch ? <span className="mt-0.5 block text-[11.5px] font-semibold text-bad-ink [overflow-wrap:anywhere]">⚠ Данс тохиргооноос өөр: {c.bankMismatch}</span> : null}
                         </span>
-                        {c ? <span className="flex shrink-0 flex-col items-end gap-1">{c.isLocked ? <Badge>🔒</Badge> : null}{c.transferred ? <Badge tone="ok">Шилжүүлсэн</Badge> : <Badge tone="warn">Хүлээгдэж буй</Badge>}</span> : null}
+                        {c ? <span className="flex shrink-0 flex-col items-end gap-1">{c.changes || c.noSa ? <Badge tone="warn">Өөрчлөгдсөн</Badge> : null}{c.isLocked ? <Badge>🔒</Badge> : null}{c.transferred ? <Badge tone="ok">Шилжүүлсэн</Badge> : <Badge tone="warn">Хүлээгдэж буй</Badge>}</span> : null}
                       </button>
                     );
                   })}
@@ -206,7 +217,7 @@ function RecordDialog({ ym, row, half, isSA, hasLockCode, onClose, onDone, onUnl
   const save = async () => {
     setBusy('save'); setErr(null);
     try {
-      await api('/api/salary', { method: 'POST', json: { action: 'save', staffKey: row.key, ym, half, version: p?.record?.version, baseSalary: orderBased ? undefined : num(f.base), bonusSalary: num(f.bonus), penaltyDeducted: num(f.penalty),
+      await api('/api/salary', { method: 'POST', json: { action: 'save', staffKey: row.key, ym, half, version: p?.record?.version ?? 0, baseSalary: orderBased ? undefined : num(f.base), bonusSalary: num(f.bonus), penaltyDeducted: num(f.penalty),
         additions: adds.map((x) => ({ label: x.label, amount: num(x.amount) })), deductions: deds.map((x) => ({ label: x.label, amount: num(x.amount) })),
         loanIds, debtPayments: Object.entries(debtPay).map(([k, v]) => ({ debtId: Number(k), amount: num(v) })), notes: f.notes, bankName: f.bankName, bankAccount: f.bankAccount } });
       await load(); onDone(`${row.name}: цалин хадгалагдлаа`);
@@ -221,9 +232,11 @@ function RecordDialog({ ym, row, half, isSA, hasLockCode, onClose, onDone, onUnl
     <Modal open onClose={onClose} size="xl" title={`${row.name} · ${p?.period.label ?? ''}`} subtitle={`${row.roleLabel}${locked ? ` · 🔒 ${p?.record?.lockedByName} ${ubDateTime(p?.record?.lockedAt)}` : ''}`}
       footer={<>
         {p?.record ? <Button size="sm" variant="ghost" className="mr-auto" onClick={() => void showHist()}>Түүх</Button> : null}
-        {p?.record && !locked ? <Button loading={busy === 'lock'} onClick={() => { if (window.confirm('Цоожлох уу? Торгууль «Цалингаас хассан», зээл «суутгасан», өрийн төлөлт бүртгэгдэнэ.')) void act('lock', {}, `${row.name}: цалин цоожлогдлоо`); }}>🔒 Цоожлох</Button> : null}
-        {locked ? <Button onClick={() => (hasLockCode || isSA ? onUnlock(p!.record!.id) : setErr('Цоожны код тохируулаагүй — Супер админ тайлна'))}>Цоож тайлах</Button> : null}
-        {p?.record ? <Button loading={busy === 'transferred'} onClick={() => void act('transferred', { value: !p.record!.transferred }, p.record!.transferred ? 'Шилжүүлээгүй болголоо' : 'Шилжүүлсэн гэж тэмдэглэлээ')}>{p.record.transferred ? 'Шилжүүлээгүй болгох' : '✓ Шилжүүлсэн'}</Button> : null}
+        {p?.record && !locked ? <Button loading={busy === 'lock'} onClick={() => { if (window.confirm('Цоожлох уу? Торгууль «Цалингаас хассан», зээл «суутгасан», өрийн төлөлт бүртгэгдэнэ.')) void act('lock', { version: p!.record!.version }, `${row.name}: цалин цоожлогдлоо`); }}>🔒 Цоожлох</Button> : null}
+        {locked && !p?.record?.transferred ? <Button onClick={() => (hasLockCode || isSA ? onUnlock(p!.record!.id) : setErr('Цоожны код тохируулаагүй — Супер админ тайлна'))}>Цоож тайлах</Button> : null}
+        {/* Аудит #146: «Шилжүүлсэн» зөвхөн цоожтой цалинд; буцаахыг зөвхөн Супер админ */}
+        {locked && !p?.record?.transferred ? <Button loading={busy === 'transferred'} onClick={() => void act('transferred', { value: true }, 'Шилжүүлсэн гэж тэмдэглэлээ')}>✓ Шилжүүлсэн</Button> : null}
+        {p?.record?.transferred && isSA ? <Button loading={busy === 'transferred'} onClick={() => { if (window.confirm('«Шилжүүлсэн»-ийг буцаах уу? Мөнгө дахин шилжүүлэгдэх эрсдэлтэй.')) void act('transferred', { value: false }, 'Шилжүүлээгүй болголоо'); }}>Шилжүүлээгүй болгох</Button> : null}
         {!locked ? <Button variant="primary" loading={busy === 'save'} disabled={!p} onClick={() => void save()}>Хадгалах</Button> : null}
       </>}>
       {err ? <Notice>{err}</Notice> : null}
@@ -358,7 +371,7 @@ function LockCodeDialog({ onClose, onDone }: { onClose: () => void; onDone: () =
   const go = async () => { try { await api('/api/salary', { method: 'POST', json: { action: 'lock-code', code } }); onDone(); } catch (e) { setErr(msg(e)); } };
   return (
     <Modal open onClose={onClose} title="Цалингийн цоожны код" subtitle="Цоожтой цалинг тайлахад шаардана. Шифрлэгдэж хадгалагдана." footer={<><Button onClick={onClose}>Болих</Button><Button variant="primary" onClick={() => void go()}>Хадгалах</Button></>}>
-      <input data-autofocus type="password" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Шинэ код (4–32 тэмдэгт)" aria-label="Шинэ код" className="h-11 w-full rounded-xl border border-line bg-surface px-3" />
+      <input data-autofocus type="password" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Шинэ код (6–32 тэмдэгт)" aria-label="Шинэ код" className="h-11 w-full rounded-xl border border-line bg-surface px-3" />
       {err ? <div className="mt-2"><Notice>{err}</Notice></div> : null}
     </Modal>
   );

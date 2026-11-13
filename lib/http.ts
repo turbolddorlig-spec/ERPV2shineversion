@@ -15,9 +15,9 @@ export function json(data: unknown, status = 200): NextResponse {
 
 export function errorResponse(e: unknown): NextResponse {
   if (e instanceof AppError) return json({ error: e.message, code: e.code }, e.status);
-  // Аудит #141: түгжээ хүлээх хугацаа хэтэрсэн (lock_timeout 55P03) / холболт дууссан (P2024) — түр завгүй, дахин оролдоно
+  // Аудит #141: түгжээ хүлээх хугацаа хэтэрсэн (lock_timeout 55P03) / холболт дууссан (P2024) / гүйлгээ эхэлж амжаагүй (P2028, #146) — түр завгүй, дахин оролдоно
   const m = String((e as Error)?.message ?? '');
-  if (/lock timeout|55P03|canceling statement due to lock timeout/i.test(m) || (e as { code?: string })?.code === 'P2024') {
+  if (/lock timeout|55P03|canceling statement due to lock timeout/i.test(m) || ['P2024', 'P2028'].includes(String((e as { code?: string })?.code))) {
     return json({ error: 'Систем түр завгүй байна — хэдэн секундийн дараа дахин дарна уу', code: 'busy' }, 409);
   }
   console.error('[api] unexpected error', e);

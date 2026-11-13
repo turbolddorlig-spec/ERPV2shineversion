@@ -30,12 +30,48 @@ export const DAY_TYPE_LABEL: Record<string, string> = { LEAVE: 'Чөлөөтэй
 const assert = (a: UserActor) => { if (!canEdit(a.roles, 'salary')) throw forbidden('Ажилтны цалинг Супер админ, Админ, Нягтлан хөтөлнө'); };
 const isSA = (a: UserActor) => a.roles.includes('SUPER_ADMIN');
 const money = (n: number) => `${n.toLocaleString('en-US')}₮`;
+/** Аудит #146: нэг цалингийн нийт дүнгийн дээд хязгаар (системийн алдааны оронд ойлгомжтой мессеж) */
+const MAX_TOTAL = 1_000_000_000;
+/** Аудит #146: цалингийн гүйлгээ — түгжээ 8 сек-ээс удаан хүлээхгүй («завгүй»), бусад хуудсыг холболтгүй болгохгүй */
+async function salaryTx<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+  return db.$transaction(async (tx) => { await tx.$executeRaw`SET LOCAL lock_timeout = '8s'`; return fn(tx); }, { timeout: 20_000, maxWait: 10_000 });
+}
+/**
+ * Аудит #146: нэг ажилтны цалингийн бичих үйлдлүүдийг серверт дараалуулна — DB холболт барьж түгжээ хүлээхгүй
+ * (25 хүн нэг цалинг зэрэг дарахад бүх холболт дүүрч бусад хуудас гацдаг байв). 10 сек-ээс удаан бол «завгүй».
+ */
+const keyQueues = new Map<string, Promise<unknown>>();
+async function perStaff<T>(staffKey: string, fn: () => Promise<T>): Promise<T> {
+  const prev = keyQueues.get(staffKey) ?? Promise.resolve();
+  let timer: NodeJS.Timeout | undefined;
+  const waited = Promise.race([prev.catch(() => undefined), new Promise<'timeout'>((r) => { timer = setTimeout(() => r('timeout'), 10_000); })]);
+  const run = waited.then(async (w) => {
+    clearTimeout(timer);
+    if (w === 'timeout') throw new AppError(409, 'Систем түр завгүй байна — хэдэн секундийн дараа дахин дарна уу', 'busy');
+    return fn();
+  });
+  const tail = run.catch(() => undefined);
+  keyQueues.set(staffKey, tail);
+  void tail.then(() => { if (keyQueues.get(staffKey) === tail) keyQueues.delete(staffKey); });
+  return run;
+}
+/** Супер админы бодсонтой харьцуулах талбарууд (самбарт «Өөрчлөгдсөн») */
+const SNAP_FIELDS = { baseSalary: 'Үндсэн цалин', bonusSalary: 'Урамшуулал', orderSalary: 'Захиалгын цалин', workingDays: 'Ажилласан өдөр', totalAdditions: 'Нэмэлт орлого', totalDeductions: 'Суутгал', penaltyDeducted: 'Торгууль', loanTotal: 'Зээлсэн бараа', debtTotal: 'Өрийн төлөлт', transferSalary: 'Шилжүүлэх', bankAccount: 'Данс' } as const;
+const CFG_FIELDS = { salaryType: 'Төрөл', baseSalary: 'Үндсэн цалин', bonusSalary: 'Урамшуулал', oppRatePerOrder: '1 захиалгын хөлс', dailyRate: '1 өдрийн цалин', bankAccount: 'Данс' } as const;
+type Snap = Record<string, unknown>;
+const pick = (o: Record<string, unknown>, keys: readonly string[]): Snap => Object.fromEntries(keys.map((k) => [k, o[k] ?? null]));
+export function snapDiff(cur: Record<string, unknown>, snap: unknown, labels: Record<string, string>) {
+  const sn = (snap && typeof snap === 'object' ? snap : null) as Snap | null;
+  if (!sn || sn.none) return null;
+  return Object.entries(labels).filter(([k]) => k in sn && String(sn[k] ?? '') !== String(cur[k] ?? '')).map(([k, label]) => ({ field: k, label, from: sn[k], to: cur[k] ?? null }));
+}
 const cleanInt = (v: unknown, label: string, max = 1_000_000_000) => { const n = v === '' || v === null || v === undefined ? 0 : Number(v); if (!Number.isInteger(n) || n < 0 || n > max) throw badRequest(`${label} буруу`); return n; };
 
 export interface Period { start: string; end: string; label: string; half: 1 | 2; ym: string; daysInMonth: number }
 export function periodOf(ym: string, half: number): Period {
   if (!/^\d{4}-\d{2}$/.test(ym) || (half !== 1 && half !== 2)) throw badRequest('Хугацаа буруу');
   const [y, m] = ym.split('-').map(Number) as [number, number];
+  if (m < 1 || m > 12 || y < 2000 || y > 2100) throw badRequest('Хугацаа буруу'); // Аудит #146: 13-р сар → 500 биш
   const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const start = half === 1 ? `${ym}-01` : `${ym}-16`;
   const end = half === 1 ? `${ym}-15` : `${ym}-${String(days).padStart(2, '0')}`;
@@ -44,12 +80,14 @@ export function periodOf(ym: string, half: number): Period {
 const periodOfDate = (d: Date) => { const s = ymdOf(d); return periodOf(s.slice(0, 7), Number(s.slice(8)) <= 15 ? 1 : 2); };
 
 interface Staff { key: string; userId: string | null; externalId: number | null; name: string; role: string; roleLabel: string; roles: Role[]; external: boolean; jobTitle?: string }
-async function staffOf(tx: Tx | typeof db, key: string): Promise<Staff> {
+/** write = шинээр цалин / тохиргоо / өр / хуваарь бүртгэх — самбарт харагдахгүй хүнд (Супер админ, жолооч, нийлүүлэгч, хассан гадны) хориотой (#146) */
+async function staffOf(tx: Tx | typeof db, key: string, opts: { write?: boolean } = {}): Promise<Staff> {
   if (key.startsWith('u:')) {
     const id = key.slice(2);
     if (!/^[0-9a-f-]{36}$/i.test(id)) throw badRequest('Ажилтан буруу');
     const u = await tx.user.findUnique({ where: { id }, select: { id: true, name: true, roles: true } });
     if (!u) throw notFound('Ажилтан олдсонгүй');
+    if (opts.write && u.roles.some((r) => EXCLUDED_ROLES.includes(r))) throw badRequest('Энэ хүний цалин энд бодогдохгүй (Супер админ, жолооч, нийлүүлэгч)', 'not_staff');
     const role = u.roles.find((r) => !EXCLUDED_ROLES.includes(r)) ?? u.roles[0]!;
     return { key, userId: u.id, externalId: null, name: u.name, role, roleLabel: u.roles.map((r) => ROLE_LABEL[r]).join(', '), roles: u.roles, external: false };
   }
@@ -57,6 +95,7 @@ async function staffOf(tx: Tx | typeof db, key: string): Promise<Staff> {
     const id = Number(key.slice(2));
     const x = Number.isInteger(id) ? await tx.externalStaff.findUnique({ where: { id } }) : null;
     if (!x) throw notFound('Ажилтан олдсонгүй');
+    if (opts.write && !x.isActive) throw badRequest('Хасагдсан гадны ажилтан', 'not_staff');
     return { key, userId: null, externalId: x.id, name: x.name, role: 'EXTERNAL', roleLabel: `Гадны · ${x.jobTitle}`, roles: [], external: true, jobTitle: x.jobTitle };
   }
   throw badRequest('Ажилтан буруу');
@@ -73,25 +112,40 @@ export async function salaryBoard(actor: UserActor, ymIn?: string) {
     db.staffLoan.findMany({ where: { status: 'ISSUED' }, select: { staffId: true }, distinct: ['staffId'] }),
     db.staffDebt.findMany({ where: { isActive: true, staffKey: { startsWith: 'u:' } }, select: { staffKey: true }, distinct: ['staffKey'] }),
     db.penalty.findMany({ where: { status: 'ACTIVE', deducted: false }, select: { userId: true }, distinct: ['userId'] }),
-    db.staffSalaryRecord.findMany({ where: { isLocked: false, staffKey: { startsWith: 'u:' } }, select: { staffKey: true }, distinct: ['staffKey'] }),
+    // Аудит #146: цоожтой ч шилжүүлээгүй цалин бас «дутуу» — ажлаас гарсан хүн самбараас алга болохгүй
+    db.staffSalaryRecord.findMany({ where: { OR: [{ isLocked: false }, { transferred: false }] }, select: { staffKey: true }, distinct: ['staffKey'] }),
   ]);
-  const pendingIds = [...new Set([...loanIds.map((x) => x.staffId), ...debtKeys.map((x) => x.staffKey.slice(2)), ...penIds.map((x) => x.userId), ...recKeys.map((x) => x.staffKey.slice(2))])];
+  const pendingExt = recKeys.filter((x) => x.staffKey.startsWith('x:')).map((x) => Number(x.staffKey.slice(2))).filter(Number.isInteger);
+  const pendingIds = [...new Set([...loanIds.map((x) => x.staffId), ...debtKeys.map((x) => x.staffKey.slice(2)), ...penIds.map((x) => x.userId), ...recKeys.filter((x) => x.staffKey.startsWith('u:')).map((x) => x.staffKey.slice(2))])];
   const [users, externals, configs, records, drvPen] = await Promise.all([
     db.user.findMany({ where: { OR: [{ isActive: true }, { isActive: false, id: { in: pendingIds } }], NOT: { roles: { hasSome: EXCLUDED_ROLES } } }, select: { id: true, name: true, roles: true, phone: true, isActive: true }, orderBy: { name: 'asc' } }),
-    db.externalStaff.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } }),
+    db.externalStaff.findMany({ where: { OR: [{ isActive: true }, { id: { in: pendingExt } }] }, orderBy: { name: 'asc' } }),
     db.staffSalaryConfig.findMany(),
     db.staffSalaryRecord.findMany({ where: { periodStart: { in: [dateOnly(p1.start), dateOnly(p2.start)] } } }),
     db.penalty.groupBy({ by: ['userId', 'userName'], where: { type: 'DELIVERY_ERROR', status: 'ACTIVE', createdAt: { gte: ubDayStart(p1.start), lt: ubDayStart(addDays(p2.end, 1)) } }, _sum: { amount: true, deductedAmount: true }, _count: true }),
   ]);
   const cm = new Map(configs.map((c) => [c.userId, c]));
   const rm = new Map(records.map((r) => [`${r.staffKey}|${ymdOf(r.periodStart)}`, r]));
-  const row = (key: string, base: { name: string; roleLabel: string; role: string; external: boolean; configured: boolean; salaryType: string; baseSalary: number; phone?: string; inactive?: boolean }) => ({
+  type CfgChange = { field: string; label: string; from: unknown; to: unknown }[] | null;
+  const row = (key: string, base: { name: string; roleLabel: string; role: string; external: boolean; configured: boolean; salaryType: string; baseSalary: number; phone?: string; inactive?: boolean; bankAccount: string; configChanged: CfgChange; configNoSa: boolean; configByName: string | null }) => ({
     key, ...base,
-    periods: [p1, p2].map((p) => { const r = rm.get(`${key}|${p.start}`); return r ? { id: r.id, transferSalary: r.transferSalary, transferred: r.transferred, isLocked: r.isLocked, orderCount: r.orderCount, totalDeductions: r.totalDeductions + r.loanTotal + r.debtTotal, penaltyDeducted: r.penaltyDeducted } : null; }),
+    periods: [p1, p2].map((p) => {
+      const r = rm.get(`${key}|${p.start}`);
+      if (!r) return null;
+      // Аудит #146: Супер админы бодсоноос өөр хүн өөрчилсөн бол — юу, хэдээс хэд болсон
+      const changes = snapDiff(r as unknown as Record<string, unknown>, r.saSnapshot, SNAP_FIELDS);
+      return { id: r.id, transferSalary: r.transferSalary, transferred: r.transferred, isLocked: r.isLocked, orderCount: r.orderCount, totalDeductions: r.totalDeductions + r.loanTotal + r.debtTotal, penaltyDeducted: r.penaltyDeducted,
+        changes: changes?.length ? changes : null, noSa: r.trackChanges && !r.saSnapshot, changedByName: r.changedByName,
+        bankMismatch: !!base.bankAccount && !!r.bankAccount && r.bankAccount !== base.bankAccount ? r.bankAccount : null };
+    }),
   });
+  const cfgFlags = (cur: Record<string, unknown> | null | undefined, snap: unknown, by: string | null | undefined) => {
+    const ch = cur ? snapDiff(cur, snap, CFG_FIELDS) : null;
+    return { configChanged: ch?.length ? ch : null, configNoSa: !!(snap && typeof snap === 'object' && (snap as Snap).none), configByName: by ?? null };
+  };
   const rows = [
-    ...users.map((u) => { const c = cm.get(u.id); const role = u.roles.find((r) => !EXCLUDED_ROLES.includes(r)) ?? u.roles[0]!; return row(`u:${u.id}`, { name: u.name, phone: u.phone, role, roleLabel: u.roles.map((r) => ROLE_LABEL[r]).join(', ') + (u.isActive ? '' : ' · Идэвхгүй (тооцоо дутуу)'), external: false, configured: !!c, salaryType: c?.salaryType ?? 'FIXED', baseSalary: c?.baseSalary ?? 0, inactive: !u.isActive }); }),
-    ...externals.map((x) => row(`x:${x.id}`, { name: x.name, role: 'EXTERNAL', roleLabel: `Гадны · ${x.jobTitle}`, external: true, configured: true, salaryType: 'FIXED', baseSalary: x.baseSalary })),
+    ...users.map((u) => { const c = cm.get(u.id); const role = u.roles.find((r) => !EXCLUDED_ROLES.includes(r)) ?? u.roles[0]!; return row(`u:${u.id}`, { name: u.name, phone: u.phone, role, roleLabel: u.roles.map((r) => ROLE_LABEL[r]).join(', ') + (u.isActive ? '' : ' · Идэвхгүй (тооцоо дутуу)'), external: false, configured: !!c, salaryType: c?.salaryType ?? 'FIXED', baseSalary: c?.baseSalary ?? 0, inactive: !u.isActive, bankAccount: c?.bankAccount ?? '', ...cfgFlags(c as unknown as Record<string, unknown>, c?.saSnapshot, c?.updatedByName) }); }),
+    ...externals.map((x) => row(`x:${x.id}`, { name: x.name, role: 'EXTERNAL', roleLabel: `Гадны · ${x.jobTitle}${x.isActive ? '' : ' · Хасагдсан (тооцоо дутуу)'}`, external: true, configured: true, salaryType: 'FIXED', baseSalary: x.baseSalary, inactive: !x.isActive, bankAccount: x.bankAccount, ...cfgFlags(x as unknown as Record<string, unknown>, x.saSnapshot, null) })),
   ];
   const tot = (i: 0 | 1) => rows.reduce((s, r) => s + (r.periods[i]?.transferSalary ?? 0), 0);
   return {
@@ -106,19 +160,27 @@ export async function salaryBoard(actor: UserActor, ymIn?: string) {
 
 export async function setConfig(actor: UserActor, input: Record<string, unknown>) {
   assert(actor);
-  const st = await staffOf(db, String(input.staffKey ?? ''));
+  const st = await staffOf(db, String(input.staffKey ?? ''), { write: true });
   const salaryType = String(input.salaryType ?? 'FIXED');
   if (!['FIXED', 'ORDER_BASED'].includes(salaryType)) throw badRequest('Цалин бодох төрөл буруу');
   const v = { baseSalary: cleanInt(input.baseSalary, 'Үндсэн цалин'), bonusSalary: cleanInt(input.bonusSalary, 'Урамшуулал'), oppRatePerOrder: cleanInt(input.oppRatePerOrder, '1 захиалгын хөлс', 1_000_000), dailyRate: cleanInt(input.dailyRate, '1 өдрийн цалин', 10_000_000) };
   const bankName = String(input.bankName ?? '').trim().slice(0, 60); const bankAccount = String(input.bankAccount ?? '').trim().slice(0, 40);
+  // Аудит #146: Супер админ хадгалбал «анхны» утга шинэчлэгдэнэ; өөр хүн өөрчилбөл самбарт «Тохиргоо өөрчлөгдсөн»
+  const cfgSnap = (o: Record<string, unknown>) => pick(o, Object.keys(CFG_FIELDS));
   if (st.external) {
-    const x = await db.externalStaff.update({ where: { id: st.externalId! }, data: { baseSalary: v.baseSalary, bankName, bankAccount, ...(input.name ? { name: String(input.name).trim().slice(0, 80) } : {}), ...(input.jobTitle ? { jobTitle: String(input.jobTitle).trim().slice(0, 80) } : {}) } });
-    await writeAudit(actor, 'salary.external_updated', 'ExternalStaff', String(x.id), { name: x.name, baseSalary: x.baseSalary }, db, ['salary', 'money']);
+    const bx = await db.externalStaff.findUniqueOrThrow({ where: { id: st.externalId! } });
+    const cur = { salaryType: 'FIXED', baseSalary: v.baseSalary, bonusSalary: 0, oppRatePerOrder: 0, dailyRate: 0, bankAccount };
+    const x = await db.externalStaff.update({ where: { id: st.externalId! }, data: { baseSalary: v.baseSalary, bankName, bankAccount, ...(input.name ? { name: String(input.name).trim().slice(0, 80) } : {}), ...(input.jobTitle ? { jobTitle: String(input.jobTitle).trim().slice(0, 80) } : {}),
+      ...(isSA(actor) ? { saSnapshot: cfgSnap(cur) as Prisma.InputJsonValue } : bx.saSnapshot ? {} : { saSnapshot: { ...cfgSnap({ salaryType: 'FIXED', baseSalary: bx.baseSalary, bonusSalary: 0, oppRatePerOrder: 0, dailyRate: 0, bankAccount: bx.bankAccount }) } as Prisma.InputJsonValue }) } });
+    await writeAudit(actor, 'salary.external_updated', 'ExternalStaff', String(x.id), { name: x.name, baseSalary: x.baseSalary, bankName, bankAccount, from: { baseSalary: bx.baseSalary, bankName: bx.bankName, bankAccount: bx.bankAccount } }, db, ['salary', 'money']);
     return { ok: true };
   }
   const before = await db.staffSalaryConfig.findUnique({ where: { userId: st.userId! } });
-  await db.staffSalaryConfig.upsert({ where: { userId: st.userId! }, create: { userId: st.userId!, salaryType, ...v, bankName, bankAccount, updatedByName: actor.name }, update: { salaryType, ...v, bankName, bankAccount, updatedByName: actor.name } });
-  await writeAudit(actor, 'salary.config', 'User', st.userId!, { staff: st.name, salaryType, ...v, bankName, from: before ? { salaryType: before.salaryType, baseSalary: before.baseSalary, bonusSalary: before.bonusSalary, oppRatePerOrder: before.oppRatePerOrder, dailyRate: before.dailyRate } : null }, db, ['salary', 'money']);
+  const cur = { salaryType, ...v, bankAccount };
+  // Супер админ биш хүн анх үүсгэвэл «Супер админ тохируулаагүй»; өмнө нь Супер админы утга байхгүй байсан бол одоогийнхыг анхных гэж үзнэ
+  const snap = isSA(actor) ? cfgSnap(cur) : before?.saSnapshot ? undefined : before ? cfgSnap(before as unknown as Record<string, unknown>) : { none: true };
+  await db.staffSalaryConfig.upsert({ where: { userId: st.userId! }, create: { userId: st.userId!, salaryType, ...v, bankName, bankAccount, updatedByName: actor.name, saSnapshot: snap as Prisma.InputJsonValue }, update: { salaryType, ...v, bankName, bankAccount, updatedByName: actor.name, ...(snap ? { saSnapshot: snap as Prisma.InputJsonValue } : {}) } });
+  await writeAudit(actor, 'salary.config', 'User', st.userId!, { staff: st.name, salaryType, ...v, bankName, bankAccount, from: before ? { salaryType: before.salaryType, baseSalary: before.baseSalary, bonusSalary: before.bonusSalary, oppRatePerOrder: before.oppRatePerOrder, dailyRate: before.dailyRate, bankName: before.bankName, bankAccount: before.bankAccount } : null }, db, ['salary', 'money']);
   return { ok: true };
 }
 export async function getConfig(actor: UserActor, staffKey: unknown) {
@@ -154,21 +216,25 @@ export async function workSchedule(actor: UserActor, ymIn: unknown) {
 /** Өдөр тэмдэглэх: dayType хоосон = ажилласан (устгана) */
 export async function setWorkDay(actor: UserActor, input: { staffKey?: unknown; date?: unknown; dayType?: unknown; note?: unknown }) {
   assert(actor);
-  const st = await staffOf(db, String(input.staffKey ?? ''));
+  const st = await staffOf(db, String(input.staffKey ?? ''), { write: true });
   const date = String(input.date ?? '');
   if (!isYmd(date)) throw badRequest('Огноо буруу');
   const dayType = String(input.dayType ?? '');
+  if (dayType && !(dayType in DAY_TYPE_LABEL)) throw badRequest('Төрөл буруу');
   const p = periodOfDate(dateOnly(date));
-  const locked = await db.staffSalaryRecord.findFirst({ where: { staffKey: st.key, periodStart: dateOnly(p.start), isLocked: true }, select: { id: true } });
-  if (locked) throw conflict('Энэ хугацааны цалин цоожтой — ажлын хуваарь засахгүй', 'locked');
-  if (!dayType) await db.staffWorkDay.deleteMany({ where: { staffKey: st.key, date: dateOnly(date) } });
-  else {
-    if (!(dayType in DAY_TYPE_LABEL)) throw badRequest('Төрөл буруу');
-    const note = String(input.note ?? '').trim().slice(0, 200) || null;
-    await db.staffWorkDay.upsert({ where: { staffKey_date: { staffKey: st.key, date: dateOnly(date) } }, create: { staffKey: st.key, date: dateOnly(date), dayType, note, byName: actor.name }, update: { dayType, note, byName: actor.name } });
-  }
-  await writeAudit(actor, 'salary.work_day', 'StaffWorkDay', `${st.key}:${date}`, { staff: st.name, date, dayType: dayType || 'WORK' }, db, ['salary']);
-  return { ok: true };
+  // Аудит #146: цоожлохтой ижил түгжээ дотор шалгаж бичнэ — цоожлох мөчид зэрэг засагдахгүй
+  return perStaff(st.key, () => salaryTx(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(8::int4, hashtext(${st.key + p.start}))`;
+    const locked = await tx.staffSalaryRecord.findFirst({ where: { staffKey: st.key, periodStart: dateOnly(p.start), isLocked: true }, select: { id: true } });
+    if (locked) throw conflict('Энэ хугацааны цалин цоожтой — ажлын хуваарь засахгүй', 'locked');
+    if (!dayType) await tx.staffWorkDay.deleteMany({ where: { staffKey: st.key, date: dateOnly(date) } });
+    else {
+      const note = String(input.note ?? '').trim().slice(0, 200) || null;
+      await tx.staffWorkDay.upsert({ where: { staffKey_date: { staffKey: st.key, date: dateOnly(date) } }, create: { staffKey: st.key, date: dateOnly(date), dayType, note, byName: actor.name }, update: { dayType, note, byName: actor.name } });
+    }
+    await writeAudit(actor, 'salary.work_day', 'StaffWorkDay', `${st.key}:${date}`, { staff: st.name, date, dayType: dayType || 'WORK' }, tx, ['salary']);
+    return { ok: true };
+  }));
 }
 
 // ───────────────────────── Цалин бодох ─────────────────────────
@@ -241,11 +307,13 @@ export async function saveSalary(actor: UserActor, input: SaveInput) {
   assert(actor);
   const st = await staffOf(db, String(input.staffKey ?? ''));
   const p = periodOf(String(input.ym ?? ''), Number(input.half));
-  return db.$transaction(async (tx) => {
+  return perStaff(st.key, () => salaryTx(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(8::int4, hashtext(${st.key + p.start}))`;
     const ex = await tx.staffSalaryRecord.findUnique({ where: { staffKey_periodStart: { staffKey: st.key, periodStart: dateOnly(p.start) } } });
     if (ex?.isLocked) throw new AppError(423, 'Цалин цоожтой байна. Эхлээд цоожийг тайлна уу.', 'locked');
+    // Аудит #146: version 0 = «шинээр» — өөр цонхноос аль хэдийн хадгалсан бол дарахгүй
     if (ex && input.version !== undefined && Number(input.version) !== ex.version) throw conflict('Өөр хүн дөнгөж сая өөрчилсөн — дахин ачаална уу', 'stale');
+    if (!ex) await staffOf(tx, st.key, { write: true }); // шинэ цалин — самбарт харагдах ажилтанд л
     const inp = await computeInputs(tx, st, p);
     const orderBased = !st.external && inp.cfg.salaryType === 'ORDER_BASED' && inp.isOpp;
     const baseSalary = orderBased ? 0 : input.baseSalary === undefined ? inp.calcBase : cleanInt(input.baseSalary, 'Үндсэн цалин');
@@ -278,6 +346,11 @@ export async function saveSalary(actor: UserActor, input: SaveInput) {
     const debtTotal = debtPayments.reduce((s, x) => s + x.amount, 0);
     const grossSalary = (orderBased ? orderSalary : baseSalary) + bonusSalary + totalAdditions;
     const transferSalary = grossSalary - totalDeductions - penaltyDeducted - debtTotal - loanTotal;
+    // Аудит #146: хэт том дүн — ойлгомжтой мессеж (системийн алдаа биш); хасах дүн цалингаас их бол хадгалахгүй
+    for (const [l, n] of [['Захиалгын цалин', orderSalary], ['Нэмэлт орлого', totalAdditions], ['Суутгал', totalDeductions], ['Нийт цалин', grossSalary]] as const) {
+      if (n > MAX_TOTAL) throw badRequest(`${l} хэт их (${money(n)}) — ${money(MAX_TOTAL)}-с ихгүй`, 'too_large');
+    }
+    if (transferSalary < 0) throw badRequest(`Хасах дүн цалингаас ${money(-transferSalary)}-өөр их байна — суутгалаа багасгана уу (илүүг «Ажилтны өр» болгон бүртгэнэ)`, 'negative');
     const data = {
       staffName: st.name, staffRole: st.roleLabel, userId: st.userId, externalId: st.externalId, periodEnd: dateOnly(p.end), periodLabel: p.label,
       salaryType: orderBased ? 'ORDER_BASED' : 'FIXED', workingDays: inp.workingDays, totalDays: inp.totalDays, dailyRate: inp.dailyRate,
@@ -287,23 +360,35 @@ export async function saveSalary(actor: UserActor, input: SaveInput) {
       grossSalary, transferSalary, notes: String(input.notes ?? '').trim().slice(0, 1000) || null,
       bankName: String(input.bankName ?? inp.cfg.bankName).trim().slice(0, 60), bankAccount: String(input.bankAccount ?? inp.cfg.bankAccount).trim().slice(0, 40),
     };
+    // Аудит #146: Супер админ хадгалбал «анхны бодолт» шинэчлэгдэнэ; өөр хүн хадгалбал зөрүү самбарт «Өөрчлөгдсөн»
+    const sa = isSA(actor);
+    const track = sa
+      ? { saSnapshot: pick(data as unknown as Record<string, unknown>, Object.keys(SNAP_FIELDS)) as Prisma.InputJsonValue, trackChanges: true, changedByName: null }
+      : { changedByName: actor.name, ...(ex ? {} : { trackChanges: true }),
+        // хуучин (Супер админы утга хадгалаагүй) бичлэг — засахын өмнөх дүнг «анхны» гэж үзнэ
+        ...(ex && !ex.saSnapshot && !ex.trackChanges ? { saSnapshot: pick(ex as unknown as Record<string, unknown>, Object.keys(SNAP_FIELDS)) as Prisma.InputJsonValue, trackChanges: true } : {}) };
     const r = ex
-      ? await tx.staffSalaryRecord.update({ where: { id: ex.id }, data: { ...data, updatedByName: actor.name, version: { increment: 1 } } })
-      : await tx.staffSalaryRecord.create({ data: { ...data, staffKey: st.key, periodStart: dateOnly(p.start), createdByName: actor.name } });
+      ? await tx.staffSalaryRecord.update({ where: { id: ex.id }, data: { ...data, ...track, updatedByName: actor.name, version: { increment: 1 } } })
+      : await tx.staffSalaryRecord.create({ data: { ...data, ...track, staffKey: st.key, periodStart: dateOnly(p.start), createdByName: actor.name } });
     const changes: Record<string, { from: unknown; to: unknown }> = {};
-    if (ex) for (const k of ['baseSalary', 'bonusSalary', 'orderSalary', 'totalAdditions', 'totalDeductions', 'penaltyDeducted', 'loanTotal', 'debtTotal', 'transferSalary', 'bankAccount', 'notes'] as const) if (ex[k] !== r[k]) changes[k] = { from: ex[k], to: r[k] };
-    await writeAudit(actor, ex ? 'salary.updated' : 'salary.created', 'StaffSalaryRecord', String(r.id), { staff: st.name, period: p.label, transferSalary, ...(ex ? { changes } : {}) } as Prisma.InputJsonValue, tx, ['salary', 'money']);
+    if (ex) for (const k of ['baseSalary', 'bonusSalary', 'orderSalary', 'totalAdditions', 'totalDeductions', 'penaltyDeducted', 'loanTotal', 'debtTotal', 'transferSalary', 'bankName', 'bankAccount', 'notes'] as const) if (ex[k] !== r[k]) changes[k] = { from: ex[k], to: r[k] };
+    await writeAudit(actor, ex ? 'salary.updated' : 'salary.created', 'StaffSalaryRecord', String(r.id), { staff: st.name, period: p.label, transferSalary, bankName: r.bankName, bankAccount: r.bankAccount, ...(ex ? { changes } : { baseSalary, bonusSalary, orderSalary, totalAdditions, totalDeductions, penaltyDeducted }) } as Prisma.InputJsonValue, tx, ['salary', 'money']);
     return r;
-  });
+  }));
 }
 
 export async function setTransferred(actor: UserActor, idIn: unknown, value: unknown) {
   assert(actor);
   const id = Number(idIn);
-  const r = await db.staffSalaryRecord.findUnique({ where: { id } });
+  const r = Number.isInteger(id) && id > 0 ? await db.staffSalaryRecord.findUnique({ where: { id } }) : null;
   if (!r) throw notFound('Цалин олдсонгүй');
   const v = value === true;
-  await db.staffSalaryRecord.update({ where: { id }, data: { transferred: v, transferredAt: v ? new Date() : null, transferredByName: v ? actor.name : null } });
+  // Аудит #146: зөвхөн цоожтой цалинг «Шилжүүлсэн»; буцаахыг зөвхөн Супер админ (давхар шилжүүлэхээс сэргийлнэ)
+  if (v && !r.isLocked) throw conflict('Эхлээд цалинг цоожилно уу — цоожтой цалинг л «Шилжүүлсэн» гэж тэмдэглэнэ', 'not_locked');
+  if (!v && r.transferred && !isSA(actor)) throw forbidden('«Шилжүүлсэн»-ийг зөвхөн Супер админ буцаана');
+  if (r.transferred === v) return { ok: true, duplicate: true };
+  const n = await db.staffSalaryRecord.updateMany({ where: { id, transferred: !v, ...(v ? { isLocked: true } : {}) }, data: { transferred: v, transferredAt: v ? new Date() : null, transferredByName: v ? actor.name : null } });
+  if (!n.count) throw conflict('Цалин дөнгөж сая өөрчлөгдсөн — дахин ачаална уу', 'stale');
   await writeAudit(actor, v ? 'salary.transferred' : 'salary.untransferred', 'StaffSalaryRecord', String(id), { staff: r.staffName, period: r.periodLabel, amount: r.transferSalary }, db, ['salary', 'money']);
   return { ok: true };
 }
@@ -312,12 +397,12 @@ export async function setTransferred(actor: UserActor, idIn: unknown, value: unk
 
 interface Applied { penalties: { id: number; amount: number }[]; loansCharged: number[]; debtPaymentIds: number[] }
 
-export async function lockSalary(actor: UserActor, idIn: unknown) {
+export async function lockSalary(actor: UserActor, idIn: unknown, versionIn?: unknown) {
   assert(actor);
   const id = Number(idIn);
   const pre = Number.isInteger(id) && id > 0 ? await db.staffSalaryRecord.findUnique({ where: { id }, select: { staffKey: true, periodStart: true } }) : null;
   if (!pre) throw notFound('Цалин олдсонгүй');
-  return db.$transaction(async (tx) => {
+  return perStaff(pre.staffKey, () => salaryTx(async (tx) => {
     // Аудит А4: хадгалахтай ижил түгжээ (хадгалах ба түгжих зэрэг ирэхэд нэг нь нөгөөгөө хүлээнэ), дараа нь мөрийн түгжээ
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(8::int4, hashtext(${pre.staffKey + ymdOf(pre.periodStart)}))`;
     // Нэг ажилтны торгууль хоёр хагас сард давхар суутгагдахгүй — ажилтан тус бүрийн түгжээ
@@ -326,9 +411,14 @@ export async function lockSalary(actor: UserActor, idIn: unknown) {
     if (!rows.length) throw notFound('Цалин олдсонгүй');
     const r = await tx.staffSalaryRecord.findUniqueOrThrow({ where: { id } });
     if (r.isLocked) return { record: r, duplicate: true };
+    // Аудит #146: харсан дүнгээ л цоожилно (өөр цонхноос дөнгөж засагдсан бол)
+    if (versionIn !== undefined && versionIn !== null && Number(versionIn) !== r.version) throw conflict('Өөр хүн дөнгөж сая өөрчилсөн — дахин ачаална уу', 'stale');
     const st = await staffOf(tx, r.staffKey);
     const p = periodOf(ymdOf(r.periodStart).slice(0, 7), Number(ymdOf(r.periodStart).slice(8)) === 1 ? 1 : 2);
     const inp = await computeInputs(tx, st, p);
+    // Аудит #146: хадгалснаас хойш ажлын өдөр / захиалгын тоо өөрчлөгдсөн бол хуучин дүнгээр цоожлохгүй
+    if (inp.workingDays !== r.workingDays) throw conflict(`Ажилласан өдөр өөрчлөгдсөн (${r.workingDays} → ${inp.workingDays}) — цалинг дахин хадгална уу`, 'stale');
+    if (r.salaryType === 'ORDER_BASED' && inp.orderCount !== r.orderCount) throw conflict(`Захиалгын тоо өөрчлөгдсөн (${r.orderCount} → ${inp.orderCount}) — цалинг дахин хадгална уу`, 'stale');
     const prev = (r.applied as Applied | null) ?? { penalties: [], loansCharged: [], debtPaymentIds: [] };
     // Аудит А7: хадгалсны дараа маркетингийн үнэлгээ өөрчлөгдсөн бол хуучин дүнгээр түгжихгүй
     const savedEval = ((r.additions as { label: string; amount: number }[] | null) ?? []).filter((x) => x.label === EVAL_LABEL).reduce((s2, x) => s2 + x.amount, 0);
@@ -376,26 +466,40 @@ export async function lockSalary(actor: UserActor, idIn: unknown) {
     const u = await tx.staffSalaryRecord.update({ where: { id }, data: { isLocked: true, lockedAt: new Date(), lockedByName: actor.name, applied: applied as unknown as Prisma.InputJsonValue, version: { increment: 1 } } });
     await writeAudit(actor, 'salary.locked', 'StaffSalaryRecord', String(id), { staff: r.staffName, period: r.periodLabel, transferSalary: r.transferSalary, penalties: penApplied.length, loans: loanIds.length, debts: payIds.length }, tx, ['salary', 'money']);
     return { record: u, duplicate: false };
-  });
+  }));
 }
 
 /** Цоож тайлах — кодоор (Супер админ тохируулсан). Торгууль, өрийн төлөлт буцна; зээл (барааны хөдөлгөөн) хэвээр */
+/** Аудит #146: цоожны код таах оролдлого — хэрэглэгч / IP тус бүр 15 минутад 5 буруу */
+const unlockFails = new Map<string, number[]>();
+const FAIL_WINDOW = 15 * 60_000; const FAIL_MAX = 5;
+const recentFails = (k: string) => { const now = Date.now(); const a = (unlockFails.get(k) ?? []).filter((t) => now - t < FAIL_WINDOW); unlockFails.set(k, a); return a; };
+export function resetUnlockFails() { unlockFails.clear(); }
+
 export async function unlockSalary(actor: UserActor, idIn: unknown, input: { code?: unknown }) {
   assert(actor);
   const id = Number(idIn);
+  const keys = [`u:${actor.id}`, ...(actor.ip ? [`ip:${actor.ip}`] : [])];
+  if (keys.some((k) => recentFails(k).length >= FAIL_MAX)) throw new AppError(429, 'Буруу код олон удаа оруулсан — 15 минутын дараа дахин оролдоно уу', 'too_many');
   const s = await db.appSetting.findUnique({ where: { key: KEY_CODE } });
   const code = String(input.code ?? '');
-  if (s) { if (!(await verifyPassword(code, String(s.value)))) throw forbidden('Буруу код'); }
-  else if (!isSA(actor)) throw forbidden('Цоожны код тохируулаагүй — Супер админ тайлна (эсвэл кодоо тохируулна)');
+  if (s) {
+    if (!(await verifyPassword(code, String(s.value)))) {
+      for (const k of keys) recentFails(k).push(Date.now());
+      await writeAudit(actor, 'salary.unlock_failed', 'StaffSalaryRecord', String(Number.isInteger(id) ? id : 0), { attempts: recentFails(keys[0]!).length }, db, ['salary', 'security']);
+      throw forbidden('Буруу код');
+    }
+  } else if (!isSA(actor)) throw forbidden('Цоожны код тохируулаагүй — Супер админ тайлна (эсвэл кодоо тохируулна)');
   const pre = Number.isInteger(id) && id > 0 ? await db.staffSalaryRecord.findUnique({ where: { id }, select: { staffKey: true, periodStart: true } }) : null;
   if (!pre) throw notFound('Цалин олдсонгүй');
-  return db.$transaction(async (tx) => {
+  return perStaff(pre.staffKey, () => salaryTx(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(8::int4, hashtext(${pre.staffKey + ymdOf(pre.periodStart)}))`;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(9::int4, hashtext(${pre.staffKey}))`;
     const rows = await tx.$queryRaw<{ id: number }[]>`SELECT id FROM "StaffSalaryRecord" WHERE id = ${id} FOR UPDATE`;
     if (!rows.length) throw notFound('Цалин олдсонгүй');
     const r = await tx.staffSalaryRecord.findUniqueOrThrow({ where: { id } });
     if (!r.isLocked) return { record: r, duplicate: true };
+    if (r.transferred) throw conflict('Цалин шилжүүлсэн — цоож тайлахгүй (эхлээд Супер админ «Шилжүүлсэн»-ийг буцаана)', 'transferred');
     const a = (r.applied as Applied | null) ?? { penalties: [], loansCharged: [], debtPaymentIds: [] };
     // Зөвхөн энэ цалингаар хассан дүн буцна; гараар «Цалингаас хассан» гэсэн тэмдэг хэвээр (#124-Е2)
     for (const x of a.penalties) {
@@ -414,13 +518,13 @@ export async function unlockSalary(actor: UserActor, idIn: unknown, input: { cod
     const u = await tx.staffSalaryRecord.update({ where: { id }, data: { isLocked: false, lockedAt: null, lockedByName: null, applied: { penalties: [], loansCharged: a.loansCharged, debtPaymentIds: [] } as unknown as Prisma.InputJsonValue, version: { increment: 1 } } });
     await writeAudit(actor, 'salary.unlocked', 'StaffSalaryRecord', String(id), { staff: r.staffName, period: r.periodLabel, penaltiesReverted: a.penalties.length, debtsReverted: a.debtPaymentIds.length, loansKept: a.loansCharged.length }, tx, ['salary', 'money']);
     return { record: u, duplicate: false };
-  });
+  }));
 }
 
 export async function setLockCode(actor: UserActor, input: { code?: unknown }) {
   if (!isSA(actor)) throw forbidden('Цоожны кодыг Супер админ тохируулна');
   const code = String(input.code ?? '').trim();
-  if (!/^\S{4,32}$/.test(code)) throw badRequest('Код 4–32 тэмдэгт (зайгүй)');
+  if (!/^\S{6,32}$/.test(code)) throw badRequest('Код 6–32 тэмдэгт (зайгүй)'); // Аудит #146
   const h = await hashPassword(code);
   await db.appSetting.upsert({ where: { key: KEY_CODE }, create: { key: KEY_CODE, value: h, updatedById: actor.id }, update: { value: h, updatedById: actor.id } });
   await writeAudit(actor, 'salary.lock_code', 'AppSetting', KEY_CODE, { changed: true }, db, ['salary', 'settings', 'security']);
@@ -437,7 +541,7 @@ export async function listDebts(actor: UserActor, staffKeyIn?: unknown) {
 }
 export async function addDebt(actor: UserActor, input: { staffKey?: unknown; description?: unknown; amount?: unknown }) {
   assert(actor);
-  const st = await staffOf(db, String(input.staffKey ?? ''));
+  const st = await staffOf(db, String(input.staffKey ?? ''), { write: true });
   const description = String(input.description ?? '').trim().slice(0, 200);
   if (description.length < 2) throw badRequest('Өрийн тайлбараа бичнэ үү');
   const amount = cleanInt(input.amount, 'Дүн');

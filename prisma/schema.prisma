@@ -1186,6 +1186,8 @@ model StaffSalaryConfig {
   bankAccount     String   @default("")
   updatedAt       DateTime @updatedAt
   updatedByName   String?
+  /// Аудит #146: Супер админы сүүлд хадгалсан утга — өөр хүн өөрчилбөл самбарт «Өөрчлөгдсөн»
+  saSnapshot      Json?
 }
 
 /// Гадны ажилтан (системд нэвтэрдэггүй)
@@ -1198,6 +1200,8 @@ model ExternalStaff {
   bankAccount String   @default("")
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
+  /// Аудит #146: Супер админы сүүлд хадгалсан утга
+  saSnapshot  Json?
 }
 
 /// Ажлын хуваарь: staffKey = u:<userId> | x:<externalId>; dayType: LEAVE | SICK | ABSENT | DAY_OFF (тэмдэглээгүй = ажилласан)
@@ -1256,6 +1260,10 @@ model StaffSalaryRecord {
   lockedByName      String?
   /// Цоожлоход хэрэгжүүлсэн: торгууль [{id, amount}], зээл [loanId], өрийн төлөлт [paymentId]
   applied           Json?
+  /// Аудит #146: Супер админы сүүлд хадгалсан дүнгүүд; өөр хүн өөрчилбөл зөрүүг самбарт харуулна (trackChanges = шинэ бичлэг)
+  saSnapshot        Json?
+  trackChanges      Boolean   @default(false)
+  changedByName     String?
   createdByName     String
   updatedByName     String?
   createdAt         DateTime  @default(now())
