@@ -157,6 +157,9 @@ describe('#157 7 хоног: өдөрт 2,000 захиалга, 30 операт�
     const olead2 = await actor(['OPERATOR_LEAD']); const wh2 = await actor(['WAREHOUSE']);
     ops = []; for (let i = 0; i < N_OPS; i++) ops.push(await actor(['OPERATOR'], `Оператор ${i + 1}`));
     drivers = []; for (let i = 0; i < N_DRIVERS; i++) drivers.push(await actor(['DRIVER'], `Жолооч ${i + 1}`));
+    // Операторын цалин: захиалгаар (1 захиалга = 1,500₮) — 7 хоногийн эцэст бие даан дахин тоолж харьцуулна
+    const OPP_RATE = 1500;
+    for (const op of ops) await SAL.setConfig(sa, { staffKey: `u:${op.id}`, salaryType: 'ORDER_BASED', baseSalary: 0, bonusSalary: 0, oppRatePerOrder: OPP_RATE, dailyRate: 0 });
     for (const n of ['Гутал Шоп', 'Цүнх Шоп', 'Хувцас Шоп', 'Гэр ахуй', 'Гоо сайхан']) pages.push((await A.savePage(sa, { name: n })).id);
     mainWh = (await W.createWarehouse(sa, { name: 'Төв агуулах' })).id;
     const prodIds: number[] = [];
@@ -332,6 +335,46 @@ describe('#157 7 хоног: өдөрт 2,000 захиалга, 30 операт�
     await act('асуудлын жагсаалт', () => DR.listIssues(olead, {}));
     await act('банкны статистик', () => B.bankStats(acc, {}));
     await act('нүүрийн анхааруулга', () => DSH.attention(sa));
+    // ───── Операторын цалин (7 хоног): цалингийн хуудас ↔ захиалга бүрийг нэг нэгээр нь тоолсон ─────
+    {
+      const ymd = (d: Date) => new Date(d.getTime() + 8 * 3600_000).toISOString().slice(0, 10);
+      // Сценарийн өдрүүдийг хамарсан хагас сарууд
+      const periods = new Map<string, { ym: string; half: 1 | 2; start: string; end: string }>();
+      for (let i = 0; i <= N_DAYS; i++) {
+        const d = addD(day0, i); const ym = d.slice(0, 7); const half = Number(d.slice(8)) <= 15 ? 1 : 2;
+        const p = SAL.periodOf(ym, half); periods.set(`${ym}|${half}`, { ym, half, start: p.start, end: p.end });
+      }
+      const all = await db.order.findMany({ where: { operatorId: { in: ops.map((o) => o.id) } }, select: { operatorId: true, status: true, prepaid: true, confirmedAt: true, deliveryDate: true, postponeCount: true } });
+      const lines: string[] = [];
+      let sysTotal = 0, myTotal = 0, delivered = 0;
+      for (const op of ops) {
+        let sys = 0, sysPay = 0, mine = 0;
+        for (const p of periods.values()) {
+          const r = await SAL.prepareSalary(sa, `u:${op.id}`, p.ym, p.half);
+          sys += r.auto.orderCount; sysPay += r.auto.orderSalary;
+          // Бие даасан тооллого (дүрэм: хүргэсэн эсвэл урьдчилж төлөөд замд; өдөр = «Маргааш» дарсан бол авсан өдөр, үгүй бол max(авсан өдөр, хүргэх өдөр − 1))
+          mine += all.filter((o) => o.operatorId === op.id && o.confirmedAt && (o.status === 'DELIVERED' || (o.prepaid && ['NEW', 'ASSIGNED', 'OUT_FOR_DELIVERY'].includes(o.status)))).filter((o) => {
+            const c = ymd(o.confirmedAt!); const dd = o.deliveryDate ? addD(o.deliveryDate.toISOString().slice(0, 10), -1) : c;
+            const day = o.postponeCount > 0 ? c : (c > dd ? c : dd);
+            return day >= p.start && day <= p.end;
+          }).length;
+        }
+        delivered += all.filter((o) => o.operatorId === op.id && o.status === 'DELIVERED').length;
+        sysTotal += sys; myTotal += mine;
+        if (sys !== mine) bad('цалин', `${op.name}: цалингийн хуудас ${sys} захиалга ≠ дахин тоолсон ${mine}`);
+        if (sysPay !== sys * OPP_RATE) bad('цалин', `${op.name}: цалин ${sysPay} ≠ ${sys} × ${OPP_RATE}`);
+        lines.push(`  ${op.name.padEnd(12)} ${String(sys).padStart(4)} захиалга × ${OPP_RATE}₮ = ${(sysPay).toLocaleString('en-US').padStart(9)}₮`);
+      }
+      // Хадгалсан цалин = бодсон (нэг хагас сар)
+      const p1 = [...periods.values()][0]!;
+      for (const op of ops.slice(0, 5)) {
+        const r = await act('цалин хадгалах', () => SAL.saveSalary(sa, { staffKey: `u:${op.id}`, ym: p1.ym, half: p1.half })) as { record?: { orderSalary: number; orderCount: number } } | null;
+        const pre = await SAL.prepareSalary(sa, `u:${op.id}`, p1.ym, p1.half);
+        const rec = r?.record ?? (await db.staffSalaryRecord.findFirst({ where: { staffKey: `u:${op.id}`, periodStart: U.dateOnly(p1.start) } }));
+        if (rec && (rec.orderCount !== pre.auto.orderCount || rec.orderSalary !== pre.auto.orderSalary)) bad('цалин', `${op.name}: хадгалсан ${rec.orderCount}/${rec.orderSalary} ≠ бодсон ${pre.auto.orderCount}/${pre.auto.orderSalary}`);
+      }
+      console.log(`ОПЕРАТОРЫН ЦАЛИН (${[...periods.values()].map((p) => `${p.start}…${p.end}`).join(', ')}):\n${lines.join('\n')}\n  НИЙТ: цалингийн хуудас ${sysTotal}, дахин тоолсон ${myTotal}, цалин ${(sysTotal * OPP_RATE).toLocaleString('en-US')}₮ (хүргэсэн нийт ${delivered})`);
+    }
     await checkStock('7 хоног эцэс');
     vi.useRealTimers();
 
