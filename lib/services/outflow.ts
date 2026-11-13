@@ -155,13 +155,11 @@ async function boostSegments(productIds: number[], fromMs: number, toMs: number)
   return out;
 }
 /**
- * Өдрийн бүүстийн зардал (₮) — эзний шийдвэр (#114): цагаар гүйхгүй; тухайн өдөр бүүст асаалттай байсан бол
- * өдрийн төсөв бүтнээр = $ × бүүстийн тоо × ханш (өдөрт хамгийн их байсан төлвөөр). Ширхэгт хуваахад: $5 → 18,000₮, 5 ширхэг → 3,600₮/ш.
+ * Өдрийн бүүстийн төлөв — эзний шийдвэр (#153): тухайн өдөр асаалттай байсан хамгийн их төлөв ($ × бүүстийн тоо).
+ * Зорилт = бүүстийн тоо × $ захиалга (1 захиалга = $1). Зардал: захиалга бүрт 1$ (ханш, 3,600₮);
+ * асаалттай мөртлөө 0 захиалга бол зарцуулсан бүтэн дүн ($ × бүүст × ханш).
  */
-const boostCost = (segs: Seg[] | undefined, fromMs: number, toMs: number, rate: number) => {
-  const pk = peakBoost(segs, fromMs, toMs);
-  return pk ? pk.dollar * pk.zones * rate : 0;
-};
+type Peak = { dollar: number; zones: number } | null;
 /** Хугацаанд бүүст хамгийн их байсан төлөв (үнэлгээ: хүлээгдэж буй = бүс × $) */
 const peakBoost = (segs: Seg[] | undefined, fromMs: number, toMs: number) =>
   (segs ?? []).filter((g) => g.to > fromMs && g.from < toMs).reduce<{ dollar: number; zones: number } | null>((m, g) => (!m || g.zones * g.dollar > m.zones * m.dollar ? { dollar: g.dollar, zones: g.zones } : m), null);
@@ -171,25 +169,33 @@ const peakBoost = (segs: Seg[] | undefined, fromMs: number, toMs: number) =>
 export type ProfitStatus = 'DIAMOND' | 'GOOD' | 'LOW' | 'LOSS';
 export interface DayProfit {
   day: string; qty: number; orders: number; revenue: number; cost: number; costEstimated: boolean; oppDelivery: number; boost: number;
+  /** Зорилт (захиалга) = бүүстийн тоо × $; бүүстгүй өдөр 0 */
+  target: number;
   profit: number; perUnit: number | null; status: ProfitStatus | null;
 }
-function profitOf(cfg: OutflowConfig, p: { price: number; costPrice: number | null }, a: { qty: number; revenue: number; orders: number } | undefined, boost: number, day: string): DayProfit {
+function profitOf(cfg: OutflowConfig, p: { price: number; costPrice: number | null }, a: { qty: number; revenue: number; orders: number } | undefined, pk: Peak, day: string): DayProfit {
   const qty = a?.qty ?? 0, revenue = a?.revenue ?? 0;
   const unitCost = p.costPrice ?? Math.round((p.price * cfg.costPct) / 100);
   const cost = qty * unitCost;
   // Эзний шийдвэр (#117): опп + хүргэлт ЗАХИАЛГА бүрээс (нэг хаягт нэг удаа); үр дүнг ЗАХИАЛГААР хэмжинэ (бөөний нэг захиалга = 1)
   const orders = a?.orders ?? 0;
   const oppDelivery = orders * (cfg.oppCost + cfg.deliveryCost);
+  // Эзний шийдвэр (#153): зорилт = бүүстийн тоо × $ захиалга; бүүстийн зардал захиалга бүрт ханш (1$),
+  // асаалттай мөртлөө 0 захиалга бол өдөрт зарцуулсан бүтэн дүн
+  const target = pk ? pk.zones * pk.dollar : 0;
+  const boost = !pk ? 0 : orders > 0 ? orders * cfg.rate : target * cfg.rate;
   const profit = revenue - cost - oppDelivery - boost;
   /** Нэг захиалгын ашиг */
   const perUnit = orders > 0 ? Math.round(profit / orders) : boost > 0 ? -boost : null;
+  // Төлөв зорилтоор: 💎 ≥150%, 🟢 ≥100%, 🟠 ≥80%, 🔴 доош; үнэ нь өөрөө алдагдалтай (захиалгын ашиг < 0) бол 🔴
   let status: ProfitStatus | null = null;
-  if (boost > 0) {
-    if (perUnit === null || perUnit < 0) status = 'LOSS';
-    else if (perUnit < cfg.lowProfit) status = 'LOW';
-    else status = orders > boost / cfg.rate ? 'DIAMOND' : 'GOOD';
+  if (target > 0) {
+    const r = orders / target;
+    if (perUnit === null || perUnit < 0 || r < 0.8) status = 'LOSS';
+    else if (r < 1) status = 'LOW';
+    else status = r >= 1.5 ? 'DIAMOND' : 'GOOD';
   }
-  return { day, qty, orders: a?.orders ?? 0, revenue, cost, costEstimated: p.costPrice === null, oppDelivery, boost, profit, perUnit, status };
+  return { day, qty, orders: a?.orders ?? 0, revenue, cost, costEstimated: p.costPrice === null, oppDelivery, boost, target, profit, perUnit, status };
 }
 
 // ───────────── Анхааруулга ─────────────
@@ -269,17 +275,18 @@ async function computeAlertsNow(): Promise<BoostAlert[]> {
     }
     // 2) Өчигдрийн дүгнэлт (бүүст тэр өдөр асаалттай байсан бол)
     const sg = segs.get(pm.productId);
-    const yb = boostCost(sg, yStart, todayStart, cfg.rate);
-    if (yb > 0) {
+    const yb = peakBoost(sg, yStart, todayStart);
+    if (yb) {
       const y = profitOf(cfg, p, aggMap.get(`${pm.productId}|${yest}`), yb, yest);
       const isNew = !!pm.boostOnAt && pm.boostOnAt.getTime() >= d2Start;
       if (y.status === 'LOSS') {
-        const b2 = boostCost(sg, d2Start, yStart, cfg.rate);
-        const prev = b2 > 0 ? profitOf(cfg, p, aggMap.get(`${pm.productId}|${d2}`), b2, d2) : null;
-        if (isNew) up('RED', 'Алдагдалтай бүүст (шинэ бүүст, өчигдөр алдагдалтай) — яаралтай унтраа');
-        else if (prev?.status === 'LOSS') up('RED', 'Алдагдалтай бүүст — дараалан 2 өдөр алдагдалтай, яаралтай унтраа');
-        else up('ORANGE', 'Өчигдөр алдагдалтай — ажиглаж байна (маргааш давтагдвал яаралтай)');
-      } else if (y.status === 'LOW') up('ORANGE', 'Ашиг багассан — алдагдал руу дөхөж байна, бүүстээ шалгана уу');
+        const b2 = peakBoost(sg, d2Start, yStart);
+        const prev = b2 ? profitOf(cfg, p, aggMap.get(`${pm.productId}|${d2}`), b2, d2) : null;
+        const got = `${y.orders}/${y.target} захиалга`;
+        if (isNew) up('RED', `Зорилт хангаагүй бүүст (шинэ бүүст, өчигдөр ${got}) — яаралтай унтраа`);
+        else if (prev?.status === 'LOSS') up('RED', `Зорилт хангаагүй бүүст — дараалан 2 өдөр (өчигдөр ${got}), яаралтай унтраа`);
+        else up('ORANGE', `Өчигдөр зорилт хангаагүй (${got}) — ажиглаж байна (маргааш давтагдвал яаралтай)`);
+      } else if (y.status === 'LOW') up('ORANGE', `Зорилтод бага зэрэг хүрээгүй (өчигдөр ${y.orders}/${y.target} захиалга) — бүүстээ шалгана уу`);
       if (!pageDays.has(pm.productId) && level) pageDays.set(pm.productId, yest);
     }
     // Аудит #152 (эзний шийдвэр): асаалттай бүүстийн $-ыг сүүлийн 2 хоногт багасгасан бол — алдагдал нуух эрсдэл, Супер админд харагдана
@@ -370,7 +377,7 @@ export interface OutflowRow {
   /** Бөөний захиалга өдөр бүр: тоо ба ширхэг (#117) — өнгө, дунджид орохгүй */
   bulk: { n: number; qty: number }[];
   stock?: { total: number; available: number; driver: number };
-  alert?: AlertLevel | null; profit?: { status: ProfitStatus | null; perUnit: number | null } | null;
+  alert?: AlertLevel | null; profit?: { status: ProfitStatus | null; perUnit: number | null; orders: number; target: number } | null;
   /** Мөрийн ард жижиг тэмдэг — дарахад дэлгэрэнгүй */
   alertInfo?: { level: AlertLevel; reasons: string[]; pages: { name: string; n: number }[]; watchedUntil: Date | null; watchedBy: string | null } | null;
   /** Нөөц хоног ба бараа татах (#119) — зөвхөн Супер админ */
@@ -475,7 +482,7 @@ export async function outflowTable(actor: UserActor, p: TableParams) {
     if (key === 'name') return r.name;
     if (key === 'avg') return r.avg;
     if (key === 'zones') return r.zones;
-    if (key === 'profit') return prof.get(r.id)?.perUnit ?? -1e12;
+    if (key === 'profit') { const pr = prof.get(r.id); return pr?.target ? pr.orders / pr.target : -1e12; }
     if (key === 'cover') return -(ro.get(r.id)?.days ?? 1e9);
     if (/^d[0-6]$/.test(key)) return r.daily[Number(key[1])]!;
     return r.weekTotal;
@@ -489,7 +496,7 @@ export async function outflowTable(actor: UserActor, p: TableParams) {
     const s = stock.get(r.id); r.stock = { total: s?.total ?? 0, available: s?.available ?? 0, driver: s?.driver ?? 0 };
     const a = alertMap.get(r.id); r.alert = a && !(a.watchedUntil && a.watchedUntil.getTime() > now) ? a.level : null;
     r.alertInfo = a ? { level: a.level, reasons: a.reasons, pages: a.pages, watchedUntil: a.watchedUntil && a.watchedUntil.getTime() > now ? a.watchedUntil : null, watchedBy: a.watchedBy } : null;
-    if (sa) { const pr = prof.get(r.id); r.profit = pr ? { status: pr.status, perUnit: pr.perUnit } : null; r.reorder = ro.get(r.id) ?? null; }
+    if (sa) { const pr = prof.get(r.id); r.profit = pr ? { status: pr.status, perUnit: pr.perUnit, orders: pr.orders, target: pr.target } : null; r.reorder = ro.get(r.id) ?? null; }
   }
   const all = await allRows();
   const watchedN = alerts.filter((a) => a.watchedUntil && a.watchedUntil.getTime() > now).length;
@@ -521,7 +528,7 @@ async function yesterdayProfits(ids: number[]): Promise<Map<number, DayProfit>> 
     unitsByDay(y, y, ids),
   ]);
   const am = new Map(aggs.map((a) => [a.productId, a]));
-  for (const p of products) out.set(p.id, profitOf(cfg, p, am.get(p.id), boostCost(segs.get(p.id), ubDayStart(y).getTime(), ubDayStart(ubDay()).getTime(), cfg.rate), y));
+  for (const p of products) out.set(p.id, profitOf(cfg, p, am.get(p.id), peakBoost(segs.get(p.id), ubDayStart(y).getTime(), ubDayStart(ubDay()).getTime()), y));
   return out;
 }
 
@@ -1002,18 +1009,18 @@ export async function profitDetail(actor: UserActor, productIdIn: unknown) {
   const am = new Map(aggs.map((a) => [a.day, a]));
   const days = Array.from({ length: 8 }, (_, i) => addDays(today, -i)).map((d) => {
     const s = ubDayStart(d).getTime(); const e = Math.min(ubDayStart(addDays(d, 1)).getTime(), now);
-    return profitOf(cfg, p, am.get(d), boostCost(segs.get(id), s, e, cfg.rate), d);
+    return profitOf(cfg, p, am.get(d), peakBoost(segs.get(id), s, e), d);
   });
   const unitCost = p.costPrice ?? Math.round((p.price * cfg.costPct) / 100);
   const margin = p.price - unitCost - cfg.oppCost - cfg.deliveryCost;
-  const dailyBoost = (pm?.zones ?? 0) * (pm?.dollar ?? cfg.defaultDollar) * cfg.rate;
+  const zones = pm?.zones ?? 0, dollar = pm?.dollar ?? cfg.defaultDollar;
   return {
     product: { id: p.id, code: p.code, name: p.name, price: p.price, costPrice: p.costPrice, unitCost, costEstimated: p.costPrice === null },
-    cfg: { oppCost: cfg.oppCost, deliveryCost: cfg.deliveryCost, rate: cfg.rate, costPct: cfg.costPct, lowProfit: cfg.lowProfit },
-    boost: { dollar: pm?.dollar ?? cfg.defaultDollar, zones: pm?.zones ?? 0, dailyBoost, boostOnAt: pm?.boostOnAt ?? null },
+    cfg: { oppCost: cfg.oppCost, deliveryCost: cfg.deliveryCost, rate: cfg.rate, costPct: cfg.costPct },
+    boost: { dollar, zones, target: zones * dollar, dailySpend: zones * dollar * cfg.rate, boostOnAt: pm?.boostOnAt ?? null },
     marginBeforeBoost: margin,
-    breakEven: dailyBoost > 0 && margin > 0 ? Math.ceil(dailyBoost / margin) : null,
-    lowProfitAt: dailyBoost > 0 && margin > cfg.lowProfit ? Math.ceil(dailyBoost / (margin - cfg.lowProfit)) : null,
+    /** Бүүсттэй захиалгын ашиг = бүүстгүй ашиг − 1$ (#153) */
+    perOrder: margin - cfg.rate,
     days,
   };
 }

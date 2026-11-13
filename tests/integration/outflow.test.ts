@@ -304,8 +304,8 @@ describe('бөөний захиалга (#117)', () => {
     const r = (await OF.outflowTable(mk, {})).rows.find((x) => x.id === prod)!;
     expect([r.daily[1], r.bulk[1], r.avg]).toEqual([51, { n: 1, qty: 50 }, 0.1]);
     const y = (await OF.profitDetail(sa, prod)).days.find((x) => x.day === yest)!;
-    // 51 × 20000 − 51 × 4000 − 2 × 6200 − 18000 = 785,600; захиалгын ашиг 392,800; 2 захиалга < $5 → 💎 биш, 🟢
-    expect([y.qty, y.orders, y.oppDelivery, y.profit, y.perUnit, y.status]).toEqual([51, 2, 12400, 785600, 392800, 'GOOD']);
+    // #153: бүүст = 2 захиалга × 3,600 = 7,200; 51 × 20000 − 51 × 4000 − 2 × 6200 − 7200 = 796,400; зорилт 1 × $5 = 5, 2/5 → 🔴
+    expect([y.qty, y.orders, y.oppDelivery, y.boost, y.target, y.profit, y.perUnit, y.status]).toEqual([51, 2, 12400, 7200, 5, 796400, 398200, 'LOSS']);
     const ev = await OF.evaluation(lead, yest);
     await OF.setOwner(lead, { productIds: [prod], userId: mk.id });
     expect((await OF.evaluation(lead, yest)).rows.find((x) => x.userId === mk.id)?.items[0]).toMatchObject({ orders: 2, expected: 5, cls: 'POOR' });
@@ -332,24 +332,27 @@ describe('өнгө / хэмжээгээр (догол мөр)', () => {
 });
 
 describe('бүүстийн ашиг ба анхааруулга (#105–#110)', () => {
-  it('ширхэгийн ашиг: 5 → 6,200₮ (🟢), 7 → 💎, 2 → 🟠 (< 1,500₮), 1 → 🔴; шинэ бүүст өчигдөр алдагдалтай → 🔴; задаргаа зөвхөн СА', async () => {
+  it('#153 зорилтоор (1 × $5 = 5): 5 → 🟢 (захиалгын 6,200₮), 8 → 💎, 4 → 🟠, 1 → 🔴; шинэ бүүст өчигдөр алдагдалтай → 🔴; задаргаа зөвхөн СА', async () => {
     await boostAt(1, U.ubDayStart(yest)); // өчигдөр 00:00-аас 1 бүүст, $5 = 18,000₮/өдөр
     for (let i = 0; i < 5; i++) await order({ daysAgo: 1 });
     let d = await OF.profitDetail(sa, prod);
     const y = d.days.find((x) => x.day === yest)!;
-    expect([y.qty, y.boost, y.perUnit, y.status]).toEqual([5, 18000, 6200, 'GOOD']);
-    expect([d.marginBeforeBoost, d.breakEven, d.lowProfitAt]).toEqual([9800, 2, 3]);
+    expect([y.qty, y.boost, y.target, y.perUnit, y.status]).toEqual([5, 18000, 5, 6200, 'GOOD']);
+    expect([d.marginBeforeBoost, d.perOrder, d.boost.target]).toEqual([9800, 6200, 5]);
     await err(OF.profitDetail(adm, prod), 403);
     for (let i = 0; i < 2; i++) await order({ daysAgo: 1 });
+    d = await OF.profitDetail(sa, prod);
+    expect(d.days.find((x) => x.day === yest)!.status).toBe('GOOD'); // 7/5 = 140%
+    await order({ daysAgo: 1 });
     d = await OF.profitDetail(sa, prod);
     expect(d.days.find((x) => x.day === yest)!.status).toBe('DIAMOND');
     const t = await OF.outflowTable(sa, { status: 'DIAMOND' });
     expect(t.rows.map((r) => r.id)).toEqual([prod]);
     expect(t.rows[0]!.profit?.status).toBe('DIAMOND');
-    // 2 ширхэг → 🟠
+    // 4 захиалга (80%) → 🟠; захиалга бүрт $1 тул захиалгын ашиг хэвээр 6,200₮
     await db.order.updateMany({ data: { status: 'CANCELLED', cancelledAt: new Date(U.ubDayStart(yest).getTime() + 2 * H) } });
-    await order({ daysAgo: 1 }); await order({ daysAgo: 1 });
-    expect((await OF.profitDetail(sa, prod)).days.find((x) => x.day === yest)).toMatchObject({ qty: 2, perUnit: 800, status: 'LOW' });
+    for (let i = 0; i < 4; i++) await order({ daysAgo: 1 });
+    expect((await OF.profitDetail(sa, prod)).days.find((x) => x.day === yest)).toMatchObject({ qty: 4, boost: 14400, perUnit: 6200, status: 'LOW' });
     // 1 ширхэг → 🔴, шинэ бүүст → шууд улаан анхааруулга
     await db.order.updateMany({ where: { status: { not: 'CANCELLED' } }, data: { status: 'CANCELLED', cancelledAt: new Date(U.ubDayStart(yest).getTime() + 3 * H) } });
     await order({ daysAgo: 1, pageId: page1 });
@@ -373,6 +376,20 @@ describe('бүүстийн ашиг ба анхааруулга (#105–#110)', 
     expect((await OF.alertsView(mk)).red).toHaveLength(0);
   });
 
+  it('#153: 2 бүүст × $5 → зорилт 10; 0 захиалга → зарцуулсан 36,000₮ 🔴; 15 → 💎; үнэ алдагдалтай бол зорилт хангасан ч 🔴', async () => {
+    await boostAt(2, U.ubDayStart(yest));
+    let y = (await OF.profitDetail(sa, prod)).days.find((x) => x.day === yest)!;
+    expect([y.orders, y.target, y.boost, y.status]).toEqual([0, 10, 36000, 'LOSS']);
+    for (let i = 0; i < 15; i++) await order({ daysAgo: 1 });
+    y = (await OF.profitDetail(sa, prod)).days.find((x) => x.day === yest)!;
+    expect([y.orders, y.boost, y.perUnit, y.status]).toEqual([15, 54000, 6200, 'DIAMOND']);
+    OF.bustTable();
+    expect((await OF.outflowTable(sa, {})).rows.find((r) => r.id === prod)!.profit).toMatchObject({ orders: 15, target: 10, status: 'DIAMOND' });
+    await db.product.update({ where: { id: prod }, data: { costPrice: 12000 } }); // 20000 − 12000 − 6200 − 3600 < 0
+    y = (await OF.profitDetail(sa, prod)).days.find((x) => x.day === yest)!;
+    expect([y.perUnit, y.status]).toEqual([-1800, 'LOSS']);
+  });
+
   it('хэвийн явсан бүүст: өчигдөр л алдагдалтай → 🟠, дараалан 2 өдөр → 🔴; өдрийн дунд: асаасан цагаас 8 цагт 0 → 🔴, 1 → 🟠', async () => {
     await boostAt(1, new Date(U.ubDayStart(U.ubDay(new Date(), -5)).getTime()));
     for (let i = 0; i < 5; i++) await order({ daysAgo: 2 });
@@ -381,7 +398,7 @@ describe('бүүстийн ашиг ба анхааруулга (#105–#110)', 
     // өнөөдөр 00:00-аас 8+ цаг болоогүй бол зөвхөн өчигдрийн дүгнэлт
     const now = Date.now(), todayStart = U.ubDayStart(today).getTime();
     const intraday = now - todayStart >= 8 * H;
-    expect(al[0]!.reasons.some((r) => r.includes('Өчигдөр алдагдалтай'))).toBe(true);
+    expect(al[0]!.reasons.some((r) => r.includes('Өчигдөр зорилт хангаагүй (1/5'))).toBe(true);
     if (!intraday) expect(al[0]!.level).toBe('ORANGE');
     await db.order.updateMany({ where: { confirmedAt: { lt: U.ubDayStart(yest) } }, data: { status: 'CANCELLED', cancelledAt: new Date(U.ubDayStart(U.ubDay(new Date(), -2)).getTime() + H) } });
     await order({ daysAgo: 2 });

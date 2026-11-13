@@ -22,13 +22,13 @@ const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8))}`;
 
 type Status = 'DIAMOND' | 'GOOD' | 'LOW' | 'LOSS';
 const STATUS: Record<Status, { icon: string; label: string; cls: string }> = {
-  DIAMOND: { icon: '💎', label: 'Маш ашигтай', cls: 'text-info' }, GOOD: { icon: '🟢', label: 'Ашигтай', cls: 'text-ok-ink' },
-  LOW: { icon: '🟠', label: 'Ашиг бага', cls: 'text-warn' }, LOSS: { icon: '🔴', label: 'Алдагдалтай', cls: 'text-bad-ink' },
+  DIAMOND: { icon: '💎', label: 'Зорилт 150%+', cls: 'text-info' }, GOOD: { icon: '🟢', label: 'Зорилт хангасан', cls: 'text-ok-ink' },
+  LOW: { icon: '🟠', label: 'Зорилт 80–99%', cls: 'text-warn' }, LOSS: { icon: '🔴', label: 'Зорилт хангаагүй', cls: 'text-bad-ink' },
 };
 interface Row {
   id: number; code: string; name: string; price: number; dollar: number; zones: number; adNumber: number | null; ownerId: string | null; ownerName: string | null;
   doneAt: string | null; doneByName: string | null; note: string; daily: number[]; weekTotal: number; avg: number; phones: number[]; phoneWeek: number; variantCount: number; bulk: { n: number; qty: number }[];
-  stock?: { total: number; available: number; driver: number }; alert?: 'RED' | 'ORANGE' | null; profit?: { status: Status | null; perUnit: number | null } | null;
+  stock?: { total: number; available: number; driver: number }; alert?: 'RED' | 'ORANGE' | null; profit?: { status: Status | null; perUnit: number | null; orders: number; target: number } | null;
   alertInfo?: { level: 'RED' | 'ORANGE'; reasons: string[]; pages: { name: string; n: number }[]; watchedUntil: string | null; watchedBy: string | null } | null;
   reorder?: Reorder | null;
 }
@@ -117,7 +117,7 @@ export function OutflowClient() {
           <button type="button" data-alert-tab="orange" onClick={() => go('orange')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'orange' ? 'border-warn bg-warn text-white' : 'border-warn/40 bg-warn-soft text-warn')}>🟠 Ашиг бага ({d.counts.orange})</button>
           <button type="button" onClick={() => go('watched')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'watched' ? 'border-ink bg-ink text-surface' : 'border-line bg-surface')}>👁 Ажиглаж буй ({d.counts.watched})</button>
           <button type="button" data-pageshort-btn onClick={() => setDlg({ k: 'pageshort' })} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', d.counts.pageShort ? 'border-bad/40 bg-bad-soft text-bad-ink' : 'border-line bg-surface')}>⚠ Гаралтаа хангаагүй пэйж ({d.counts.pageShort})</button>
-          {d.isSA ? <button type="button" onClick={() => { go('diamond'); setStatus('DIAMOND'); }} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'diamond' ? 'border-info bg-info text-white' : 'border-line bg-surface')}>💎 Маш ашигтай</button> : null}
+          {d.isSA ? <button type="button" onClick={() => { go('diamond'); setStatus('DIAMOND'); }} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'diamond' ? 'border-info bg-info text-white' : 'border-line bg-surface')}>💎 Зорилт 150%+</button> : null}
           {d.isSA ? <button type="button" data-reorder-tab onClick={() => go('reorder')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'reorder' ? 'border-warn bg-warn text-white' : 'border-warn/40 bg-warn-soft text-warn')}>🚚 Бараа татах ({d.counts.reorder ?? 0})</button> : null}
           {d.isSA ? <button type="button" onClick={() => go('ordered')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'ordered' ? 'border-ink bg-ink text-surface' : 'border-line bg-surface')}>📦 Захиалсан ({d.counts.ordered ?? 0})</button> : null}
         </div>
@@ -132,7 +132,7 @@ export function OutflowClient() {
         <select value={zone} onChange={(e) => { setZone(e.target.value); setPage(1); }} className={inputCls} aria-label="AD"><option value="">AD бүгд</option>{[1, 2, 3, 4, 5, 6, 7, 8, 9, 99].map((n) => <option key={n} value={n}>AD{n}</option>)}</select>
         <select value={owner} onChange={(e) => { setOwner(e.target.value); setPage(1); }} className={inputCls} aria-label="Хариуцагч"><option value="">Хариуцагч бүгд</option><option value="none">Хариуцагчгүй</option>{d?.owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>
         <select value={dollar} onChange={(e) => { setDollar(e.target.value); setPage(1); }} className={inputCls} aria-label="$"><option value="">$ бүгд</option><option value="none">$ байхгүй</option>{d?.dollars.map((n) => <option key={n} value={n}>${n}</option>)}</select>
-        {d?.isSA ? <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} className={inputCls} aria-label="Ашиг"><option value="">Ашиг (өчигдөр) бүгд</option>{(Object.keys(STATUS) as Status[]).map((k) => <option key={k} value={k}>{STATUS[k].icon} {STATUS[k].label}</option>)}</select> : null}
+        {d?.isSA ? <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} className={inputCls} aria-label="Зорилт"><option value="">Зорилт (өчигдөр) бүгд</option>{(Object.keys(STATUS) as Status[]).map((k) => <option key={k} value={k}>{STATUS[k].icon} {STATUS[k].label}</option>)}</select> : null}
         {d?.isLead ? (
           <div className="flex flex-wrap gap-2 sm:ml-auto">
             {sel.size ? <Button size="sm" variant="primary" onClick={() => setDlg({ k: 'bulk', ids: [...sel] })}>Сонгосон {sel.size}-д оноох</Button> : null}
@@ -151,7 +151,7 @@ export function OutflowClient() {
                 {d.days.map((day, i) => th(`d${i}`, i === 0 ? 'Өнөөдөр' : md(day), 'text-center'))}
                 {th('week', '7 хоног', 'text-center')}{th('avg', 'Дундаж', 'hidden min-[1360px]:table-cell')}
                 <th className="px-2 py-2 text-right">Боломжтой</th>
-                {d.isSA ? th('profit', 'Ашиг/зах') : null}
+                {d.isSA ? th('profit', 'Зорилт (өчигдөр)') : null}
                 <th className="px-1.5 py-2 text-left">Хариуцагч</th><th className="px-2 py-2 text-right">⚠</th>
                 {d.isSA ? th('cover', 'Нөөц', 'text-center') : null}
               </tr></thead>
@@ -175,7 +175,7 @@ export function OutflowClient() {
                     <td className="px-1 py-1 text-center font-bold">{r.weekTotal}{r.phoneWeek ? <div className="text-[10.5px] font-normal text-warn">☎{r.phoneWeek}</div> : null}</td>
                     <td className="hidden px-2 py-1 text-right min-[1360px]:table-cell">{r.avg}</td>
                     <td className={clsx('px-2 py-1 text-right', (r.stock?.available ?? 0) < r.avg && 'font-bold text-bad-ink')}>{r.stock?.available ?? 0}</td>
-                    {d.isSA ? <td className="px-2 py-1 text-right">{r.profit?.status ? <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className={clsx('font-bold underline', STATUS[r.profit.status].cls)}>{STATUS[r.profit.status].icon} {money(r.profit.perUnit)}</button> : <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className="text-subtle underline">задаргаа</button>}</td> : null}
+                    {d.isSA ? <td className="px-2 py-1 text-right">{r.profit?.status ? <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className={clsx('font-bold underline', STATUS[r.profit.status].cls)}>{STATUS[r.profit.status].icon} {r.profit.orders}/{r.profit.target}</button> : <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className="text-subtle underline">задаргаа</button>}</td> : null}
                     <td className="w-[110px] min-w-[110px] max-w-[110px] px-1.5 py-1"><div className="line-clamp-1 [overflow-wrap:anywhere] text-[12.5px] font-semibold">{r.ownerName ?? '—'}</div>{r.note ? <div title={r.note} className="line-clamp-1 [overflow-wrap:anywhere] text-[11.5px] text-muted">{r.note}</div> : null}</td>
                     <td className="px-1 py-1"><div className="flex items-center justify-end gap-1"><button type="button" aria-label={`${r.name} засах`} title="Засах" onClick={() => setDlg({ k: 'edit', row: r })} className="h-8 w-8 rounded-lg border border-line bg-surface text-[14px] hover:bg-surface2">✎</button><AlertChip r={r} onOpen={() => setDlg({ k: 'alert', row: r })} /></div></td>
                     {d.isSA ? <td className="px-1 py-1 text-center"><ReorderChip r={r} onOpen={() => setDlg({ k: 'reorder', row: r })} /></td> : null}
@@ -201,7 +201,7 @@ export function OutflowClient() {
                 {open.has(r.id) ? <VariantCards id={r.id} days={d.days} /> : null}
                 <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
                   <span>${r.dollar} · бүүст {r.zones} · AD{r.adNumber ?? '—'}</span><span>Боломжтой {r.stock?.available ?? 0}</span>
-                  {d.isSA ? (r.profit?.status ? <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className={clsx('font-bold underline', STATUS[r.profit.status].cls)}>{STATUS[r.profit.status].icon} {money(r.profit.perUnit)}</button>
+                  {d.isSA ? (r.profit?.status ? <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className={clsx('font-bold underline', STATUS[r.profit.status].cls)}>{STATUS[r.profit.status].icon} {r.profit.orders}/{r.profit.target}</button>
                     : <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className="text-subtle underline">задаргаа</button>) : null}
                   <span className="ml-auto flex items-center gap-2">{d.isSA ? <ReorderChip r={r} onOpen={() => setDlg({ k: 'reorder', row: r })} /> : null}<AlertChip r={r} onOpen={() => setDlg({ k: 'alert', row: r })} /><Button size="sm" onClick={() => setDlg({ k: 'edit', row: r })}>Засах</Button></span>
                 </div>
@@ -516,20 +516,23 @@ function BulkDialog({ ids, owners, onClose, onDone }: { ids: number[]; owners: {
 
 interface Profit {
   product: { id: number; code: string; name: string; price: number; costPrice: number | null; unitCost: number; costEstimated: boolean };
-  cfg: { oppCost: number; deliveryCost: number; rate: number; costPct: number; lowProfit: number };
-  boost: { dollar: number; zones: number; dailyBoost: number; boostOnAt: string | null }; marginBeforeBoost: number; breakEven: number | null; lowProfitAt: number | null;
-  days: { day: string; qty: number; orders: number; revenue: number; cost: number; costEstimated: boolean; oppDelivery: number; boost: number; profit: number; perUnit: number | null; status: Status | null }[];
+  cfg: { oppCost: number; deliveryCost: number; rate: number; costPct: number };
+  boost: { dollar: number; zones: number; target: number; dailySpend: number; boostOnAt: string | null }; marginBeforeBoost: number; perOrder: number;
+  days: { day: string; qty: number; orders: number; revenue: number; cost: number; costEstimated: boolean; oppDelivery: number; boost: number; target: number; profit: number; perUnit: number | null; status: Status | null }[];
 }
+/** Эзний дүрэм (#153): бүүст = захиалга бүрт 1$ (ханш); асаалттай мөртлөө 0 захиалга бол зарцуулсан бүтэн дүн. Зорилт = бүүст × $ захиалга. */
 function ProfitDialog({ id, onClose }: { id: number; onClose: () => void }) {
   const [d, setD] = useState<Profit | null>(null); const [err, setErr] = useState<string | null>(null); const [price, setPrice] = useState('');
   useEffect(() => { api<Profit>(`/api/goods-outflow?view=profit&id=${id}`).then((r) => { setD(r); setPrice(String(r.product.price)); }).catch((e) => setErr(msg(e))); }, [id]);
   const trial = useMemo(() => {
     if (!d) return null; const pr = Number(price) || 0;
     const cost = d.product.costPrice ?? Math.round((pr * d.cfg.costPct) / 100);
-    const m = pr - cost - d.cfg.oppCost - d.cfg.deliveryCost; const b = d.boost.dailyBoost;
-    const y = d.days[1]; const qty = y?.orders ?? 0;
-    return { margin: m, perUnit: qty ? Math.round(m - b / qty) : null, day: qty * m - b, breakEven: b > 0 && m > 0 ? Math.ceil(b / m) : null, low: b > 0 && m > d.cfg.lowProfit ? Math.ceil(b / (m - d.cfg.lowProfit)) : null, qty };
+    const m = pr - cost - d.cfg.oppCost - d.cfg.deliveryCost;
+    const q = d.days[1]?.orders ?? 0;
+    const boost = !d.boost.target ? 0 : q > 0 ? q * d.cfg.rate : d.boost.dailySpend;
+    return { margin: m, perOrder: d.boost.target ? m - d.cfg.rate : m, day: q * m - boost, qty: q };
   }, [d, price]);
+  const t = d?.boost.target ?? 0;
   return (
     <Modal open onClose={onClose} size="xl" title={d ? `Ашгийн задаргаа · ${d.product.name}` : 'Ашгийн задаргаа'} subtitle="Зөвхөн Супер админ · үнийг «Бараа» хуудаснаас засна" footer={<Button onClick={onClose}>Хаах</Button>}>
       {err ? <Notice>{err}</Notice> : null}
@@ -539,26 +542,30 @@ function ProfitDialog({ id, onClose }: { id: number; onClose: () => void }) {
             <div className="rounded-xl bg-surface2 p-3"><div className="text-muted">Үнэ</div><b>{money(d.product.price)}</b></div>
             <div className="rounded-xl bg-surface2 p-3"><div className="text-muted">Өртөг{d.product.costEstimated ? ` (тааж ${d.cfg.costPct}%)` : ''}</div><b>{money(d.product.unitCost)}</b></div>
             <div className="rounded-xl bg-surface2 p-3"><div className="text-muted">Опп + хүргэлт</div><b>{money(d.cfg.oppCost + d.cfg.deliveryCost)}</b></div>
-            <div className="rounded-xl bg-surface2 p-3"><div className="text-muted">Бүүст/өдөр ({d.boost.zones} × ${d.boost.dollar})</div><b>{money(d.boost.dailyBoost)}</b></div>
+            <div className="rounded-xl bg-surface2 p-3"><div className="text-muted">Бүүст ({d.boost.zones} × ${d.boost.dollar})</div><b>{t ? `Зорилт ${t} захиалга/өдөр` : 'Унтраастай'}</b></div>
           </div>
-          {d.boost.dailyBoost > 0 && d.days[1] ? (() => { const q = d.days[1]!.orders; const day = q * d.marginBeforeBoost - d.boost.dailyBoost; return (
-            <p className={clsx('rounded-xl p-3 text-[14px] font-semibold', day < 0 ? 'bg-bad-soft text-bad-ink' : 'bg-ok-soft text-ok-ink')}>
-              Одоогийн бүүст ({d.boost.zones} × ${d.boost.dollar} = {money(d.boost.dailyBoost)}/өдөр) бүтэн өдөр асаалттай, өчигдрийн шиг {q} захиалга гарвал: өдрийн {day < 0 ? 'алдагдал' : 'ашиг'} <b>{money(day)}</b>{q ? `, захиалгын ${money(Math.round(day / q))}` : ''}.
-            </p>); })() : null}
-          <p className="text-[13.5px]">Бүүстээс өмнөх (1 ширхэгтэй) захиалгын ашиг <b>{money(d.marginBeforeBoost)}</b>.{d.breakEven ? <> Энэ бүүстээр өдөрт <b>{d.breakEven}+</b> захиалга гарвал алдагдалгүй{d.lowProfitAt ? <>, <b>{d.lowProfitAt}+</b> гарвал {money(d.cfg.lowProfit)}-аас дээш ашигтай</> : ''}.</> : d.boost.zones ? ' Бүүстгүйгээр ч ашиггүй — үнэ/өртгөө шалгана уу.' : ' Бүүст унтарсан.'}</p>
+          {t ? (
+            <p className={clsx('rounded-xl p-3 text-[14px] font-semibold', d.perOrder < 0 ? 'bg-bad-soft text-bad-ink' : 'bg-ok-soft text-ok-ink')}>
+              Бүүсттэй захиалгын ашиг: {money(d.product.price)} − {money(d.product.unitCost)} − {money(d.cfg.oppCost + d.cfg.deliveryCost)} − $1 ({money(d.cfg.rate)}) = <b>{money(d.perOrder)}</b>.
+              {d.perOrder < 0 ? ' Энэ үнээр бүүст ашиггүй — үнэ/өртгөө шалгана уу.' : ` Өдөрт ${t}+ захиалга гарвал 🟢, ${Math.ceil(t * 1.5)}+ бол 💎, ${Math.ceil(t * 0.8)}–${t - 1} бол 🟠, түүнээс доош 🔴.`}
+              {d.days[1] ? ` Өчигдөр ${d.days[1].orders}/${d.days[1].target || t} захиалга.` : ''}
+            </p>) : <p className="text-[13.5px]">Бүүст унтраастай. Бүүстгүй захиалгын ашиг <b>{money(d.marginBeforeBoost)}</b>.</p>}
           <div className="overflow-x-auto rounded-xl border border-line">
-            <table className="w-full min-w-[640px] text-[13px]">
-              <thead><tr className="bg-surface2 text-[12px] text-muted"><th className="px-2 py-1.5 text-left">Өдөр</th><th className="px-2 text-right">Ширхэг</th><th className="px-2 text-right">Захиалга</th><th className="px-2 text-right">Орлого</th><th className="px-2 text-right">Өртөг</th><th className="px-2 text-right">Опп+хүргэлт</th><th className="px-2 text-right">Бүүст</th><th className="px-2 text-right">Ашиг</th><th className="px-2 text-right">Ашиг/захиалга</th></tr></thead>
+            <table className="w-full min-w-[720px] text-[13px]">
+              <thead><tr className="bg-surface2 text-[12px] text-muted"><th className="px-2 py-1.5 text-left">Өдөр</th><th className="px-2 text-right">Ширхэг</th><th className="px-2 text-right">Захиалга</th><th className="px-2 text-right">Зорилт</th><th className="px-2 text-right">Орлого</th><th className="px-2 text-right">Өртөг</th><th className="px-2 text-right">Опп+хүргэлт</th><th className="px-2 text-right">Бүүст</th><th className="px-2 text-right">Ашиг</th><th className="px-2 text-right">Ашиг/захиалга</th></tr></thead>
               <tbody>{d.days.map((x, i) => (
-                <tr key={x.day} className="border-t border-line"><td className="px-2 py-1.5">{i === 0 ? 'Өнөөдөр (одоог хүртэл)' : x.day}</td><td className="px-2 text-right">{x.qty}</td><td className="px-2 text-right">{x.orders}</td><td className="px-2 text-right">{money(x.revenue)}</td><td className="px-2 text-right">{money(x.cost)}</td><td className="px-2 text-right">{money(x.oppDelivery)}</td><td className="px-2 text-right">{money(x.boost)}</td>
-                  <td className={clsx('px-2 text-right font-bold', x.profit < 0 && 'text-bad-ink')}>{money(x.profit)}</td><td className={clsx('px-2 text-right font-bold', x.status && STATUS[x.status].cls)}>{x.status ? `${STATUS[x.status].icon} ` : ''}{money(x.perUnit)}</td></tr>
+                <tr key={x.day} className="border-t border-line"><td className="px-2 py-1.5">{i === 0 ? 'Өнөөдөр (одоог хүртэл)' : x.day}</td><td className="px-2 text-right">{x.qty}</td><td className="px-2 text-right">{x.orders}</td>
+                  <td className={clsx('px-2 text-right font-bold', x.status && STATUS[x.status].cls)}>{x.target ? `${x.status ? `${STATUS[x.status].icon} ` : ''}${x.orders}/${x.target}` : '—'}</td>
+                  <td className="px-2 text-right">{money(x.revenue)}</td><td className="px-2 text-right">{money(x.cost)}</td><td className="px-2 text-right">{money(x.oppDelivery)}</td>
+                  <td className="px-2 text-right" title={x.target && !x.orders ? 'Захиалга гараагүй — өдөрт зарцуулсан бүтэн дүн' : x.target ? `${x.orders} захиалга × $1` : undefined}>{money(x.boost)}{x.target && !x.orders ? ' (зарцуулсан)' : ''}</td>
+                  <td className={clsx('px-2 text-right font-bold', x.profit < 0 && 'text-bad-ink')}>{money(x.profit)}</td><td className={clsx('px-2 text-right font-bold', (x.perUnit ?? 0) < 0 && 'text-bad-ink')}>{money(x.perUnit)}</td></tr>
               ))}</tbody>
             </table>
           </div>
           <div className="flex flex-col gap-2 rounded-xl border border-line p-3">
             <b className="text-[14px]">Үнэ туршиж үзэх (зөвхөн тооцоо)</b>
             <label className="flex items-center gap-2 text-[13px] text-muted">Шинэ үнэ<input value={price} inputMode="numeric" onChange={(e) => setPrice(digits(e.target.value))} className={clsx(inputCls, 'w-32 text-right')} aria-label="Шинэ үнэ" /></label>
-            {trial ? <p className="text-[13.5px]">Бүүстээс өмнөх ашиг <b>{money(trial.margin)}</b>/захиалга. Өчигдрийн шиг {trial.qty} захиалга гарвал захиалгын ашиг <b className={clsx((trial.perUnit ?? 0) < 0 && 'text-bad-ink')}>{money(trial.perUnit)}</b>, өдрийн <b>{money(trial.day)}</b>.{trial.breakEven ? ` Алдагдалгүй: ${trial.breakEven}+ захиалга.` : ''}{trial.low ? ` ${money(d.cfg.lowProfit)}+ ашигтай: ${trial.low}+ захиалга.` : ''}</p> : null}
+            {trial ? <p className="text-[13.5px]">Бүүстгүй ашиг <b>{money(trial.margin)}</b>/захиалга{t ? <>, бүүсттэй (−$1) <b className={clsx(trial.perOrder < 0 && 'text-bad-ink')}>{money(trial.perOrder)}</b>/захиалга</> : null}. Өчигдрийн шиг {trial.qty} захиалга гарвал өдрийн <b className={clsx(trial.day < 0 && 'text-bad-ink')}>{money(trial.day)}</b>.</p> : null}
           </div>
         </div>
       ) : null}
@@ -784,7 +791,7 @@ function ConfigDialog({ sa, onClose, onDone }: { sa: boolean; onClose: () => voi
   const f = (k: string, l: string) => <label key={k} className="flex flex-col gap-1 text-[12.5px] font-semibold text-muted">{l}<input value={v?.[k] ?? ''} inputMode="numeric" onChange={(e) => setV({ ...v!, [k]: digits(e.target.value) })} className={clsx(inputCls, 'text-right')} /></label>;
   const save = async () => {
     try {
-      const keys = ['claimTarget', 'claimExpireDays', 'stockDays', ...(sa ? ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar', 'bulkMin', 'leadDays', 'urgentDays'] : [])];
+      const keys = ['claimTarget', 'claimExpireDays', 'stockDays', ...(sa ? ['oppCost', 'deliveryCost', 'rate', 'costPct', 'watchHours', 'defaultDollar', 'bulkMin', 'leadDays', 'urgentDays'] : [])];
       await api('/api/goods-outflow', { method: 'POST', json: { action: 'config', ...Object.fromEntries(keys.map((k) => [k, Number(v?.[k])])), ...(sa ? { hideSupplierReorder: v?.hideSupplierReorder !== 'false' } : {}) } }); onDone();
     } catch (e) { setErr(msg(e)); }
   };
@@ -797,7 +804,7 @@ function ConfigDialog({ sa, onClose, onDone }: { sa: boolean; onClose: () => voi
           <div className="grid grid-cols-2 gap-3">{f('claimTarget', '«Хийсэн» болох захиалга')}{f('claimExpireDays', 'Чөлөөлөх хоног')}{f('stockDays', '🟠 Бараа дуусах анхааруулга (өдрийн гарц үлдэхэд)')}</div>
           {sa ? (<>
             <b className="text-[14px]">Бүүстийн ашиг (зөвхөн Супер админ)</b>
-            <div className="grid grid-cols-2 gap-3">{f('oppCost', 'Опп цалин (₮/захиалга)')}{f('deliveryCost', 'Хүргэлтийн цалин (₮/захиалга)')}{f('rate', 'Долларын ханш (₮)')}{f('defaultDollar', 'Анхдагч $ (бүүст)')}{f('costPct', 'Өртөг оруулаагүй бол үнийн %')}{f('lowProfit', '🟠 Ашгийн босго (₮/захиалга)')}{f('bulkMin', '📦 Бөөний захиалга (ширхэгээс)')}{f('watchHours', 'Ажиглах цаг (асаасан цагаас)')}</div>
+            <div className="grid grid-cols-2 gap-3">{f('oppCost', 'Опп цалин (₮/захиалга)')}{f('deliveryCost', 'Хүргэлтийн цалин (₮/захиалга)')}{f('rate', 'Долларын ханш (₮)')}{f('defaultDollar', 'Анхдагч $ (бүүст)')}{f('costPct', 'Өртөг оруулаагүй бол үнийн %')}{f('bulkMin', '📦 Бөөний захиалга (ширхэгээс)')}{f('watchHours', 'Ажиглах цаг (асаасан цагаас)')}</div>
             <b className="text-[14px]">🚚 Бараа татах (зөвхөн Супер админ)</b>
             <div className="grid grid-cols-2 gap-3">{f('leadDays', '🟠 Бараа ирэх хоног (нөөц үүнээс бага бол «татах»)')}{f('urgentDays', '🔴 Яаралтай (нөөц үүнээс бага)')}</div>
             <label className="flex items-start gap-2 text-[13px] font-semibold"><input type="checkbox" className="mt-0.5" checked={v.hideSupplierReorder !== 'false'} onChange={(e) => setV({ ...v, hideSupplierReorder: String(e.target.checked) })} /><span className="min-w-0 [overflow-wrap:anywhere]">Нийлүүлэгчийн дэлгүүрт оноосон барааг миний «Бараа татах»-д харуулахгүй (нийлүүлэгч өөрийн хуудаснаас харна)</span></label>
