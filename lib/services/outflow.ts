@@ -206,24 +206,29 @@ export interface BoostAlert {
   watchedUntil: Date | null; watchedBy: string | null; boostOnAt: Date | null; zones: number; dollar: number; ownerName: string | null;
 }
 let alertCache: { at: number; list: BoostAlert[] } | null = null;
-export function bustOutflowCache() { alertCache = null; bustReorder(); shortCache = null; cfgCache = null; }
+/** Кэш хүчингүй болох бүрт нэмэгдэнэ — өмнө эхэлсэн тооцоо хуучин үр дүнгээ кэшлэхгүй */
+let alertGen = 0;
+export function bustOutflowCache() { alertCache = null; alertGen++; bustReorder(); shortCache = null; shortGen++; cfgCache = null; profCache = null; }
+/** Тест: кэшгүй (тест бүр шууд database-ээс) */
+const CACHE_MS = process.env.NODE_ENV === 'test' ? 0 : 60_000;
 
 /** Одоо бүүст асаалттай бараануудын анхааруулга (60 сек кэш) */
-let alertInflight: Promise<BoostAlert[]> | null = null;
+let alertInflight: { gen: number; p: Promise<BoostAlert[]> } | null = null;
 export async function computeAlerts(fresh = false): Promise<BoostAlert[]> {
   if (!fresh && alertCache && Date.now() - alertCache.at < 60_000) return alertCache.list;
   // Аудит #152: зэрэг олон хүсэлт нэг л удаа тооцоолно (кэш цэвэрлэгдсэний дараах «бөөнөөр» тооцоолол)
-  if (!fresh && alertInflight) return alertInflight;
-  const p = computeAlertsNow(); if (!fresh) alertInflight = p;
-  try { return await p; } finally { if (alertInflight === p) alertInflight = null; }
+  if (!fresh && alertInflight && alertInflight.gen === alertGen) return alertInflight.p;
+  const gen = alertGen;
+  const p = computeAlertsNow(gen); if (!fresh) alertInflight = { gen, p };
+  try { return await p; } finally { if (alertInflight?.p === p) alertInflight = null; }
 }
-async function computeAlertsNow(): Promise<BoostAlert[]> {
+async function computeAlertsNow(gen: number): Promise<BoostAlert[]> {
   const cfg = await getConfig();
   const now = Date.now();
   const today = ubDay(); const yest = addDays(today, -1); const d2 = addDays(today, -2);
   const todayStart = ubDayStart(today).getTime(), yStart = ubDayStart(yest).getTime(), d2Start = ubDayStart(d2).getTime();
   const pms = await db.productMarketing.findMany({ where: { zones: { gt: 0 } } });
-  if (!pms.length) { alertCache = { at: now, list: [] }; return []; }
+  if (!pms.length) { if (gen === alertGen) alertCache = { at: now, list: [] }; return []; }
   const ids = pms.map((x) => x.productId);
   const [products, segs, aggs, watches, stock] = await Promise.all([
     // Аудит А11: архивласан барааны анхааруулга гаргахгүй (pmap-д ороогүй бол алгасагдана)
@@ -311,7 +316,7 @@ async function computeAlertsNow(): Promise<BoostAlert[]> {
     for (const a of list) a.pages = pg.get(`${a.productId}|${pageDays.get(a.productId) ?? today}`) ?? [];
   }
   list.sort((a, b) => (a.level === b.level ? a.name.localeCompare(b.name) : a.level === 'RED' ? -1 : 1));
-  alertCache = { at: now, list };
+  if (gen === alertGen) alertCache = { at: now, list };
   return list;
 }
 
@@ -397,16 +402,32 @@ export interface TableParams { q?: string; tab?: string; zone?: string; owner?: 
 const PAGE = 50;
 let tableCache: { at: number; key: string; rows: OutflowRow[] } | null = null;
 
-let rowsInflight: { key: string; p: Promise<OutflowRow[]> } | null = null;
+/**
+ * Аудит #152 (хурд): хүснэгт санах ойд — 20 сек «шинэ», 5 мин хүртэл хуучнаа шууд өгч ар талд НЭГ л удаа шинэчилнэ
+ * (хэрэглэгч тооцоолол хүлээхгүй). Кэш хүчингүй болсны (tableGen) өмнө эхэлсэн тооцоо хуучин үр дүнгээ кэшлэхгүй.
+ */
+const TABLE_FRESH_MS = process.env.NODE_ENV === 'test' ? 0 : 20_000;
+const TABLE_STALE_MS = process.env.NODE_ENV === 'test' ? 0 : 5 * 60_000;
+let tableGen = 0;
+let rowsInflight: { key: string; gen: number; p: Promise<OutflowRow[]> } | null = null;
 async function allRows(): Promise<OutflowRow[]> {
-  const k = ubDay();
-  if (tableCache && tableCache.key === k && Date.now() - tableCache.at < 20_000) return tableCache.rows;
-  if (rowsInflight && rowsInflight.key === k) return rowsInflight.p; // Аудит #152: нэг л удаа тооцоолно
-  const p = allRowsNow();
-  rowsInflight = { key: k, p };
-  try { return await p; } finally { if (rowsInflight?.p === p) rowsInflight = null; }
+  const k = ubDay(); const c = tableCache;
+  if (c && c.key === k) {
+    const age = Date.now() - c.at;
+    if (age < TABLE_FRESH_MS) return c.rows;
+    if (age < TABLE_STALE_MS) { refreshRows(k).catch(() => undefined); return c.rows; }
+  }
+  return refreshRows(k);
 }
-async function allRowsNow(): Promise<OutflowRow[]> {
+function refreshRows(k: string): Promise<OutflowRow[]> {
+  if (rowsInflight && rowsInflight.key === k && rowsInflight.gen === tableGen) return rowsInflight.p;
+  const gen = tableGen;
+  const p = allRowsNow(gen);
+  rowsInflight = { key: k, gen, p };
+  p.finally(() => { if (rowsInflight?.p === p) rowsInflight = null; }).catch(() => undefined);
+  return p;
+}
+async function allRowsNow(gen: number): Promise<OutflowRow[]> {
   const today = ubDay(); const from = addDays(today, -6);
   const k = today;
   const [products, pms, aggs, phones] = await Promise.all([
@@ -445,10 +466,18 @@ async function allRowsNow(): Promise<OutflowRow[]> {
       avg: Math.round(((week - (bulkM.get(p.id) ?? []).reduce((s, x) => s + x.qty, 0)) / 7) * 10) / 10,
     } as OutflowRow;
   });
-  tableCache = { at: Date.now(), key: k, rows };
+  if (gen === tableGen) tableCache = { at: Date.now(), key: k, rows };
   return rows;
 }
-export function bustTable() { tableCache = null; }
+export function bustTable() { tableCache = null; tableGen++; profCache = null; }
+/** Нэг барааны өөрчлөлтийг (бүүст, тэмдэглэл, хариуцагч) бүх хүснэгтийг дахин бодолгүй кэшэнд шууд тусгана */
+function patchRows(ids: number[], fn: (r: OutflowRow) => void) {
+  tableGen++; // өмнө эхэлсэн тооцоо энэ өөрчлөлтгүй — кэшлэхгүй
+  const c = tableCache; if (!c) return;
+  const set = new Set(ids);
+  // Шинэ массив — уншиж буй хүсэлтийн мөрүүд дундуур өөрчлөгдөхгүй
+  c.rows = c.rows.map((r) => { if (!set.has(r.id)) return r; const x = { ...r }; fn(x); return x; });
+}
 
 /** Хүснэгт — серверт шүүж, эрэмбэлж, 50-аар хуудаслана */
 export async function outflowTable(actor: UserActor, p: TableParams) {
@@ -470,8 +499,8 @@ export async function outflowTable(actor: UserActor, p: TableParams) {
     rows = rows.filter((r) => { const a = alertMap.get(r.id); if (!a) return false; const w = !!a.watchedUntil && a.watchedUntil.getTime() > now; return p.tab === 'watched' ? w : !w && a.level === (p.tab === 'red' ? 'RED' : 'ORANGE'); });
   }
   // Супер админ: өчигдрийн ашгийн төлөв (шүүлтүүр, эрэмбэ)
-  let prof = new Map<number, DayProfit>();
-  if (sa) prof = await yesterdayProfits(rows.filter((r) => r.zones > 0 || p.status).map((r) => r.id));
+  // Бүүстгүй барааны төлөв үргэлж хоосон — зөвхөн бүүсттэйг (бүх хүснэгтээр нэг удаа, кэштэй) бодно
+  const prof = sa ? await boostedProfits() : new Map<number, DayProfit>();
   if (sa && p.status) rows = rows.filter((r) => prof.get(r.id)?.status === p.status);
   const ro = sa ? await ownerReorder() : new Map<number, ReorderInfo>();
   if (sa && p.tab === 'reorder') rows = rows.filter((r) => NEEDS.includes(ro.get(r.id)?.level as ReorderLevel));
@@ -517,6 +546,26 @@ export async function outflowTable(actor: UserActor, p: TableParams) {
   };
 }
 
+/** Аудит #152 (хурд): өчигдрийн зорилт — бүүсттэй бүх бараагаар 60 сек кэш, зэрэг хүсэлтэд нэг л удаа */
+let profCache: { at: number; key: string; map: Map<number, DayProfit> } | null = null;
+let profInflight: { key: string; p: Promise<Map<number, DayProfit>> } | null = null;
+async function boostedProfits(): Promise<Map<number, DayProfit>> {
+  const k = ubDay();
+  if (profCache && profCache.key === k && Date.now() - profCache.at < CACHE_MS) return profCache.map;
+  if (profInflight && profInflight.key === k) return profInflight.p;
+  const p = (async () => {
+    const before = profCache;
+    // Өчигдөр асаалттай байсан бараа = одоо асаалттай ∪ өчигдрийн эхнээс хойш бүүстээ өөрчилсөн (унтраасан ч орно)
+    const ids = (await db.$queryRaw<{ id: number }[]>`
+      SELECT "productId" AS id FROM "ProductMarketing" WHERE zones > 0
+      UNION SELECT DISTINCT "productId" FROM "BoostEvent" WHERE at >= ${ubDayStart(addDays(k, -1))}`).map((x) => x.id);
+    const map = await yesterdayProfits(ids);
+    if (profCache === before) profCache = { at: Date.now(), key: k, map };
+    return map;
+  })();
+  profInflight = { key: k, p };
+  try { return await p; } finally { if (profInflight?.p === p) profInflight = null; }
+}
 async function yesterdayProfits(ids: number[]): Promise<Map<number, DayProfit>> {
   const out = new Map<number, DayProfit>();
   if (!ids.length) return out;
@@ -612,7 +661,10 @@ export async function saveBoost(actor: UserActor, b: { productId?: unknown; doll
     const action = !cur?.zones && zones > 0 ? 'outflow.boost_on' : cur?.zones && zones === 0 ? 'outflow.boost_off' : 'outflow.boost';
     await writeAudit(actor, action, 'ProductMarketing', String(productId), { product: `${p.code} ${p.name}`, before: cur ? { dollar: cur.dollar, zones: cur.zones, adNumber: cur.adNumber } : null, after: { dollar, zones, adNumber } }, tx);
     return r;
-  }, { timeout: 20_000, maxWait: 10_000 }).finally(() => { bustOutflowCache(); bustTable(); }); // Аудит #152: кэшийг хадгалсны ДАРАА цэвэрлэнэ
+  }, { timeout: 20_000, maxWait: 10_000 }).then((r) => {
+    patchRows([productId], (x) => { x.dollar = r.dollar; x.zones = r.zones; x.adNumber = r.adNumber; });
+    return r;
+  }).finally(() => { alertCache = null; alertGen++; shortCache = null; shortGen++; profCache = null; }); // Аудит #152: хадгалсны ДАРАА цэвэрлэнэ; «Бараа татах» бүүстээс хамаарахгүй — хэвээр
 }
 
 export async function saveNote(actor: UserActor, b: { productId?: unknown; note?: unknown }) {
@@ -624,7 +676,7 @@ export async function saveNote(actor: UserActor, b: { productId?: unknown; note?
     await tx.productMarketing.upsert({ where: { productId }, create: { productId, note, updatedByName: actor.name }, update: { note, updatedByName: actor.name } });
     await writeAudit(actor, 'outflow.note', 'ProductMarketing', String(productId), { note }, tx);
   });
-  bustTable();
+  patchRows([productId], (x) => { x.note = note; });
   return { ok: true };
 }
 
@@ -650,7 +702,7 @@ export async function setOwner(actor: UserActor, b: { productIds?: unknown; user
       ON CONFLICT ("productId") DO UPDATE SET "ownerId" = EXCLUDED."ownerId", "ownerName" = EXCLUDED."ownerName", "updatedByName" = EXCLUDED."updatedByName", "updatedAt" = now()`;
     await writeAudit(actor, 'outflow.owner', 'ProductMarketing', ids.length === 1 ? String(ids[0]) : null, { count: ids.length, owner: user?.name ?? null }, tx);
   }, { timeout: 60_000 });
-  bustTable();
+  patchRows(ids, (x) => { x.ownerId = user?.id ?? null; x.ownerName = user?.name ?? null; });
   return { updated: ids.length };
 }
 
@@ -750,13 +802,24 @@ export async function syncClaims() {
   return changed;
 }
 
+/** Аудит #152 (хурд): сүүлийн 3 хоногт зарагдсан бараа — 30 сек кэш, зэрэг хүсэлтэд нэг л удаа */
+let soldCache: { at: number; key: string; set: Set<number> } | null = null;
+let soldInflight: { key: string; p: Promise<Set<number>> } | null = null;
+async function soldRecently(from: string, to: string): Promise<Set<number>> {
+  const k = `${from}|${to}`;
+  if (process.env.NODE_ENV !== 'test' && soldCache && soldCache.key === k && Date.now() - soldCache.at < 30_000) return soldCache.set;
+  if (soldInflight && soldInflight.key === k) return soldInflight.p;
+  const p = unitsByDay(from, to).then((a) => new Set(a.filter((x) => x.qty > 0).map((x) => x.productId)));
+  soldInflight = { key: k, p };
+  try { const set = await p; soldCache = { at: Date.now(), key: k, set }; return set; } finally { if (soldInflight?.p === p) soldInflight = null; }
+}
 export async function workWindow(actor: UserActor, p: { tab?: string; q?: string; page?: number }) {
   assertView(actor);
   await syncClaimsThrottled();
   const cfg = await getConfig();
   const today = ubDay(); const from = addDays(today, -2);
   const q = cleanText(p.q, 60);
-  const sold = new Set((await unitsByDay(from, today)).filter((a) => a.qty > 0).map((a) => a.productId));
+  const sold = await soldRecently(from, today);
   const where: Prisma.ProductWhereInput = { status: { not: 'ARCHIVED' }, ...(q ? { OR: [{ name: { contains: q, mode: 'insensitive' } }, { code: { contains: q, mode: 'insensitive' } }] } : {}) };
   let products = await db.product.findMany({ where, select: { id: true, code: true, name: true, price: true }, orderBy: { name: 'asc' } });
   if (p.tab !== 'all') products = products.filter((x) => !sold.has(x.id));
@@ -1295,12 +1358,22 @@ export interface PageShortRow {
   pages: { pageId: number; name: string; d2: number; d1: number; total: number; short: boolean }[];
 }
 let shortCache: { at: number; list: PageShortRow[] } | null = null;
+let shortGen = 0;
+let shortInflight: { gen: number; p: Promise<PageShortRow[]> } | null = null;
+/** Аудит #152 (хурд): 60 сек кэш; зэрэг олон хүсэлт (хүснэгт бүрийн тоолол) нэг л удаа тооцоолно */
 async function pageShortfall(fresh = false): Promise<PageShortRow[]> {
   if (!fresh && shortCache && Date.now() - shortCache.at < 60_000) return shortCache.list;
+  if (!fresh && shortInflight && shortInflight.gen === shortGen) return shortInflight.p;
+  const gen = shortGen;
+  const p = pageShortfallNow(gen);
+  if (!fresh) shortInflight = { gen, p };
+  try { return await p; } finally { if (shortInflight?.p === p) shortInflight = null; }
+}
+async function pageShortfallNow(gen: number): Promise<PageShortRow[]> {
   const now = Date.now();
   const today = ubDay(); const yest = addDays(today, -1); const d2 = addDays(today, -2);
   const pms = await db.productMarketing.findMany({ where: { zones: { gte: 1 }, boostOnAt: { lte: new Date(now - SHORT_BOOST_DAYS * 24 * HOUR) } } });
-  if (!pms.length) { shortCache = { at: now, list: [] }; return []; }
+  if (!pms.length) { if (gen === shortGen) shortCache = { at: now, list: [] }; return []; }
   const ids = pms.map((x) => x.productId);
   const [products, rows] = await Promise.all([
     db.product.findMany({ where: { id: { in: ids }, status: { not: 'ARCHIVED' } }, select: { id: true, code: true, name: true } }),
@@ -1326,7 +1399,7 @@ async function pageShortfall(fresh = false): Promise<PageShortRow[]> {
       boostDays: Math.floor((now - m.boostOnAt!.getTime()) / (24 * HOUR)), days: [d2, yest], pages });
   }
   list.sort((a, b) => b.pages.filter((x) => x.short).length - a.pages.filter((x) => x.short).length || a.name.localeCompare(b.name));
-  shortCache = { at: now, list };
+  if (gen === shortGen) shortCache = { at: now, list };
   return list;
 }
 export async function pageShortView(actor: UserActor) {

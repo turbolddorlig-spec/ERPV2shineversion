@@ -133,4 +133,25 @@ describe('#152 барааны гарц', () => {
     expect(Date.now() - t0).toBeLessThan(2000);
     expect((await db.productMarketing.findUniqueOrThrow({ where: { productId: prod } })).ownerName).toBe(mk2.name);
   });
+  it('хурд: зэрэг 20 хүсэлт нэг л тооцоололтой, үр дүн ижил; бүүст, тэмдэглэл, хариуцагч хүснэгтэд шууд; өчигдөр унтраасан бүүстийн зорилт харагдана', async () => {
+    await boostAt(1, U.ubDayStart(yest));
+    for (let i = 0; i < 3; i++) await order({ daysAgo: 1 });
+    const rs = await Promise.all(Array.from({ length: 20 }, (_, i) => (i % 2 ? OF.outflowTable(sa, {}) : OF.pageShortView(sa))));
+    const tables = rs.filter((_, i) => i % 2) as Awaited<ReturnType<typeof OF.outflowTable>>[];
+    expect(new Set(tables.map((t) => JSON.stringify(t.rows.map((r) => [r.id, r.weekTotal, r.profit?.orders])))).size).toBe(1);
+    expect(tables[0]!.rows.find((r) => r.id === prod)!.profit).toMatchObject({ orders: 3, target: 5, status: 'LOSS' });
+    // бүүст / тэмдэглэл / хариуцагч — дараагийн уншилтад шууд
+    await OF.saveBoost(mk, { productId: prod, zones: 3, dollar: 7 });
+    await OF.saveNote(mk, { productId: prod, note: 'Шалгах' });
+    await OF.setOwner(lead, { productIds: [prod], userId: mk2.id });
+    let r = (await OF.outflowTable(mk, {})).rows.find((x) => x.id === prod)!;
+    expect([r.zones, r.dollar, r.note, r.ownerName]).toEqual([3, 7, 'Шалгах', mk2.name]);
+    // өнөөдөр унтраасан ч өчигдрийн зорилт (СА) харагдсаар — өчигдөр асаалттай байсан
+    await OF.saveBoost(mk, { productId: prod, zones: 0 });
+    r = (await OF.outflowTable(sa, {})).rows.find((x) => x.id === prod)!;
+    expect([r.zones, r.profit?.target]).toEqual([0, 5]);
+    expect((await OF.outflowTable(sa, { status: 'LOSS' })).rows.map((x) => x.id)).toEqual([prod]);
+    // ажлын цонх: зарагдсан бараа «Сул»-д орохгүй
+    expect((await OF.workWindow(mk, {})).rows.some((x) => x.id === prod)).toBe(false);
+  });
 });
