@@ -451,8 +451,10 @@ describe('ажлын цонх (#104-4)', () => {
     const pm = await db.productMarketing.findUniqueOrThrow({ where: { productId: prod } });
     expect([!!pm.doneAt, pm.doneByName, pm.ownerName]).toEqual([true, mk.name, mk2.name]);
     // хугацаа дуусах
-    const c2 = await OF.claim(mk2, prod);
+    // #152: зарагдаж буй барааг энгийн маркетинг «ажилд авах»-гүй
+    await err(OF.claim(mk2, prod), 400, 'selling');
     await db.order.updateMany({ data: { status: 'CANCELLED', cancelledAt: new Date() } }); // хугацаандаа захиалга аваагүй
+    const c2 = await OF.claim(mk2, prod);
     await db.workClaim.update({ where: { id: c2.id }, data: { claimedAt: new Date(Date.now() - 8 * 86_400_000) } });
     await OF.syncClaims();
     expect((await db.workClaim.findUniqueOrThrow({ where: { id: c2.id } })).status).toBe('EXPIRED');
@@ -481,8 +483,8 @@ describe('пэйж, статистик, үнэлгээ, цалин (#104-3, 6)',
     const row = ev.rows.find((r) => r.userId === mk.id)!;
     expect(row.items[0]).toMatchObject({ expected: 5, orders: 11, cls: 'EXCELLENT' });
     await err(OF.saveScore(mk, { userId: mk2.id, date: yest, score: 9, salaryAmount: 1000 }), 403);
-    await err(OF.saveScore(lead, { userId: lead.id, date: yest, score: 9 }), 403);
-    await OF.saveScore(lead, { userId: mk.id, date: yest, score: 8, salaryAmount: 25000, note: 'Сайн' });
+    await err(OF.saveScore(lead, { userId: mk.id, date: yest, score: 9 }), 403); // #152: зөвхөн Супер админ
+    await OF.saveScore(sa, { userId: mk.id, date: yest, score: 8, salaryAmount: 25000, note: 'Сайн' });
     expect((await OF.scoreHistory(lead, yest, yest)).rows[0]).toMatchObject({ salary: 25000, avgScore: 8 });
     // «Ажилтны цалин»: нэмэлт орлогод автоматаар, хоёр удаа хадгалахад давхардахгүй
     const p = S.periodOf(yest.slice(0, 7), Number(yest.slice(8)) <= 15 ? 1 : 2);
@@ -492,11 +494,13 @@ describe('пэйж, статистик, үнэлгээ, цалин (#104-3, 6)',
     const rec = await S.saveSalary(acc, { staffKey: `u:${mk.id}`, ym: p.ym, half: p.half, baseSalary: 100000, bonusSalary: 0, additions: [{ label: 'Илүү цаг', amount: 5000 }, { label: S.EVAL_LABEL, amount: 25000 }] });
     expect([rec.totalAdditions, rec.transferSalary]).toEqual([30000, 130000]);
     // Аудит А7: хадгалсны дараа оноо өөрчлөгдвөл түгжихэд «дахин хадгална уу»; дахин хадгалахад шинэ дүнгээр
-    await OF.saveScore(lead, { userId: mk.id, date: yest, score: 9, salaryAmount: 45000, note: 'Маш сайн' });
+    await OF.saveScore(sa, { userId: mk.id, date: yest, score: 9, salaryAmount: 45000, note: 'Маш сайн' });
     await err(S.lockSalary(acc, rec.id), 409, 'stale');
     const rec2 = await S.saveSalary(acc, { staffKey: `u:${mk.id}`, ym: p.ym, half: p.half, baseSalary: 100000, bonusSalary: 0, additions: [{ label: 'Илүү цаг', amount: 5000 }] });
     expect(rec2.totalAdditions).toBe(50000);
     expect((await S.lockSalary(acc, rec2.id)).record.isLocked).toBe(true);
+    // #152: цоожтой хугацааны үнэлгээг өөрчлөхгүй
+    await err(OF.saveScore(sa, { userId: mk.id, date: yest, score: 1, salaryAmount: 0 }), 409, 'salary_locked');
     const dd = await OF.dailyDetail(lead, yest);
     expect(dd.rows.find((r) => r.userId === mk.id)?.items[0]?.daily[0]).toBe(11);
   });

@@ -70,6 +70,8 @@ export async function runJobsOnce(opts: { owner?: string } = {}): Promise<JobRes
       // Аудит №3: «Бараа татах» тооцоог ар талд — хуудас нээхэд бэлэн байна
       await safe('reorder', warmReorder);
       // Аудит #151: нийлүүлэгчийн шилжүүлсэн өдрийн буцаалт / нэмэгдлийг ар талд (хуудас нээх бүрт биш)
+      // Аудит #152: маркетингийн «ажилд авсан» барааны явц ар талд
+      await safe('outflow-claims', async () => (await import('./services/outflow')).syncClaims());
       await safe('supplier-sync', async () => (await import('./services/supplier')).syncAllShops());
       const hb = JSON.stringify({ at: new Date().toISOString(), failed });
       await db.$executeRaw`INSERT INTO "AppSetting" (key, value, "updatedAt") VALUES (${HEARTBEAT_KEY}, ${hb}::jsonb, now())

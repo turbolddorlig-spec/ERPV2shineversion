@@ -7,6 +7,7 @@ import { dateOnly, isYmd, ubDay, ubDayStart, ymdOf } from '../ubdate';
 import { addDays } from './delivery/core';
 import { productStockTotals } from './stock/views';
 import type { UserActor } from './users';
+import { withHeavy } from '../heavy';
 
 type Tx = Prisma.TransactionClient;
 
@@ -112,7 +113,7 @@ export async function unitsByDay(from: string, to: string, productIds?: number[]
   const bulkMin = (await getConfig()).bulkMin;
   // Захиалга × бараа бүрээр нэгтгээд (нэг захиалгад олон өнгө байж болно) бөөнийг ялгана
   const rows = await db.$queryRaw<{ productId: number; day: Date; qty: number; revenue: number; orders: number; bulkOrders: number; bulkQty: number }[]>`
-    SELECT x."productId", x.day, sum(x.q)::int AS qty, sum(x.v)::int AS revenue, count(*)::int AS orders,
+    SELECT x."productId", x.day, sum(x.q)::int AS qty, sum(x.v)::bigint AS revenue, count(*)::int AS orders,
            count(*) FILTER (WHERE x.q >= ${bulkMin})::int AS "bulkOrders", coalesce(sum(x.q) FILTER (WHERE x.q >= ${bulkMin}), 0)::int AS "bulkQty"
     FROM (
       SELECT l."productId", o.id, (o."confirmedAt" + interval '8 hours')::date AS day, sum(l.qty) AS q, sum(l.qty * l."unitPrice") AS v
@@ -120,7 +121,7 @@ export async function unitsByDay(from: string, to: string, productIds?: number[]
       WHERE o."confirmedAt" >= ${ubDayStart(from)} AND o."confirmedAt" < ${ubDayStart(addDays(to, 1))} AND ${COUNTED} ${pf}
       GROUP BY 1, 2, 3
     ) x GROUP BY 1, 2`;
-  return rows.map((r) => ({ productId: r.productId, day: ymdOf(r.day), qty: r.qty, revenue: r.revenue, orderShare: r.orders, orders: r.orders, bulkOrders: r.bulkOrders, bulkQty: r.bulkQty }));
+  return rows.map((r) => ({ productId: r.productId, day: ymdOf(r.day), qty: r.qty, revenue: Number(r.revenue), orderShare: r.orders, orders: r.orders, bulkOrders: r.bulkOrders, bulkQty: r.bulkQty }));
 }
 
 // ───────────── Бүүстийн цагийн хуваарь ба зардал ─────────────
@@ -202,8 +203,15 @@ let alertCache: { at: number; list: BoostAlert[] } | null = null;
 export function bustOutflowCache() { alertCache = null; bustReorder(); shortCache = null; cfgCache = null; }
 
 /** Одоо бүүст асаалттай бараануудын анхааруулга (60 сек кэш) */
+let alertInflight: Promise<BoostAlert[]> | null = null;
 export async function computeAlerts(fresh = false): Promise<BoostAlert[]> {
   if (!fresh && alertCache && Date.now() - alertCache.at < 60_000) return alertCache.list;
+  // Аудит #152: зэрэг олон хүсэлт нэг л удаа тооцоолно (кэш цэвэрлэгдсэний дараах «бөөнөөр» тооцоолол)
+  if (!fresh && alertInflight) return alertInflight;
+  const p = computeAlertsNow(); if (!fresh) alertInflight = p;
+  try { return await p; } finally { if (alertInflight === p) alertInflight = null; }
+}
+async function computeAlertsNow(): Promise<BoostAlert[]> {
   const cfg = await getConfig();
   const now = Date.now();
   const today = ubDay(); const yest = addDays(today, -1); const d2 = addDays(today, -2);
@@ -235,6 +243,17 @@ export async function computeAlerts(fresh = false): Promise<BoostAlert[]> {
     FROM x LEFT JOIN c ON c."productId" = x."productId"
     GROUP BY 1, 2`;
   const since = new Map(sinceRows.map((r) => [r.productId, r]));
+  // Асаалттай байх үедээ $ буурсан эсэх (сүүлийн 48 цаг)
+  const recentEv = await db.boostEvent.findMany({ where: { productId: { in: ids }, at: { gte: new Date(now - 48 * HOUR) } }, orderBy: [{ productId: 'asc' }, { at: 'asc' }], select: { productId: true, at: true, dollar: true, zones: true, byName: true } });
+  const prevEv = await db.$queryRaw<{ productId: number; dollar: number; zones: number }[]>`
+    SELECT DISTINCT ON ("productId") "productId", dollar, zones FROM "BoostEvent" WHERE "productId" = ANY(${ids}::int[]) AND at < ${new Date(now - 48 * HOUR)} ORDER BY "productId", at DESC`;
+  const lastState = new Map(prevEv.map((e) => [e.productId, e]));
+  const dollarDrops = new Map<number, { from: number; to: number; by: string }>();
+  for (const e of recentEv) {
+    const prev = lastState.get(e.productId);
+    if (prev && prev.zones > 0 && e.zones > 0 && e.dollar < prev.dollar) dollarDrops.set(e.productId, { from: prev.dollar, to: e.dollar, by: e.byName });
+    lastState.set(e.productId, { productId: e.productId, dollar: e.dollar, zones: e.zones });
+  }
   const list: BoostAlert[] = [];
   const pageDays = new Map<number, string>();
   for (const pm of pms) {
@@ -263,6 +282,9 @@ export async function computeAlerts(fresh = false): Promise<BoostAlert[]> {
       } else if (y.status === 'LOW') up('ORANGE', 'Ашиг багассан — алдагдал руу дөхөж байна, бүүстээ шалгана уу');
       if (!pageDays.has(pm.productId) && level) pageDays.set(pm.productId, yest);
     }
+    // Аудит #152 (эзний шийдвэр): асаалттай бүүстийн $-ыг сүүлийн 2 хоногт багасгасан бол — алдагдал нуух эрсдэл, Супер админд харагдана
+    const dl = dollarDrops.get(pm.productId);
+    if (dl) up('ORANGE', `Асаалттай бүүстийн $ багасгасан: $${dl.from} → $${dl.to} (${dl.by}) — бодит зардалтай тулгана уу`);
     // 3) Бараа дуусах (#118): хурд = сүүлийн 3 бүтэн өдрийн дундаж (бөөнгүй), өнөөдөр түүнээс хурдан бол өнөөдрийнх
     {
       const avail = stock.get(pm.productId)?.available ?? 0;
@@ -305,7 +327,9 @@ export async function alertBanner(roles: Role[]): Promise<{ red: number; orange:
   const list = await computeAlerts();
   const now = Date.now();
   const open = list.filter((a) => !a.watchedUntil || a.watchedUntil.getTime() <= now);
-  const red = open.filter((a) => a.level === 'RED').length, orange = open.filter((a) => a.level === 'ORANGE').length;
+  // Аудит #152 (эзний шийдвэр): Супер админд 🔴 «ажиглаж буй» байсан ч үргэлж харагдана
+  const sa = roles.includes('SUPER_ADMIN');
+  const red = (sa ? list : open).filter((a) => a.level === 'RED').length, orange = open.filter((a) => a.level === 'ORANGE').length;
   return red || orange ? { red, orange } : null;
 }
 
@@ -326,6 +350,10 @@ export async function watchProduct(actor: UserActor, productIdIn: unknown) {
   if (!p) throw notFound('Бараа олдсонгүй');
   const until = new Date(Date.now() + 24 * HOUR);
   await db.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(7400, ${productId}::int)`;
+    // Аудит #152: нэг анхааруулгад нэг л удаа — ажиглаж буй эсвэл ажиглалт дууссанаас 24 цаг болоогүй бол дахин ажиглахгүй
+    const last = await tx.boostWatch.findFirst({ where: { productId }, orderBy: { until: 'desc' } });
+    if (last && last.until.getTime() > Date.now() - 24 * HOUR) throw conflict(last.until.getTime() > Date.now() ? `${last.byName} аль хэдийн ажиглаж байна` : 'Ажиглалт саяхан дууссан — бүүстийг шалгаж шийдвэр гаргана уу (дахин ажиглахгүй)', 'watched');
     await tx.boostWatch.create({ data: { productId, until, byId: actor.id, byName: actor.name } });
     await writeAudit(actor, 'outflow.watch', 'ProductMarketing', String(productId), { product: `${p.code} ${p.name}`, until }, tx);
   });
@@ -362,10 +390,18 @@ export interface TableParams { q?: string; tab?: string; zone?: string; owner?: 
 const PAGE = 50;
 let tableCache: { at: number; key: string; rows: OutflowRow[] } | null = null;
 
+let rowsInflight: { key: string; p: Promise<OutflowRow[]> } | null = null;
 async function allRows(): Promise<OutflowRow[]> {
+  const k = ubDay();
+  if (tableCache && tableCache.key === k && Date.now() - tableCache.at < 20_000) return tableCache.rows;
+  if (rowsInflight && rowsInflight.key === k) return rowsInflight.p; // Аудит #152: нэг л удаа тооцоолно
+  const p = allRowsNow();
+  rowsInflight = { key: k, p };
+  try { return await p; } finally { if (rowsInflight?.p === p) rowsInflight = null; }
+}
+async function allRowsNow(): Promise<OutflowRow[]> {
   const today = ubDay(); const from = addDays(today, -6);
   const k = today;
-  if (tableCache && tableCache.key === k && Date.now() - tableCache.at < 20_000) return tableCache.rows;
   const [products, pms, aggs, phones] = await Promise.all([
     db.product.findMany({ where: { status: { not: 'ARCHIVED' } }, select: { id: true, code: true, name: true, price: true, images: { where: { isMain: true }, select: { fileKey: true }, take: 1 }, _count: { select: { variants: { where: { isActive: true } } } } } }),
     db.productMarketing.findMany(),
@@ -568,9 +604,8 @@ export async function saveBoost(actor: UserActor, b: { productId?: unknown; doll
     await tx.boostEvent.create({ data: { productId, at: now, dollar, zones, adNumber, byId: actor.id, byName: actor.name } });
     const action = !cur?.zones && zones > 0 ? 'outflow.boost_on' : cur?.zones && zones === 0 ? 'outflow.boost_off' : 'outflow.boost';
     await writeAudit(actor, action, 'ProductMarketing', String(productId), { product: `${p.code} ${p.name}`, before: cur ? { dollar: cur.dollar, zones: cur.zones, adNumber: cur.adNumber } : null, after: { dollar, zones, adNumber } }, tx);
-    bustOutflowCache(); bustTable();
     return r;
-  });
+  }, { timeout: 20_000, maxWait: 10_000 }).finally(() => { bustOutflowCache(); bustTable(); }); // Аудит #152: кэшийг хадгалсны ДАРАА цэвэрлэнэ
 }
 
 export async function saveNote(actor: UserActor, b: { productId?: unknown; note?: unknown }) {
@@ -599,11 +634,13 @@ export async function setOwner(actor: UserActor, b: { productIds?: unknown; user
   }
   const existing = await db.product.count({ where: { id: { in: ids } } });
   if (existing !== ids.length) throw badRequest('Зарим бараа олдсонгүй');
+  const sorted = [...ids].sort((a, b) => a - b);
   await db.$transaction(async (tx) => {
-    for (const productId of ids) {
-      await tx.productMarketing.upsert({ where: { productId }, create: { productId, ownerId: user?.id ?? null, ownerName: user?.name ?? null, updatedByName: actor.name },
-        update: { ownerId: user?.id ?? null, ownerName: user?.name ?? null, updatedByName: actor.name } });
-    }
+    // Аудит #152: нэг хүсэлтээр (5,000 барааг ч хэдхэн мс) — мөрийг удаан түгжихгүй, зэрэг онооход deadlock гарахгүй
+    await tx.$executeRaw`
+      INSERT INTO "ProductMarketing" ("productId", "ownerId", "ownerName", "updatedByName", "updatedAt")
+      SELECT x, ${user?.id ?? null}::uuid, ${user?.name ?? null}, ${actor.name}, now() FROM unnest(${sorted}::int[]) AS x
+      ON CONFLICT ("productId") DO UPDATE SET "ownerId" = EXCLUDED."ownerId", "ownerName" = EXCLUDED."ownerName", "updatedByName" = EXCLUDED."updatedByName", "updatedAt" = now()`;
     await writeAudit(actor, 'outflow.owner', 'ProductMarketing', ids.length === 1 ? String(ids[0]) : null, { count: ids.length, owner: user?.name ?? null }, tx);
   }, { timeout: 60_000 });
   bustTable();
@@ -613,7 +650,7 @@ export async function setOwner(actor: UserActor, b: { productIds?: unknown; user
 /** Шүүсэн бүх барааны дугаар (бөөнөөр оноохдоо) */
 export async function filteredIds(actor: UserActor, p: TableParams) {
   assertLead(actor);
-  const r = await outflowTableIds(actor, p);
+  const r = await withHeavy(() => outflowTableIds(actor, p), { name: 'outflow-ids', max: 1 });
   return { ids: r };
 }
 async function outflowTableIds(actor: UserActor, p: TableParams) {
@@ -658,17 +695,20 @@ export async function stats(actor: UserActor, fromIn: unknown, toIn: unknown) {
   const from = isYmd(fromIn) ? fromIn : ubDay(); const to = isYmd(toIn) ? toIn : from;
   if (from > to) throw badRequest('Огноо буруу');
   if (Date.parse(to) - Date.parse(from) > 93 * 86_400_000) throw badRequest('Хамгийн ихдээ 93 хоног');
-  const rows = await db.$queryRaw<{ userId: string; userName: string; pages: number; orders: number }[]>`
+  const rows = await withHeavy(() => db.$queryRaw<{ userId: string; userName: string; pages: number; orders: number }[]>`
     SELECT mp."userId", max(mp."userName") AS "userName", count(DISTINCT mp."pageId")::int AS pages, count(DISTINCT o.id)::int AS orders
     FROM "MarketingPage" mp
     LEFT JOIN "Order" o ON o."pageId" = mp."pageId" AND o."confirmedAt" >= ${ubDayStart(from)} AND o."confirmedAt" < ${ubDayStart(addDays(to, 1))} AND ${COUNTED}
-    GROUP BY 1 ORDER BY orders DESC`;
+    GROUP BY 1 ORDER BY orders DESC`, { name: 'outflow-stats', max: 2 });
   return { from, to, rows: rows.map((r, i) => ({ ...r, rank: i + 1, perPage: r.pages ? Math.round(r.orders / r.pages) : 0 })), totals: { marketers: rows.length, pages: rows.reduce((s, r) => s + r.pages, 0), orders: rows.reduce((s, r) => s + r.orders, 0) } };
 }
 
 // ───────────── Ажлын цонх ─────────────
 
 /** Идэвхтэй сонголтын явц: «Хийсэн» (N захиалга) эсвэл хугацаа дууссан (N хоног) */
+let claimsAt = 0;
+/** Аудит #152: хуудас нээх бүрт биш — 30 сек тутам (арын ажил ч дуудна) */
+async function syncClaimsThrottled() { if (process.env.NODE_ENV !== 'test' && Date.now() - claimsAt < 30_000) return 0; claimsAt = Date.now(); return syncClaims(); }
 export async function syncClaims() {
   const cfg = await getConfig();
   const active = await db.workClaim.findMany({ where: { status: 'ACTIVE' } });
@@ -705,7 +745,7 @@ export async function syncClaims() {
 
 export async function workWindow(actor: UserActor, p: { tab?: string; q?: string; page?: number }) {
   assertView(actor);
-  await syncClaims();
+  await syncClaimsThrottled();
   const cfg = await getConfig();
   const today = ubDay(); const from = addDays(today, -2);
   const q = cleanText(p.q, 60);
@@ -743,6 +783,11 @@ export async function claim(actor: UserActor, productIdIn: unknown) {
   if (!p) throw notFound('Бараа олдсонгүй');
   // Аудит А11: архивласан барааг ажилд авахгүй
   if (p.status === 'ARCHIVED') throw badRequest('Архивласан барааг сонгох боломжгүй', 'archived');
+  // Аудит #152: сүүлийн 3 хоногт зарагдаж буй барааг «ажилд авах»-гүй (ажлын цонх = зарагдаагүй бараа); ахлах нь болно
+  if (!isLead(actor)) {
+    const today = ubDay();
+    if ((await unitsByDay(addDays(today, -2), today, [productId])).some((a) => a.qty > 0)) throw badRequest('Энэ бараа сүүлийн 3 хоногт зарагдаж байгаа — зарагдаагүй барааг л сонгоно', 'selling');
+  }
   try {
     const c = await db.$transaction(async (tx) => {
       const c = await tx.workClaim.create({ data: { productId, userId: actor.id, userName: actor.name } });
@@ -779,7 +824,7 @@ export async function release(actor: UserActor, claimIdIn: unknown) {
 
 export async function myWork(actor: UserActor) {
   assertView(actor);
-  await syncClaims();
+  await syncClaimsThrottled();
   const [pages, claims, owned] = await Promise.all([
     db.marketingPage.findMany({ where: { userId: actor.id } }),
     db.workClaim.findMany({ where: { userId: actor.id, status: 'ACTIVE' } }),
@@ -812,12 +857,26 @@ async function evalProducts(date: string) {
   const [users, owned, evs] = await Promise.all([
     marketers(),
     db.productMarketing.findMany({ where: { ownerId: { not: null } }, select: { productId: true, ownerId: true } }),
-    db.boostEvent.findMany({ where: { at: { gte: new Date(d0), lt: new Date(d1) }, byId: { not: null } }, select: { productId: true, byId: true } }),
+    db.boostEvent.findMany({ where: { at: { gte: new Date(d0), lt: new Date(d1) }, byId: { not: null } }, select: { productId: true, byId: true, zones: true, at: true }, orderBy: { at: 'asc' } }),
   ]);
   const by = new Map<string, Set<number>>();
   for (const u of users) by.set(u.id, new Set());
   for (const o of owned) by.get(o.ownerId!)?.add(o.productId);
-  for (const e of evs) by.get(e.byId!)?.add(e.productId);
+  // Аудит #152 (эзний шийдвэр «хариуцагчид л»): хариуцагчтай барааг зөвхөн хариуцагчид; хариуцагчгүй бол тэр өдөр бүүстийг АСААСАН хүнд.
+  // Бусдын барааны дугаар / $ зассанаар өөртөө тооцуулахгүй.
+  const ownedIds = new Set(owned.map((o) => o.productId));
+  const evIds = [...new Set(evs.map((e) => e.productId))].filter((x) => !ownedIds.has(x));
+  if (evIds.length) {
+    const before = await db.$queryRaw<{ productId: number; zones: number }[]>`
+      SELECT DISTINCT ON ("productId") "productId", zones FROM "BoostEvent" WHERE "productId" = ANY(${evIds}::int[]) AND at < ${new Date(d0)} ORDER BY "productId", at DESC`;
+    const st = new Map(before.map((b) => [b.productId, b.zones]));
+    for (const e of evs) {
+      if (ownedIds.has(e.productId)) continue;
+      const prevZones = st.get(e.productId) ?? 0;
+      if (prevZones === 0 && e.zones > 0) by.get(e.byId!)?.add(e.productId);
+      st.set(e.productId, e.zones);
+    }
+  }
   const ids = [...new Set([...by.values()].flatMap((s) => [...s]))];
   return { users, by, ids, d0, d1 };
 }
@@ -848,10 +907,10 @@ export async function evaluation(actor: UserActor, dateIn: unknown) {
       boostCount: items.reduce((x, i) => x + i.zones, 0), orderCount: items.reduce((x, i) => x + i.orders, 0),
       excellent: items.filter((i) => i.cls === 'EXCELLENT').length, good: items.filter((i) => i.cls === 'GOOD').length, poor: items.filter((i) => i.cls === 'POOR').length,
       score: s ? { score: s.score, salaryAmount: s.salaryAmount, note: s.note, scoredByName: s.scoredByName, updatedAt: s.updatedAt } : null,
-      canScore: lead && u.id !== actor.id,
+      canScore: isSA(actor) && u.id !== actor.id,
     };
   }).sort((a, b) => b.orderCount - a.orderCount);
-  return { date, rows, canScore: lead };
+  return { date, rows, canScore: isSA(actor) };
 }
 
 /** Өдрийн дэлгэрэнгүй — сонгосон өдрөөс 7 хоног (хуучин алдааг зассан: өнөөдрөөс биш) */
@@ -883,7 +942,8 @@ export async function dailyDetail(actor: UserActor, dateIn: unknown) {
 
 /** Оноо, цалин, тэмдэглэл — ахлах маркетинг, админ, СА; өөрийгөө үнэлэхгүй. Цалин «Ажилтны цалин»-д автоматаар орно */
 export async function saveScore(actor: UserActor, b: { userId?: unknown; date?: unknown; score?: unknown; salaryAmount?: unknown; note?: unknown }) {
-  assertLead(actor);
+  // Аудит #152 (эзний шийдвэр): үнэлгээ (ба үнэлгээний цалин)-г ЗӨВХӨН Супер админ тавина
+  if (!isSA(actor)) throw forbidden('Үнэлгээг зөвхөн Супер админ тавина');
   const userId = String(b.userId ?? '');
   if (userId === actor.id) throw forbidden('Өөрийгөө үнэлэхгүй');
   if (!isYmd(b.date)) throw badRequest('Огноо буруу');
@@ -897,7 +957,9 @@ export async function saveScore(actor: UserActor, b: { userId?: unknown; date?: 
   const note = cleanText(b.note, 500);
   const ev = await evaluation({ ...actor }, date);
   const row = ev.rows.find((r) => r.userId === userId);
-  const locked = await db.staffSalaryRecord.findFirst({ where: { userId, isLocked: true, periodStart: { lte: dateOnly(date) }, periodEnd: { gte: dateOnly(date) } }, select: { periodLabel: true } });
+  const locked = await db.staffSalaryRecord.findFirst({ where: { userId, isLocked: true, periodStart: { lte: dateOnly(date) }, periodEnd: { gte: dateOnly(date) } }, select: { periodLabel: true, transferred: true } });
+  // Аудит #152: цоожилсон / шилжүүлсэн цалингийн хугацааны үнэлгээг өөрчлөхгүй (түүх ба олгосон цалин зөрөхгүй)
+  if (locked) throw conflict(`${locked.periodLabel}-ны цалин ${locked.transferred ? 'шилжүүлсэн' : 'цоожтой'} — энэ өдрийн үнэлгээг өөрчлөх боломжгүй${locked.transferred ? '' : ' (нягтлан цоож тайлсны дараа)'}`, 'salary_locked');
   await db.$transaction(async (tx) => {
     const old = await tx.marketingScore.findUnique({ where: { userId_date: { userId, date: dateOnly(date) } } });
     await tx.marketingScore.upsert({
@@ -907,7 +969,7 @@ export async function saveScore(actor: UserActor, b: { userId?: unknown; date?: 
     });
     await writeAudit(actor, 'outflow.score', 'User', userId, { name: u.name, date, before: old ? { score: old.score, salaryAmount: old.salaryAmount } : null, after: { score, salaryAmount } }, tx, ['money']);
   });
-  return { ok: true, warning: locked ? `${locked.periodLabel}-ны цалин цоожтой — нягтлан цоож тайлж дахин хадгалах хүртэл цалинд орохгүй` : null };
+  return { ok: true, warning: null as string | null };
 }
 
 export async function scoreHistory(actor: UserActor, fromIn: unknown, toIn: unknown) {
@@ -1152,6 +1214,8 @@ export async function createReorder(actor: UserActor, b: { productId?: unknown; 
   const cfg = await getConfig();
   const expectedDay = b.expectedDay ? String(b.expectedDay) : addDays(ubDay(), cfg.leadDays);
   if (!isYmd(expectedDay)) throw badRequest('Ирэх өдөр буруу');
+  // Аудит #152: ирэх өдөр өнөөдрөөс 180 хоногийн дотор
+  if (expectedDay < ubDay() || expectedDay > addDays(ubDay(), 180)) throw badRequest('Ирэх өдөр өнөөдрөөс 180 хоногийн дотор байна', 'bad_date');
   const note = cleanText(b.note, 300);
   // Өнгө / хэмжээ тус бүрээр (#128): тэр өнгийг захиалахад бусад өнгөний нөөц үргэлжлэн бодогдоно
   let variantId: number | null = null;
@@ -1163,6 +1227,7 @@ export async function createReorder(actor: UserActor, b: { productId?: unknown; 
     label = [v.color, v.size].filter(Boolean).join(' / ') || v.code;
   }
   const row = await db.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(7401, ${productId}::int)`; // Аудит #152: зэрэг дарахад 500 биш
     const cur = await tx.reorderOrder.findFirst({ where: { productId, scope, variantId, receivedAt: null, cancelledAt: null } });
     if (cur) throw conflict(variantId ? `«${label}» аль хэдийн «Захиалсан» байна — эхлээд цуцална уу` : 'Энэ бараа аль хэдийн «Захиалсан» байна — эхлээд цуцална уу');
     if (!variantId && (await tx.reorderOrder.count({ where: { productId, scope, variantId: { not: null }, receivedAt: null, cancelledAt: null } }))) throw conflict('Өнгө тус бүрээр захиалсан байна — өнгө бүрээр нь тэмдэглэнэ үү');

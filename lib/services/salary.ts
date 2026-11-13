@@ -288,7 +288,8 @@ async function computeInputs(tx: Tx | typeof db, st: Staff, p: Period) {
     .filter((l) => l.pieces > 0);
   const debts = (await tx.staffDebt.findMany({ where: { staffKey: st.key, isActive: true }, orderBy: { createdAt: 'asc' } })).map((d) => ({ id: d.id, description: d.description, totalAmount: d.totalAmount, remainingAmount: d.remainingAmount }));
   // Модуль 7г (#104): маркетингийн үнэлгээний цалин — «Нэмэлт орлого»-д автоматаар (давхардахгүй)
-  const evalSalary = st.external || !st.roles.some((r) => r === 'MARKETING' || r === 'MARKETING_LEAD') ? 0 : await evaluationSalary(tx, st.userId!, p.start, p.end);
+  // Аудит #152: үнэлгээний цалин одоогийн ролоос үл хамааран (маркетингаас өөр ажилд шилжсэн ч тавигдсан үнэлгээ алга болохгүй)
+  const evalSalary = st.external ? 0 : await evaluationSalary(tx, st.userId!, p.start, p.end);
   return { cfg, isOpp, totalDays, workingDays, offDays, dailyRate, calcBase, orderCount, penalties, loans, debts, evalSalary };
 }
 
