@@ -13,7 +13,10 @@ import { withHeavy } from '../../heavy';
 type Tx = Prisma.TransactionClient;
 
 /** Аудит #148: банкны нийтлэг түгжээ (6) — 5 сек-ээс удаан хүлээхгүй («Систем түр завгүй»), холболт барьж бусдыг гацаахгүй */
+/** Банкны өгөгдөл өөрчлөгдөх бүрт (түгжээ авах бүрт) статистик, «Дүн өөрчлөгдсөн»-ий санах ой хүчингүй */
+let bankVer = 0;
 async function bankLock(tx: Tx) {
+  bankVer++;
   await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(6::int4, 0::int4)`;
 }
@@ -487,16 +490,17 @@ export async function refundManualExcess(actor: UserActor, orderIdIn: unknown) {
   return r;
 }
 
-const statsCache = new Map<string, { at: number; v: unknown }>();
+const statsCache = new Map<string, { at: number; v: unknown; ver: number }>();
 export async function bankStats(actor: UserActor, f: { from?: string; to?: string }) {
   assertView(actor);
   // Аудит #148: 30 сек санах ой + хүнд ажлын хязгаар — олон хүн нээхэд бүх хүснэгтийг дахин дахин нийлүүлж бусдыг гацаахгүй
   const k = `${f.from ?? ''}|${f.to ?? ''}`;
   const c = statsCache.get(k);
-  if (c && Date.now() - c.at < 30_000) return c.v as Awaited<ReturnType<typeof bankStatsRaw>>;
+  if (c && c.ver === bankVer && Date.now() - c.at < 30_000) return c.v as Awaited<ReturnType<typeof bankStatsRaw>>;
+  const ver = bankVer;
   const v = await withHeavy(() => bankStatsRaw(f), { name: 'bank-stats', max: 2 });
   if (statsCache.size > 50) statsCache.clear();
-  statsCache.set(k, { at: Date.now(), v });
+  statsCache.set(k, { at: Date.now(), v, ver });
   return v;
 }
 async function bankStatsRaw(f: { from?: string; to?: string }) {
@@ -529,15 +533,16 @@ async function exportRaw(f: BankFilter) {
 }
 
 /** «Дүн өөрчлөгдсөн»: гүйлгээтэй холбогдсон захиалгын одоогийн дүн ≠ төлсөн нийлбэр (оператор дүнг сольсон гэх мэт) */
-const pcCache = new Map<number, { at: number; v: unknown }>();
+const pcCache = new Map<number, { at: number; v: unknown; ver: number }>();
 export async function priceChanges(actor: UserActor, p: { page?: number }) {
   assertView(actor);
   const page = Math.max(1, Math.min(200, Math.floor(Number(p.page) || 1)));
   const c = pcCache.get(page);
-  if (c && Date.now() - c.at < 30_000) return c.v as Awaited<ReturnType<typeof priceChangesRaw>>;
+  if (c && c.ver === bankVer && Date.now() - c.at < 30_000) return c.v as Awaited<ReturnType<typeof priceChangesRaw>>;
+  const ver = bankVer;
   const v = await withHeavy(() => priceChangesRaw(page), { name: 'bank-price-changes', max: 1 });
   if (pcCache.size > 50) pcCache.clear();
-  pcCache.set(page, { at: Date.now(), v });
+  pcCache.set(page, { at: Date.now(), v, ver });
   return v;
 }
 async function priceChangesRaw(page: number) {

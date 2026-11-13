@@ -71,6 +71,7 @@ describe('#148 банкны импорт', () => {
     const a = (await O.createOrder(op, ub())).order;
     await B.importTransactions({ id: null, name: 'x' }, [{ date: new Date(), description: '99112233 төлбөр', amount: 50000, phone: '99112233' }], 'GMAIL');
     expect((await db.order.findUniqueOrThrow({ where: { id: a.id } })).status).toBe('NEW');
+    await db.order.update({ where: { id: a.id }, data: { status: 'DELIVERED' } }); // эхнийх хүргэгдсэн — тэр үйлчлүүлэгч дахин захиална
     const b = (await O.createOrder(op, ub())).order;
     const r = await B.importTransactions({ id: null, name: 'x' }, [{ date: new Date(), description: '99112233 төлбөр', amount: 50000, phone: '99112233' }], 'GMAIL');
     expect([r.imported, r.duplicates]).toEqual([0, 1]);
