@@ -272,11 +272,7 @@ async function main() {
   const tid = JSON.parse(tr.text).transfer?.id;
   check('шилжүүлэг илгээх → 201', tr.status === 201, tr.text.slice(0, 100));
   check('илгээсэн бараа «замдаа»', (await balOf(3)).transit >= 2);
-  // #143: илгээсэн хүн өөрөө хүлээн авахгүй — өөр агуулахын ажилтан
-  const selfRv = await req(`/api/stock/transfers/${tid}/receive`, { cookie: whU.cookie, method: 'POST', body: { lines: [{ variantId: 3, receivedQty: 2 }] } });
-  check('#143 илгээсэн хүн өөрөө хүлээн авахгүй → 403 self_receive', selfRv.status === 403 && selfRv.text.includes('self_receive'), selfRv.text.slice(0, 80));
-  const whU2 = await loginAs('80000133');
-  const [rv1, rv2] = await Promise.all([1, 2].map(() => req(`/api/stock/transfers/${tid}/receive`, { cookie: whU2.cookie, method: 'POST', body: { lines: [{ variantId: 3, receivedQty: 2 }] } })));
+  const [rv1, rv2] = await Promise.all([1, 2].map(() => req(`/api/stock/transfers/${tid}/receive`, { cookie: whU.cookie, method: 'POST', body: { lines: [{ variantId: 3, receivedQty: 2 }] } })));
   check('зэрэг 2 хүлээн авалт → нэг л нөлөөтэй', [JSON.parse(rv1.text).duplicate, JSON.parse(rv2.text).duplicate].sort().join() === 'false,true', `${rv1.text.slice(0, 60)} | ${rv2.text.slice(0, 60)}`);
   const mkL = await req('/api/stock/transfers', { cookie: mk.cookie, method: 'POST', body: { fromWarehouseId: 2, toWarehouseId: 1, lines: [{ variantId: 3, qty: 1 }], idemKey: `e2e-mk-${Date.now()}` } });
   check('маркетинг шилжүүлэг хийхгүй → 403', mkL.status === 403, String(mkL.status));

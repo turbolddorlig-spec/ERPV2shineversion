@@ -102,11 +102,10 @@ describe('#143 агуулах: архив, зарлага хянах, шилжү
     expect((await D.listIssues(adm, { status: 'reviewed' })).items[0]!.reviewedByName).toBe(adm.name);
   });
 
-  it('шилжүүлгийг илгээсэн хүн өөрөө хүлээн авахгүй', async () => {
+  it('шилжүүлгийг илгээсэн хүн өөрөө хүлээн авч болно (эзний шийдвэр — агуулахыг найдвартай хүн хариуцна)', async () => {
     await D.createReceipt(wh, { warehouseId: main.id, lines: [{ variantId: v1, qty: 10 }], idemKey: key() });
     const { transfer } = await T.sendTransfer(wh, { fromWarehouseId: main.id, toWarehouseId: w2.id, lines: [{ variantId: v1, qty: 10 }], idemKey: key() });
-    await err(T.receiveTransfer(wh, transfer.id, { lines: [{ variantId: v1, receivedQty: 0 }] }), 403, 'self_receive');
-    await T.receiveTransfer(wh2, transfer.id, { lines: [{ variantId: v1, receivedQty: 10 }] });
+    await T.receiveTransfer(wh, transfer.id, { lines: [{ variantId: v1, receivedQty: 10 }] });
     expect((await V.reconcile(sa, { fresh: true })).ok).toBe(true);
   });
 

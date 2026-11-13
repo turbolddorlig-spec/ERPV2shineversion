@@ -1,6 +1,6 @@
 import type { Prisma, TransferStatus } from '@prisma/client';
 import { db } from '../../db';
-import { AppError, badRequest, conflict, notFound } from '../../errors';
+import { badRequest, conflict, notFound } from '../../errors';
 import { writeAudit } from '../../audit';
 import { canApproveStock, canOperateStock, canView } from '../../permissions';
 import {
@@ -78,8 +78,6 @@ export async function receiveTransfer(actor: UserActor, idInput: unknown, input:
       if (t.status === 'CANCELLED') throw conflict('Энэ шилжүүлэг цуцлагдсан байна', 'transfer_cancelled');
       return { transfer: t, duplicate: true };
     }
-    // Аудит #143 (эзний шийдвэр): илгээсэн хүн өөрөө хүлээн авахгүй — «10 илгээж 0 ирсэн» гэж нэг хүн дутагдал үүсгэхгүй
-    if (t.sentById === actor.id) throw new AppError(403, 'Шилжүүлгийг илгээсэн хүн өөрөө хүлээн авахгүй — хүлээн авах агуулахын өөр ажилтан тоолж авна', 'self_receive');
     for (const l of t.lines) {
       const q = given.get(l.variantId);
       if (q === undefined) throw badRequest('Бүх барааны ирсэн тоог оруулна уу', 'missing_lines');
