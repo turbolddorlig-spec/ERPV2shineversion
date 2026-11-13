@@ -57,7 +57,7 @@ export interface ListParams {
   statuses?: string;
 }
 
-/** Аудит #142: хайлт 1.5 сек-ээс удаан бол зогсооно (холболт эзлэхгүй) — «илүү тодорхой бичнэ үү» */
+/** Аудит #142: хайлт 3 сек-ээс удаан бол зогсооно (холболт эзлэхгүй) — «илүү тодорхой бичнэ үү» */
 async function guarded<T extends readonly unknown[]>(ops: [...{ [K in keyof T]: Prisma.PrismaPromise<T[K]> }]): Promise<T> {
   try { return await db.$transaction(ops as never) as unknown as T; }
   catch (e) {
@@ -74,9 +74,17 @@ export async function searchIds(q: string): Promise<number[] | null> {
   const like = `%${s.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
   // Аудит #142: 1–3 оронтой тоо хэт олон (мянга мянган) утсанд таарч удаашруулна — утас 4 оронтойгоос хайна
   if (/^\d{1,3}$/.test(digits)) return [];
-  if (/^\d{4,8}$/.test(digits)) {
+  // Бүтэн 8 оронтой утас / дугаар — энгийн (btree) индексээр шууд, хугацааны хязгааргүй (сервер дөнгөж асаад санах ой хүйтэн үед ч)
+  if (/^\d{8}$/.test(digits)) {
+    const rows = await db.$queryRaw<{ id: number }[]>`
+      (SELECT id FROM "Order" WHERE number = ${digits} LIMIT 5)
+      UNION (SELECT id FROM "Order" WHERE phone = ${digits} ORDER BY id DESC LIMIT 500)
+      UNION (SELECT id FROM "Order" WHERE "extraPhone" = ${digits} ORDER BY id DESC LIMIT 200)`;
+    return rows.map((r) => r.id);
+  }
+  if (/^\d{4,7}$/.test(digits)) {
     const dl = `%${digits}%`;
-    const [, rows] = await guarded([db.$executeRaw`SET LOCAL statement_timeout = '1500ms'`, db.$queryRaw<{ id: number }[]>`
+    const [, rows] = await guarded([db.$executeRaw`SET LOCAL statement_timeout = '3000ms'`, db.$queryRaw<{ id: number }[]>`
       (SELECT id FROM "Order" WHERE number = ${digits.padStart(8, '0')} LIMIT 5)
       UNION (SELECT id FROM "Order" WHERE phone LIKE ${dl} ORDER BY id DESC LIMIT 500)
       UNION (SELECT id FROM "Order" WHERE "extraPhone" LIKE ${dl} ORDER BY id DESC LIMIT 200)
@@ -86,7 +94,7 @@ export async function searchIds(q: string): Promise<number[] | null> {
   // 1–2 тэмдэгт индекс ашиглаж чадахгүй (1 сая мөр уншина) — 3+ тэмдэгтээс хайна
   if (s.length < 3) return [];
   // Түгээмэл үг (40k+ таарц) бол PK-аар буцаж уншина, ховор үг бол trigram индекс — үг бүрт тохирох төлөвлөгөө сонгуулна
-  const [, , rows] = await guarded([db.$executeRaw`SET LOCAL plan_cache_mode = force_custom_plan`, db.$executeRaw`SET LOCAL statement_timeout = '1500ms'`, db.$queryRaw<{ id: number }[]>`
+  const [, , rows] = await guarded([db.$executeRaw`SET LOCAL plan_cache_mode = force_custom_plan`, db.$executeRaw`SET LOCAL statement_timeout = '3000ms'`, db.$queryRaw<{ id: number }[]>`
     (SELECT id FROM "Order" WHERE "addressDetail" ILIKE ${like} ORDER BY id DESC LIMIT 500)
     UNION (SELECT id FROM "Order" WHERE note ILIKE ${like} ORDER BY id DESC LIMIT 200)
     UNION (SELECT "orderId" FROM "OrderLine" WHERE name ILIKE ${like} OR code ILIKE ${like} ORDER BY "orderId" DESC LIMIT 500)

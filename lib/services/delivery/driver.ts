@@ -125,7 +125,13 @@ export async function deliverOrder(actor: UserActor, idIn: unknown, input: { tak
   const id = cleanId(idIn);
   const r = await inTx(async (tx) => {
     const o = await loadOwn(tx, actor, id, 'driver', ob);
-    if (o.status === 'DELIVERED') return { order: o, duplicate: true };
+    if (o.status === 'DELIVERED') {
+      // Аудит #144: өөр утаснаас ӨӨР төлбөрөөр дарсан бол чимээгүй «амжилттай» биш — анхааруулна
+      if (!ob && input.payment !== undefined && o.deliveryPayment && !o.prepaid && String(input.payment) !== o.deliveryPayment) {
+        throw conflict(`Энэ захиалгыг аль хэдийн «${PAYMENT_LABEL[o.deliveryPayment]}» гэж хүргэсэн байна (өөр утаснаас) — буруу бол «Цуцлах (буцаах)» хийгээд дахин тэмдэглэнэ`, 'already_delivered');
+      }
+      return { order: o, duplicate: true };
+    }
     await assertDayOpen(tx, o.handoverId, { allowPending: !!ob });
     const drv = driverOf(o, actor, ob);
     const recover = o.status === 'CANCELLED';
@@ -434,8 +440,14 @@ export type DriverTab = 'all' | 'delivery' | 'delivered' | 'cancelled' | 'tomorr
 export async function driverOrders(actor: UserActor, tabIn?: string) {
   assertDriver(actor);
   const tab = (['all', 'delivery', 'delivered', 'cancelled', 'tomorrow', 'yesterday'].includes(tabIn ?? '') ? tabIn : 'all') as DriverTab;
-  const today = ubDay(); const t0 = ubDayStart(today); const t1 = ubDayStart(addDays(today, 1));
   const me = actor.id;
+  // Аудит #144: шөнө 00:00–06:00 хооронд өчигдрийн падаанаар ажиллаж буй жолоочид «Хүргэсэн / Цуцалсан», мөнгө — өчигдрийн падаанаар
+  // (орой оройтож ажилладаг жолооч өөрийн хүргэлтээ алдахгүй; тооцооны өдөр = падааны өдөр, #83)
+  const realToday = ubDay();
+  const hourUB = new Date(Date.now() + 8 * 3600_000).getUTCHours();
+  const yday = addDays(realToday, -1);
+  const nightShift = hourUB < 6 && (await db.handover.findUnique({ where: { driverId_date: { driverId: me, date: dateOnly(yday) } }, select: { status: true } }))?.status === 'RECEIVED';
+  const today = nightShift ? yday : realToday; const t0 = ubDayStart(today); const t1 = ubDayStart(addDays(today, 1));
   const active: Prisma.OrderWhereInput = { driverId: me, status: { in: ['ASSIGNED', 'OUT_FOR_DELIVERY'] }, OR: [{ deliveryDate: { lte: dateOnly(today) } }, { status: 'OUT_FOR_DELIVERY' }] };
   // Аудит Б2 (B1, #83): «Хүргэсэн / Цуцалсан» ба мөнгө — ӨНӨӨДРИЙН ПАДААНЫ захиалгаар (нягтлангийн «Тооцоо»-той яг ижил).
   // Шөнө 00:00-оос хойш хүргэсэн өчигдрийн падааны захиалга өчигдрийн тооцоонд үлдэнэ.
@@ -444,7 +456,8 @@ export async function driverOrders(actor: UserActor, tabIn?: string) {
     WHERE h."driverId" = ${me}::uuid AND h.date = ${dateOnly(today)}::date AND ho."removedAt" IS NULL`).map((r) => r.orderId);
   const delivered: Prisma.OrderWhereInput = { id: { in: dayIds }, status: 'DELIVERED' };
   const cancelled: Prisma.OrderWhereInput = { id: { in: dayIds }, status: 'CANCELLED' };
-  const postponed: Prisma.OrderWhereInput = { postponedByDriverId: me, postponedAt: { gte: t0, lt: t1 } };
+  // Аудит #144: өөр жолоочид шилжсэн (дахин хуваарилагдсан) захиалга «Маргааш» табад харагдахгүй
+  const postponed: Prisma.OrderWhereInput = { postponedByDriverId: me, postponedAt: { gte: t0, lt: t1 }, status: 'NEW', driverId: null };
   const where: Record<DriverTab, Prisma.OrderWhereInput> = {
     all: { OR: [active, delivered, cancelled, postponed] },
     delivery: active,
@@ -456,7 +469,7 @@ export async function driverOrders(actor: UserActor, tabIn?: string) {
   const rows = await db.order.findMany({ where: where[tab], include: { lines: { orderBy: { id: 'asc' } } }, take: 300, orderBy: [{ routeNo: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }] });
   const counts = await db.$queryRaw<{ k: string; n: number }[]>`
     SELECT 'delivery' AS k, count(*)::int AS n FROM "Order" WHERE "driverId" = ${me}::uuid AND (status = 'OUT_FOR_DELIVERY' OR (status = 'ASSIGNED' AND "deliveryDate" <= ${dateOnly(today)}::date))
-    UNION ALL SELECT 'postponed', count(*)::int FROM "Order" WHERE "postponedByDriverId" = ${me}::uuid AND "postponedAt" >= ${t0} AND "postponedAt" < ${t1}
+    UNION ALL SELECT 'postponed', count(*)::int FROM "Order" WHERE "postponedByDriverId" = ${me}::uuid AND "postponedAt" >= ${t0} AND "postponedAt" < ${t1} AND status = 'NEW' AND "driverId" IS NULL
     UNION ALL SELECT 'tomorrow', count(*)::int FROM "Order" WHERE "driverId" = ${me}::uuid AND status = 'ASSIGNED' AND "deliveryDate" = ${dateOnly(addDays(today, 1))}::date`;
   const c = Object.fromEntries(counts.map((x) => [x.k, x.n])) as Record<string, number>;
   // Тоо ба мөнгө — нягтлангийн тооцоотой нэг томьёо (computeDay)
@@ -465,7 +478,7 @@ export async function driverOrders(actor: UserActor, tabIn?: string) {
   c.delivered = day?.delivered ?? 0;
   c.cancelled = (day?.cancelled ?? 0) + (day?.excluded ?? 0);
   return {
-    tab, today,
+    tab, today, nightShift,
     counts: { delivery: c.delivery ?? 0, delivered: c.delivered ?? 0, cancelled: c.cancelled ?? 0, postponed: c.postponed ?? 0, tomorrow: (c.postponed ?? 0) + (c.tomorrow ?? 0) },
     money: sums,
     items: rows.map((o) => {

@@ -32,7 +32,7 @@ export function DriverControlClient() {
       {t ? (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
           {([['Оноосон', t.assigned], ['Хүргэлтэд', t.out], ['Хүргэсэн', t.delivered], ['Цуцалсан', t.cancelled], ['Маргааш', t.postponed], ['Гарт (ш)', t.goods], ['Буцаах (ш)', t.returnable], ['Бэлэн', money(t.cash)]] as const).map(([l, v]) => (
-            <div key={l} className="rounded-[12px] border border-line bg-surface px-3 py-2"><div className="text-[11.5px] font-semibold text-subtle">{l}</div><div className="text-[18px] font-extrabold">{v}</div></div>
+            <div key={l} className="min-w-0 rounded-[12px] border border-line bg-surface px-3 py-2"><div className="text-[11.5px] font-semibold text-subtle">{l}</div><div className={String(v).length > 9 ? 'whitespace-nowrap text-[15px] font-extrabold' : 'whitespace-nowrap text-[18px] font-extrabold'}>{v}</div></div>
           ))}
         </div>
       ) : null}

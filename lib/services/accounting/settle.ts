@@ -503,6 +503,8 @@ export async function createDriverPayment(actor: UserActor, input: { kind?: unkn
   const idemKey = String(input.idemKey ?? '').slice(0, 80);
   if (idemKey.length < 8) throw badRequest('Хүсэлтийн түлхүүр буруу');
   const dup = await db.driverPayment.findUnique({ where: { idemKey } });
+  // Аудит #144: өөр жолоочийн баримтыг буцаахгүй
+  if (dup && dup.driverId !== actor.id) throw conflict('Хуудсаа дахин ачаална уу (түлхүүр давхацсан)', 'idem_conflict');
   if (dup) return { payment: dup, duplicate: true };
   return inTx(async (tx) => {
     const p = await tx.driverPayment.create({ data: { kind, driverId: actor.id, driverName: actor.name, date: dateOnly(date), amount, note, idemKey } });

@@ -293,7 +293,20 @@ export async function myHandover(actor: UserActor) {
     orderBy: [{ date: 'desc' }], select: { id: true },
   });
   const pending = await db.handover.count({ where: { driverId: actor.id, status: 'HANDED_OVER' } });
-  return { today, pending, handover: h ? await buildDetail(h.id, false) : null };
+  if (!h) return { today, pending, handover: null };
+  const d = await buildDetail(h.id, false);
+  // Аудит #144 (#77): агуулах «өгсөн» болохоос өмнө жолоочид захиалгын утас, дүн, бараа харагдахгүй — зөвхөн хаяг, тоо
+  if (d.status === 'DRAFT' || d.status === 'PREPARED') {
+    return { today, pending, handover: { ...d, totals: { ...d.totals, amount: 0, extraAmount: 0 }, items: [], extras: [],
+      orders: d.orders.map((o) => ({ ...o, phone: '', total: 0, note: null, lines: [] })), hidden: true } };
+  }
+  return { today, pending, handover: d };
+}
+
+/** Аудит #144: цэсний тэмдэгт — зөвхөн хүлээн авах падааны тоо (бүтэн падаан ачаалахгүй) */
+export async function myHandoverPending(actor: UserActor) {
+  assertDriverRole(actor);
+  return { pending: await db.handover.count({ where: { driverId: actor.id, status: 'HANDED_OVER' } }) };
 }
 
 /** Жолооч бараа бүрийг чагтална (агуулах Check хийсэн бараа л; «Бүгд» — variantId: 'all') */

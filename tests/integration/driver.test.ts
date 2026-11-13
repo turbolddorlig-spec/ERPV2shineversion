@@ -300,7 +300,10 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     const ids: number[] = [(await O.createOrder(op, ub({ deliveryDate: today, lines: [{ variantId: v1, qty: 2 }] }))).order.id];
     await L.assignOrders(lead, { ids, driverId: drv.id });
     const av = (await P.searchVariants(op, 'G1')).find((x) => x.variantId === v1)!.available;
-    await err(G.extraTake(drv, { lines: [{ variantId: v1, qty: av + 1 }], idemKey: key() }), 409, 'insufficient_stock');
+    // #144: нэг бараанаас 10 хүртэл — боломжтойгоос их хүсэлтийг хязгаар дотор шалгахын тулд үлдсэнийг 9 болгоно
+    const filler = av > 9 ? (await O.createOrder(op, ub({ phone: '88990011', deliveryDate: tomorrow, lines: [{ variantId: v1, qty: av - 9 }] }))).order : null;
+    await err(G.extraTake(drv, { lines: [{ variantId: v1, qty: 10 }], idemKey: key() }), 409, 'insufficient_stock');
+    if (filler) await O.cancelOrder(op, filler.id, { reason: 'OTHER', note: 'Тестийн дүүргэлт' });
     await err(G.extraTake(op, { lines: [{ variantId: v1, qty: 1 }], idemKey: key() }), 403);
     const b0 = await bal(main, v1);
     const rq = await G.extraTake(drv, { lines: [{ variantId: v1, qty: 3 }], idemKey: key() });

@@ -31,6 +31,8 @@ function cleanUuid(v: unknown, label = 'Жолооч'): string {
 function cleanIdem(v: unknown): string {
   const s = String(v ?? '').trim();
   if (!/^[\w-]{8,80}$/.test(s)) throw badRequest('Хуудсаа дахин ачаална уу (түлхүүр буруу)', 'bad_idem');
+  // Аудит #144: «debt-» нь нягтлангийн өр хаах баримтын нөөцөлсөн түлхүүр — жолооч урьдчилж эзэлж гацааж болохгүй
+  if (/^debt-/i.test(s)) throw badRequest('Хуудсаа дахин ачаална уу (түлхүүр буруу)', 'bad_idem');
   return s;
 }
 function cleanLines(v: unknown, max = 200): { variantId: number; qty: number }[] {
@@ -54,8 +56,11 @@ async function driverUser(id: string) {
   if (!u || !u.roles.includes('DRIVER')) throw badRequest('Жолооч олдсонгүй');
   return u;
 }
-async function existingDoc(idemKey: string) {
-  return db.driverDoc.findUnique({ where: { idemKey }, include: { lines: true } });
+/** Давхар дарахад өмнөх баримтыг буцаана — Аудит #144: зөвхөн ТУХАЙН жолоочийнх (өөр жолоочийн баримт харагдахгүй) */
+async function existingDoc(idemKey: string, driverId: string) {
+  const d = await db.driverDoc.findUnique({ where: { idemKey }, include: { lines: true } });
+  if (d && d.driverId !== driverId) throw conflict('Хуудсаа дахин ачаална уу (түлхүүр давхацсан)', 'idem_conflict');
+  return d;
 }
 
 /** Жолоочийн бараа (апп, агуулах, хяналт): бараа бүрийн гарт, хүргэлтэд, буцаах */
@@ -142,7 +147,7 @@ export async function receiveReturn(actor: UserActor, input: { driverId?: unknow
   const idemKey = cleanIdem(input.idemKey);
   const lines = cleanLines(input.lines);
   if (!lines.length) throw badRequest('Хүлээн авсан барааны тоог оруулна уу');
-  const dup = await existingDoc(idemKey);
+  const dup = await existingDoc(idemKey, driverId);
   if (dup) return { doc: dup, duplicate: true };
   const u = await driverUser(driverId);
   const note = String(input.note ?? '').trim().slice(0, 500) || null;
@@ -186,12 +191,20 @@ export async function extraTake(actor: UserActor, input: { lines?: unknown; note
   const idemKey = cleanIdem(input.idemKey);
   const lines = cleanLines(input.lines, 50);
   if (!lines.length) throw badRequest('Бараа, тоогоо оруулна уу');
-  const dup = await existingDoc(idemKey);
+  const dup = await existingDoc(idemKey, actor.id);
   if (dup) return { doc: dup, duplicate: true };
+  // Аудит #144 (эзний шийдвэр): нэг бараанаас 10, өдөрт нийт тохиргооны хязгаар (анх 30) ширхэг — бүх үлдэгдлийг түгжихээс сэргийлнэ
+  if (lines.some((l) => l.qty > 10)) throw badRequest('Нэмэлт бараа нэг бараанаас 10 ширхэг хүртэл', 'extra_limit');
+  const { extraDailyMax } = await (await import('../orders/core')).orderSettings();
   const note = String(input.note ?? '').trim().slice(0, 500) || null;
   const labels = await labelsOf(lines.map((l) => l.variantId));
   const doc = await inTx(async (tx) => {
     await lockDelivery(tx);
+    const used = await tx.$queryRaw<{ n: number }[]>`
+      SELECT COALESCE(sum(l.qty), 0)::int AS n FROM "DriverDoc" d JOIN "DriverDocLine" l ON l."docId" = d.id
+      WHERE d."driverId" = ${actor.id}::uuid AND d.kind = 'EXTRA_TAKE' AND d.status <> 'CANCELLED' AND d."createdAt" >= ${ubDayStart(ubDay())}`;
+    const want = lines.reduce((a, l) => a + l.qty, 0);
+    if ((used[0]?.n ?? 0) + want > extraDailyMax) throw conflict(`Нэмэлт бараа өдөрт ${extraDailyMax} ширхэг хүртэл — өнөөдөр ${used[0]?.n ?? 0} хүссэн байна`, 'extra_limit');
     const again = await tx.driverDoc.findUnique({ where: { idemKey } });
     if (again) return again;
     // Захиалга үүсгэх / засахтай ижил барааны түгжээ (#124-8) — сүүлийн ширхэгийг давхар амлахгүй
@@ -259,7 +272,7 @@ export async function extraSale(actor: UserActor, input: { lines?: unknown; paym
   if (!lines.length) throw badRequest('Зарсан бараа, тоогоо оруулна уу');
   const payment = String(input.payment ?? '') as DeliveryPayment;
   if (!['CASH', 'BANK', 'UNPAID'].includes(payment)) throw badRequest('Төлбөрөө сонгоно уу: Бэлэн / Данс / Төлөөгүй', 'payment_required');
-  const dup = await existingDoc(idemKey);
+  const dup = await existingDoc(idemKey, actor.id);
   if (dup) return { doc: dup, duplicate: true };
   const note = String(input.note ?? '').trim().slice(0, 500) || null;
   const labels = await labelsOf(lines.map((l) => l.variantId));

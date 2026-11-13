@@ -31,6 +31,9 @@ function lockMessage(until: Date): string {
  */
 export const MAX_FAILED_GLOBAL = 20;
 export const MAX_FAILED_IP = 30;
+/** Аудит #144: нэг сүлжээнээс (оффисын Wi-Fi, гар утасны оператор) ЗЭРЭГ нэвтрэх — амжилттай нэвтрэлтийг тоолохгүй, зөвхөн
+ *  буруу оролдлого MAX_FAILED_IP; яг зэрэг явж буй оролдлого 200-гаас хэтрэхгүй (зэрэг таах халдлагаас) */
+export const MAX_INFLIGHT_IP = 200;
 const WINDOW_MS = LOCK_MINUTES * 60_000;
 interface Slot { fails: number[]; inflight: number; lockedUntil: number }
 const byUserIp = new Map<string, Slot>();
@@ -55,7 +58,7 @@ export async function login(phoneInput: string, password: string, meta: ClientMe
   prune(now);
   const ipKey = meta.ip ?? 'unknown';
   const ipS = slot(byIp, ipKey);
-  if (ipS.lockedUntil > now || recent(ipS, now) + ipS.inflight >= MAX_FAILED_IP) throw ipBlocked();
+  if (ipS.lockedUntil > now || recent(ipS, now) >= MAX_FAILED_IP || recent(ipS, now) + ipS.inflight >= MAX_INFLIGHT_IP) throw ipBlocked();
 
   const user = await db.user.findUnique({ where: { phone } });
   if (!user || !user.isActive) {

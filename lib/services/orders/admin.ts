@@ -125,7 +125,7 @@ export async function getOrderSettings(actor: UserActor) {
   return orderSettings();
 }
 
-export async function setOrderSettings(actor: UserActor, input: { feeUB?: unknown; feeRural?: unknown; waitDays?: unknown; assignHour?: unknown }) {
+export async function setOrderSettings(actor: UserActor, input: { feeUB?: unknown; feeRural?: unknown; waitDays?: unknown; assignHour?: unknown; extraDailyMax?: unknown }) {
   if (!canManageOrderSettings(actor.roles)) throw forbidden();
   const cur = await orderSettings();
   const upd: [string, number, number][] = [];
@@ -134,6 +134,7 @@ export async function setOrderSettings(actor: UserActor, input: { feeUB?: unknow
   if (input.feeRural !== undefined) upd.push([SETTINGS.feeRural, num(input.feeRural, 1_000_000, 'Орон нутгийн хүргэлтийн төлбөр'), cur.feeRural]);
   if (input.waitDays !== undefined) { const d = num(input.waitDays, 60, 'Хоног'); if (d < 1) throw badRequest('Хоног 1–60'); upd.push([SETTINGS.waitDays, d, cur.waitDays]); }
   if (input.assignHour !== undefined) { const h = num(input.assignHour, 23, 'Хуваарилалт дуусах цаг'); if (h < 12) throw badRequest('Хуваарилалт дуусах цаг 12–23'); upd.push([SETTINGS.assignHour, h, cur.assignHour]); }
+  if (input.extraDailyMax !== undefined) upd.push([SETTINGS.extraDailyMax, num(input.extraDailyMax, 10_000, 'Нэмэлт барааны өдрийн хязгаар'), cur.extraDailyMax]);
   await db.$transaction(async (tx) => {
     for (const [key, value] of upd) await tx.appSetting.upsert({ where: { key }, create: { key, value, updatedById: actor.id }, update: { value, updatedById: actor.id } });
     await writeAudit(actor, 'settings.orders', 'AppSetting', 'orders', { changes: upd.map(([k, to, from]) => ({ key: k, from, to })) }, tx, ['settings', 'money']);

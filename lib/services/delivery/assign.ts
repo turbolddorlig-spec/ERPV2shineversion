@@ -208,7 +208,19 @@ export async function setDeliveryDate(actor: UserActor, input: { ids?: unknown; 
   if (date > ubDay(new Date(), 120)) throw badRequest('120 хоногоос хол огноо', 'bad_date');
   const ids = Array.isArray(input.ids) ? [...new Set((input.ids as unknown[]).map(Number))].filter((n) => Number.isInteger(n) && n > 0) : [];
   if (!ids.length || ids.length > 500) throw badRequest('Захиалга сонгоно уу');
-  const res = await inTx(async (tx) => {
+  // Аудит #144: 50-аар хэсэгчилж тус бүр богино гүйлгээгээр — нийтлэг түгжээг удаан барьж жолоочдыг «завгүй» болгохгүй
+  const sorted = [...ids].sort((a, b) => a - b);
+  const res = { updated: 0, skipped: [] as { id: number; number: string; reason: string }[] };
+  for (let i = 0; i < sorted.length; i += 50) {
+    const r = await dateChunk(actor, sorted.slice(i, i + 50), date);
+    res.updated += r.updated; res.skipped.push(...r.skipped);
+  }
+  bustCounts(); kpiCache = null;
+  return res;
+}
+
+async function dateChunk(actor: UserActor, ids: number[], date: string) {
+  return inTx(async (tx) => {
     await lockDelivery(tx);
     await lockOrders(tx, ids);
     const orders = await tx.order.findMany({ where: { id: { in: ids } }, orderBy: { id: 'asc' } });
@@ -233,8 +245,6 @@ export async function setDeliveryDate(actor: UserActor, input: { ids?: unknown; 
     }
     return { updated: done.length, skipped };
   });
-  bustCounts(); kpiCache = null;
-  return res;
 }
 
 export async function getLeadOrder(actor: UserActor, id: number) {

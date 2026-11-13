@@ -25,7 +25,7 @@ interface DOrder {
   lines: Line[];
   can: { deliver: boolean; cancel: boolean; postpone: boolean; postponeLocked: boolean; issue: boolean; undoDelivery: boolean; redeliver: boolean; undoPostpone: boolean };
 }
-interface ListResp { tab: string; today: string; counts: { delivery: number; delivered: number; cancelled: number; postponed: number; tomorrow: number }; money: { cash: number; bank: number; unpaid: number; prepaid: number }; items: DOrder[] }
+interface ListResp { tab: string; today: string; nightShift?: boolean; counts: { delivery: number; delivered: number; cancelled: number; postponed: number; tomorrow: number }; money: { cash: number; bank: number; unpaid: number; prepaid: number }; items: DOrder[] }
 interface GItem { variantId: number; code: string; name: string; label: string; thumb: string | null; balance: number; held: number; returnable: number }
 interface GDoc { id: number; kind: string; status: string; date: string | null; kindLabel: string; at: string; byName: string; note: string | null; total: number; paymentLabel: string | null; lines: { variantId: number; name: string; label: string; qty: number; expected: number; unitPrice: number }[] }
 interface GoodsResp { items: GItem[]; totals: { balance: number; returnable: number }; docs: GDoc[] }
@@ -42,13 +42,24 @@ const ST: Record<string, { l: string; c: string }> = {
   DELIVERED: { l: 'ХҮРГЭСЭН', c: 'bg-ok-soft text-ok-ink' }, CANCELLED: { l: 'ЦУЦАЛСАН', c: 'bg-bad-soft text-bad-ink' }, NEW: { l: 'МАРГААШ', c: 'bg-warn-soft text-warn' },
 };
 
+/** Аудит #144: апп нээлттэй (харагдаж) байх үед л давтан асууна; буцаж нээгдэхэд шууд шинэчилнэ — 100 жолоочийн утас дэмий ачаалахгүй */
+function useVisibleInterval(fn: () => void, ms: number) {
+  useEffect(() => {
+    let t: ReturnType<typeof setInterval> | null = null;
+    const start = () => { if (!t) t = setInterval(() => { if (document.visibilityState === 'visible') fn(); }, ms); };
+    const onVis = () => { if (document.visibilityState === 'visible') fn(); };
+    start(); document.addEventListener('visibilitychange', onVis);
+    return () => { if (t) clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
+  }, [fn, ms]);
+}
+
 export function DriverClient() {
   const [main, setMain] = useState<'orders' | 'handover' | 'pickup' | 'goods' | 'income' | 'company'>('orders');
   const [pending, setPending] = useState(0);
-  useEffect(() => {
-    const f = () => api<{ pending: number }>('/api/driver/handover').then((r) => setPending(r.pending)).catch(() => undefined);
-    void f(); const t = setInterval(f, 30_000); return () => clearInterval(t);
-  }, [main]);
+  // Аудит #144: цэсний тэмдэгт — хөнгөн хүсэлт (зөвхөн тоо); падааны таб өөрөө асуудаг тул тэр үед давхар асуухгүй
+  const pollPending = useCallback(() => { if (main !== 'handover') void api<{ pending: number }>('/api/driver/handover?pending=1').then((r) => setPending(r.pending)).catch(() => undefined); }, [main]);
+  useEffect(() => { pollPending(); }, [pollPending]);
+  useVisibleInterval(pollPending, 30_000);
   return (
     <div className="mx-auto flex w-full max-w-[720px] flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
@@ -88,7 +99,8 @@ function OrdersTab() {
     catch (e) { if (id === req.current) setError(msg(e)); }
   }, [tab]);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { const t = setInterval(() => void load(), 60_000); return () => clearInterval(t); }, [load]);
+  const reload = useCallback(() => { void load(); }, [load]);
+  useVisibleInterval(reload, 60_000);
 
   async function act(o: DOrder, action: string, body: Record<string, unknown> = {}, done?: string) {
     await api(`/api/driver/orders/${o.id}/${action}`, { method: 'POST', json: { version: o.version, ...body } });
@@ -115,6 +127,7 @@ function OrdersTab() {
       {flash ? <div role="status" className="rounded-[12px] bg-ok-soft px-3 py-2 text-[14px] font-semibold text-ok-ink">{flash}</div> : null}
       {tab === 'debts' ? <DebtsTab /> : <>
       {error ? <Notice>{error}</Notice> : null}
+      {data?.nightShift ? <Notice tone="info">🌙 Шөнийн ээлж: өчигдрийн ({data.today}) падааны хүргэлт, мөнгийг харуулж байна (06:00 хүртэл)</Notice> : null}
       {data && !data.items.length ? <p className="rounded-[14px] border border-dashed border-line px-4 py-10 text-center text-muted">Захиалга алга</p> : null}
       <ul className="flex flex-col gap-3">
         {data?.items.map((o) => <OrderCard key={o.id} o={o} onAct={(kind) => setDlg({ kind, o })} onDirect={act} onRoute={load} />)}
@@ -419,7 +432,9 @@ function HandoverTab({ onReceived }: { onReceived: () => void }) {
   const [busy, setBusy] = useState<number | 'all' | 'receive' | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const load = useCallback(async () => { try { setD(await api('/api/driver/handover')); setErr(null); } catch (e) { setErr(msg(e)); } }, []);
-  useEffect(() => { void load(); const t = setInterval(() => void load(), 15_000); return () => clearInterval(t); }, [load]);
+  useEffect(() => { void load(); }, [load]);
+  const reloadH = useCallback(() => { void load(); }, [load]);
+  useVisibleInterval(reloadH, 15_000);
   const h = d?.handover ?? null;
   async function check(variantId: number | 'all', checked: boolean, kind: 'ORDER' | 'EXTRA' = 'ORDER') {
     if (!h) return;
@@ -443,7 +458,7 @@ function HandoverTab({ onReceived }: { onReceived: () => void }) {
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         <div className="rounded-[12px] border border-line bg-surface px-3 py-2"><div className="text-[11.5px] font-semibold text-subtle">Падаан</div><div className="text-[15px] font-extrabold">{h.number}</div><div className="text-[11.5px] text-subtle">{h.date}</div></div>
         <div className="rounded-[12px] border border-line bg-surface px-3 py-2"><div className="text-[11.5px] font-semibold text-subtle">Захиалга</div><div className="text-[18px] font-extrabold">{h.totals.orders}</div><div className="text-[11.5px] text-subtle">{h.totals.pieces} ширхэг</div></div>
-        <div className="col-span-2 rounded-[12px] border border-line bg-surface px-3 py-2 sm:col-span-1"><div className="text-[11.5px] font-semibold text-subtle">Падааны нийт дүн</div><div className="whitespace-nowrap text-[17px] font-extrabold">{money(h.totals.amount)}</div></div>
+        <div className="col-span-2 rounded-[12px] border border-line bg-surface px-3 py-2 sm:col-span-1"><div className="text-[11.5px] font-semibold text-subtle">Падааны нийт дүн</div><div className="whitespace-nowrap text-[17px] font-extrabold">{h.status === 'DRAFT' || h.status === 'PREPARED' ? '—' : money(h.totals.amount)}</div></div>
       </div>
       {h.status === 'DRAFT' ? <Notice tone="info">⏳ Агуулах бэлтгэж байна...</Notice> : null}
       {h.status === 'PREPARED' ? <Notice tone="info">📦 Агуулах бараа өгч байна...</Notice> : null}

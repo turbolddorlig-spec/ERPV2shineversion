@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { errorResponse, json, requireApiUser } from '@/lib/http';
-import { myHandover } from '@/lib/services/delivery/handover';
+import { myHandover, myHandoverPending } from '@/lib/services/delivery/handover';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,6 +8,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   try {
     const ctx = await requireApiUser(req, { page: 'driver', need: 'edit' });
+    if (req.nextUrl.searchParams.get('pending') === '1') return json(await myHandoverPending(ctx.actor));
     return json(await myHandover(ctx.actor));
   } catch (e) { return errorResponse(e); }
 }
