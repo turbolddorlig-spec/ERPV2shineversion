@@ -45,10 +45,13 @@ export async function readGmailSettings(): Promise<GmailSettings> {
 async function saveSettings(v: GmailSettings, by?: string | null) {
   await db.appSetting.upsert({ where: { key: KEY }, create: { key: KEY, value: v as unknown as Prisma.InputJsonValue, updatedById: by ?? null }, update: { value: v as unknown as Prisma.InputJsonValue, updatedById: by ?? null } });
 }
-export const isConfigured = (s: GmailSettings) => !!(s.email && s.passwordEnc);
+/** Аудит #148 (эзний шийдвэр): илгээгчийн Gmail (банкны яг хаяг) заавал — үгүй бол татахгүй */
+export const isConfigured = (s: GmailSettings) => !!(s.email && s.passwordEnc && SENDER_RE.test(s.sender));
+const SENDER_RE = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/;
 /** API-д гаргах (нууц үггүй) */
 const publicView = (s: GmailSettings) => ({ email: s.email, hasPassword: !!s.passwordEnc, sender: s.sender, autoSync: s.autoSync, minutes: s.minutes, days: s.days, lastSyncAt: s.lastSyncAt, lastResult: s.lastResult, lastOk: s.lastOk });
-const canSet = (a: UserActor) => canEdit(a.roles, 'settings') || canBankImport(a.roles);
+// Аудит #148: Gmail-ийн тохиргоог (хаяг, нууц үг, илгээгч) зөвхөн Супер админ, Админ — өөр шуудан руу чиглүүлэхээс сэргийлнэ
+const canSet = (a: UserActor) => canEdit(a.roles, 'settings');
 
 export async function gmailStatus(actor: UserActor) {
   if (!canView(actor.roles, 'bank-import') && !canEdit(actor.roles, 'settings')) throw forbidden();
@@ -71,8 +74,8 @@ export async function setGmailSettings(actor: UserActor, input: { email?: unknow
   const rawPw = String(input.appPassword ?? '').replace(/\s+/g, '');
   if (rawPw && !/^[a-zA-Z]{16}$/.test(rawPw)) throw badRequest('App Password нь 16 үсэг байна (зайтай бичсэн ч болно). Энгийн Gmail нууц үг биш', 'bad_app_password');
   if (!rawPw && !cur.passwordEnc) throw badRequest('16 оронтой App Password-оо бичнэ үү', 'bad_app_password');
-  const sender = String(input.sender ?? cur.sender).trim().slice(0, 120);
-  if (sender && !/^[^\s@]*@?[^\s@]+$/.test(sender)) throw badRequest('Илгээгчийн имэйл буруу');
+  const sender = String(input.sender ?? cur.sender).trim().toLowerCase().slice(0, 120);
+  if (!SENDER_RE.test(sender)) throw badRequest('Илгээгчийн Gmail (банкны мэдэгдэл ирдэг яг хаяг, жишээ: info@khanbank.com) заавал бичнэ үү', 'sender_required');
   const minutes = Number(input.minutes ?? cur.minutes);
   if (!Number.isInteger(minutes) || minutes < 1 || minutes > 120) throw badRequest('Давтамж 1–120 минут');
   const days = Number(input.days ?? cur.days);
@@ -88,7 +91,7 @@ export async function setGmailSettings(actor: UserActor, input: { email?: unknow
 
 // ───────── IMAP уншилт ─────────
 
-export interface MailItem { id: string; date: Date; text: string }
+export interface MailItem { id: string; date: Date; text: string; from: string; authOk: boolean }
 /** Тест/орлуулах боломжтой: IMAP-аас имэйл унших */
 export type MailFetcher = (o: { email: string; password: string; sender: string; days: number }) => Promise<MailItem[]>;
 
@@ -117,44 +120,66 @@ const imapFetch: MailFetcher = async ({ email, password, sender, days }) => {
           const p = await simpleParser(m.source);
           const text = `${p.subject ?? ''}\n${p.text ?? (typeof p.html === 'string' ? p.html.replace(/<[^>]+>/g, ' ') : '')}`;
           const when = m.internalDate instanceof Date ? m.internalDate : p.date ?? new Date();
-          out.push({ id: `gmail:${email}:${m.envelope?.messageId ?? p.messageId ?? m.uid}`.slice(0, 300), date: when, text });
+          // Аудит #148: илгээгчийн ЯГ хаяг (нэр биш) ба Gmail-ийн баталгаажуулалт (DKIM / SPF — тухайн домэйн)
+          const from = (p.from?.value?.[0]?.address ?? '').toLowerCase();
+          const ar = [p.headers.get('authentication-results')].flat().filter(Boolean).map(String).join(' ').toLowerCase();
+          out.push({ id: `gmail:${email}:${m.envelope?.messageId ?? p.messageId ?? m.uid}`.slice(0, 300), date: when, text, from, authOk: authPass(ar, sender) });
         }
       }
     } finally { lock.release(); }
   } finally { await client.logout().catch(() => undefined); }
   return out;
 };
+/** Gmail-ийн «Authentication-Results»: илгээгчийн домэйнээр DKIM эсвэл SPF pass (хуурамч «From»-ыг Gmail өөрөө тэмдэглэнэ) */
+export function authPass(ar: string, sender: string): boolean {
+  const dom = sender.split('@')[1]?.toLowerCase() ?? '';
+  if (!dom || !ar) return false;
+  const esc = dom.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const dkim = new RegExp(`dkim=pass[^;]*header\\.(?:i|d)=@?(?:[a-z0-9-]+\\.)*${esc}\\b`).test(ar);
+  const spf = new RegExp(`spf=pass[^;]*smtp\\.mailfrom=[^;\\s]*@?(?:[a-z0-9-]+\\.)*${esc}\\b`).test(ar);
+  const dmarcFail = /dmarc=fail/.test(ar);
+  return (dkim || spf) && !dmarcFail;
+}
 let fetcher: MailFetcher = imapFetch;
 /** Зөвхөн тестэд */
 export function _setMailFetcher(f: MailFetcher | null) { fetcher = f ?? imapFetch; }
 
-/** «Sync»: Gmail-аас уншиж импортлох (гараар эсвэл арын ажил) */
-export async function gmailSync(actor: Actor, opts: { days?: number } = {}) {
+/** «Sync»: Gmail-аас уншиж импортлох (гараар эсвэл арын ажил). Аудит #148: нэг зэрэг нэг л sync */
+let running: Promise<unknown> | null = null;
+export async function gmailSync(actor: Actor, opts: { days?: number } = {}): Promise<Awaited<ReturnType<typeof gmailSyncRaw>>> {
+  while (running) await running.catch(() => undefined);
+  const p = gmailSyncRaw(actor, opts);
+  running = p;
+  try { return await p; } finally { if (running === p) running = null; }
+}
+async function gmailSyncRaw(actor: Actor, opts: { days?: number } = {}) {
   const s = await readGmailSettings();
-  if (!isConfigured(s)) throw badRequest('Gmail холбоогүй байна — Тохиргоо → Gmail хэсэгт хаяг, 16 оронтой App Password-оо бичнэ үү', 'gmail_not_configured');
+  if (!isConfigured(s)) throw badRequest('Gmail холбоогүй байна — Тохиргоо → Gmail хэсэгт хаяг, 16 оронтой App Password, илгээгчийн Gmail-ээ бичнэ үү', 'gmail_not_configured');
   const password = decrypt(s.passwordEnc!);
   if (!password) throw badRequest('Хадгалсан App Password-ыг уншиж чадсангүй — Тохиргоо хэсэгт дахин бичнэ үү', 'gmail_password_lost');
   const days = Math.min(30, Math.max(1, opts.days ?? s.days));
   try {
     const mails = await fetcher({ email: s.email, password, sender: s.sender, days });
     const txs: TxIn[] = [];
-    let skipped = 0;
+    let skipped = 0; let rejected = 0;
+    const rejectedLog: { id: string; from: string }[] = [];
     for (const m of mails) {
-      // Нэг имэйлд олон мессеж байж болно — мессеж бүр өөрийн дугаартай (давхардахгүй)
+      // Аудит #148: зөвхөн тохируулсан илгээгчээс, Gmail баталгаажуулсан имэйл — бусдыг (хуурамч) хүлээж авахгүй
+      if (m.from !== s.sender.toLowerCase() || !m.authOk) { rejected++; rejectedLog.push({ id: m.id.slice(0, 120), from: m.from }); continue; }
+      // Нэг имэйл = нэг гүйлгээ
       const ps = parseKhanMessages(m.text, m.date);
       if (!ps.length) { skipped++; continue; }
-      ps.forEach((p, i) => {
-        const id = ps.length > 1 ? `${m.id}#${i}` : m.id;
-        if (!p.income) { skipped++; return; }
-        txs.push({ date: p.date, description: p.description, amount: p.amount, phone: p.phone, emailMessageId: id });
-      });
+      const p = ps[0]!;
+      if (!p.income) { skipped++; continue; }
+      txs.push({ date: p.date, description: p.description, amount: p.amount, phone: p.phone, emailMessageId: m.id });
     }
+    if (rejected) await writeAudit(actor, 'bank.gmail_rejected', 'AppSetting', KEY, { rejected, sample: rejectedLog.slice(0, 20) } as unknown as Prisma.InputJsonValue, db, ['money', 'bank', 'security']);
     const knownTx = new Set((await db.bankTransaction.findMany({ where: { emailMessageId: { in: txs.map((t) => t.emailMessageId!) } }, select: { emailMessageId: true } })).map((x) => x.emailMessageId));
     const fresh = txs.filter((t) => !knownTx.has(t.emailMessageId!));
     const already = txs.length - fresh.length;
     const r = fresh.length ? await importTransactions(actor, fresh, 'GMAIL') : { imported: 0, matched: 0, partial: 0, duplicates: 0, errors: [] as string[] };
-    const res = { ...r, emails: mails.length, alreadyImported: already, skipped };
-    await saveSettings({ ...(await readGmailSettings()), lastSyncAt: new Date().toISOString(), lastOk: true, lastResult: `${mails.length} имэйл · ${r.imported} шинэ гүйлгээ · ${r.matched} таарсан · ${already + r.duplicates} өмнө орсон · ${skipped} зарлага/бусад` });
+    const res = { ...r, emails: mails.length, alreadyImported: already, skipped, rejected };
+    await saveSettings({ ...(await readGmailSettings()), lastSyncAt: new Date().toISOString(), lastOk: true, lastResult: `${mails.length} имэйл · ${r.imported} шинэ гүйлгээ · ${r.matched} таарсан · ${already + r.duplicates} өмнө орсон · ${skipped} зарлага/бусад${rejected ? ` · ⚠ ${rejected} баталгаажаагүй илгээгч (хүлээж аваагүй)` : ''}` });
     return res;
   } catch (e) {
     await saveSettings({ ...(await readGmailSettings()), lastSyncAt: new Date().toISOString(), lastOk: false, lastResult: `Алдаа: ${(e as Error).message}` });
@@ -171,19 +196,14 @@ export async function autoGmailSync() {
 }
 
 /**
- * Gmail-аас буруу импортлогдсон гүйлгээг цэвэрлэх (задлагч сайжрахаас өмнө Хаан банкны биш имэйл орсон, #89):
- * Gmail-аас орсон, захиалгад ХОЛБОГДООГҮЙ, буцаагаагүй гүйлгээг устгаад дахин Sync — жинхэнэ Хаан банкны мессеж шинэ задлагчаар дахин орно.
- * Захиалгад холбогдсон (таарсан) гүйлгээнд хүрэхгүй — тэдгээрийг «Таарсан» табаас шалгана.
+ * Аудит #148 (эзний шийдвэр): мөнгөний бичлэгийг ХЭЗЭЭ Ч устгахгүй — «Дахин шалгах» нь зөвхөн Gmail-аас дахин уншиж,
+ * өмнө орсоныг (имэйлийн дугаараар) алгасаад шинийг нэмнэ.
  */
 export async function cleanupGmailImports(actor: UserActor) {
-  if (!canEdit(actor.roles, 'settings')) throw forbidden('Цэвэрлэгээг админ хийнэ');
-  const where = { source: 'GMAIL', orderId: null, refunded: false };
-  const n = await db.bankTransaction.count({ where });
-  const linked = await db.bankTransaction.count({ where: { source: 'GMAIL', orderId: { not: null } } });
-  await db.bankTransaction.deleteMany({ where });
-  await writeAudit(actor, 'bank.gmail_cleanup', 'BankTransaction', 'GMAIL', { deleted: n, linkedKept: linked }, db, ['money', 'bank']);
+  if (!canEdit(actor.roles, 'settings')) throw forbidden('Дахин шалгахыг админ хийнэ');
+  await writeAudit(actor, 'bank.gmail_resync', 'BankTransaction', 'GMAIL', {}, db, ['money', 'bank']);
   let resync: Awaited<ReturnType<typeof gmailSync>> | null = null;
   let resyncError: string | null = null;
   try { resync = await gmailSync(actor); } catch (e) { resyncError = (e as Error).message; }
-  return { deleted: n, linkedKept: linked, resync, resyncError };
+  return { deleted: 0, linkedKept: 0, resync, resyncError };
 }

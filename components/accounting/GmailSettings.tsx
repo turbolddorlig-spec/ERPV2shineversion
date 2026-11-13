@@ -40,11 +40,11 @@ export function GmailSettings({ onSynced }: { onSynced?: () => void }) {
     } catch (e) { setErr(msg(e)); } finally { setBusy(null); await load(); }
   };
   const cleanup = async () => {
-    if (!window.confirm('Gmail-аас орсон, захиалгад холбогдоогүй бүх гүйлгээг устгаад дахин Sync хийх үү? (Жинхэнэ Хаан банкны мессеж дахин орно)')) return;
+    if (!window.confirm('Gmail-аас дахин уншиж шалгах уу? (Өмнө орсон гүйлгээ устахгүй, шинэ нь л нэмэгдэнэ)')) return;
     setBusy('clean'); setErr(null); setOk(null);
     try {
       const r = await api<{ deleted: number; linkedKept: number; resync: { imported: number; matched: number } | null; resyncError: string | null }>('/api/bank/gmail', { method: 'POST', json: { action: 'cleanup' } });
-      setOk(`${r.deleted} буруу/холбогдоогүй гүйлгээ устгав${r.resync ? ` · дахин ${r.resync.imported} Хаан банкны гүйлгээ орж ${r.resync.matched} таарав` : ''}${r.linkedKept ? ` · захиалгад холбогдсон ${r.linkedKept}-ыг хэвээр үлдээв («Таарсан» табаас шалгана уу)` : ''}`);
+      setOk(`Дахин шалгав${r.resync ? ` · ${r.resync.imported} шинэ гүйлгээ орж ${r.resync.matched} таарав` : ''}`);
       if (r.resyncError) setErr(r.resyncError);
       onSynced?.();
     } catch (e) { setErr(msg(e)); } finally { setBusy(null); await load(); }
@@ -64,7 +64,7 @@ export function GmailSettings({ onSynced }: { onSynced?: () => void }) {
       <div className="grid gap-3 sm:grid-cols-2">
         <Field id="gm-email" label="Gmail хаяг" type="email" autoComplete="off" placeholder="tanii.ner@gmail.com" value={f.email} disabled={!canEdit} onChange={(e) => setF({ ...f, email: e.target.value })} />
         <Field id="gm-pass" label="App Password (16 үсэг)" type="password" autoComplete="new-password" placeholder={s.hasPassword ? '•••• хадгалсан (солих бол бичнэ)' : 'abcd efgh ijkl mnop'} value={f.appPassword} disabled={!canEdit} onChange={(e) => setF({ ...f, appPassword: e.target.value })} />
-        <Field id="gm-sender" label="Хаан банкны илгээгч (заавал биш)" placeholder="Хоосон бол бүх имэйлээс хайна" value={f.sender} disabled={!canEdit} onChange={(e) => setF({ ...f, sender: e.target.value })} />
+        <Field id="gm-sender" label="Илгээгчийн Gmail (заавал)" placeholder="Хаан банкны мэдэгдэл ирдэг яг хаяг" value={f.sender} disabled={!canEdit} onChange={(e) => setF({ ...f, sender: e.target.value })} />
         <div className="grid grid-cols-2 gap-3">
           <Field id="gm-days" label="Хэдэн хоногийн" inputMode="numeric" value={f.days} disabled={!canEdit} onChange={(e) => setF({ ...f, days: e.target.value.replace(/\D/g, '') })} />
           <Field id="gm-min" label="Давтамж (минут)" inputMode="numeric" value={f.minutes} disabled={!canEdit} onChange={(e) => setF({ ...f, minutes: e.target.value.replace(/\D/g, '') })} />
@@ -76,7 +76,7 @@ export function GmailSettings({ onSynced }: { onSynced?: () => void }) {
       {canEdit ? (
         <div className="flex flex-wrap gap-2">
           <Button variant="primary" loading={busy === 'sync'} onClick={() => void saveAndSync()}>Хадгалаад Sync</Button>
-          {s.hasPassword ? <Button loading={busy === 'clean'} onClick={() => void cleanup()}>Буруу импортыг цэвэрлээд дахин Sync</Button> : null}
+          {s.hasPassword ? <Button loading={busy === 'clean'} onClick={() => void cleanup()}>Дахин шалгах</Button> : null}
           {s.hasPassword ? <Button variant="danger" loading={busy === 'off'} onClick={() => void disconnect()}>Салгах</Button> : null}
         </div>
       ) : null}

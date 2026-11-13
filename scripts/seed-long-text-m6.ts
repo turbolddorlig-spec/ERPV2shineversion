@@ -25,7 +25,8 @@ import * as B from '../lib/services/accounting/bank';
   await S.createDriverPayment(drv, { kind: 'ADVANCE', date: today, amount: 1_250_000, note: `Урт тайлбар: бензин, засвар, дугуй солих ${LONG}`, idemKey: randomUUID() });
   await S.createDriverPayment(drv, { kind: 'EXTRA', date: today, amount: 45000, note: `Нэмэлт бараа зарсан мөнгө ${LONG}`, idemKey: randomUUID() });
   await S.setPerfOverride(sa, { driverId: drv.id, date: today, value: 95.5, note: `Урт шалтгаан: үйлчлүүлэгч утсаа солисон, жолоочийн буруу биш ${LONG}` }).catch((e) => console.log('perf', String(e).slice(0, 100)));
-  const csv = ['Огноо,Утга,Дүн', `${today} 10:15,"95550000 ${LONG} төлбөр шилжүүлэв",35000`, `${today} 11:20,${LONG},7000`, `${today} 12:00,"99119911 Батболдын захиалгын үлдэгдэл, хүргэлтийн төлбөртэй",125000`].join('\n');
-  console.log(JSON.stringify(await B.importCsv(sa, { text: csv })));
+  // Аудит #148: хуулга файл байхгүй — Gmail-ээр ирсэн мэт (имэйл бүр өөрийн дугаартай)
+  const rows = [{ d: `95550000 ${LONG} төлбөр шилжүүлэв`, a: 35000 }, { d: LONG, a: 7000 }, { d: '99119911 Батболдын захиалгын үлдэгдэл, хүргэлтийн төлбөртэй', a: 125000 }];
+  console.log(JSON.stringify(await B.importTransactions({ id: sa.id, name: sa.name }, rows.map((r, i) => ({ date: new Date(), description: r.d, amount: r.a, emailMessageId: `seed-m6-${today}-${i}` })), 'GMAIL')));
   await db.$disconnect();
 })();

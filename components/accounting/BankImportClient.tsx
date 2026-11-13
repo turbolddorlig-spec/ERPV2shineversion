@@ -1,6 +1,6 @@
 'use client';
 import clsx from 'clsx';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Notice } from '@/components/ui/Notice';
@@ -10,7 +10,7 @@ import { money, ubDateTime } from '@/lib/format';
 import { GmailSettings } from './GmailSettings';
 
 /**
- * Банкны импорт (Модуль 6, хуучнаар нь, #83): Хаан банкны CSV / Gmail → утас + дүнгээр «Төлбөр хүлээж буй» захиалга «Мөнгө орсон».
+ * Банкны импорт (Модуль 6, хуучнаар нь, #83; #148 — зөвхөн Gmail): Хаан банкны Gmail → утас + дүнгээр «Төлбөр хүлээж буй» захиалга «Мөнгө орсон».
  * Статистик, табууд, хайлт, «Гараар тааруулах», «Буцаасан», «Дүн өөрчлөгдсөн», CSV экспорт.
  */
 interface ManualEx { id: number; number: string; phone: string; total: number; paidAmount: number; excess: number; why: string }
@@ -40,7 +40,6 @@ export function BankImportClient() {
   const [busy, setBusy] = useState(false);
   const [match, setMatch] = useState<Tx | null>(null);
   const [gset, setGset] = useState(false);
-  const file = useRef<HTMLInputElement>(null);
   useEffect(() => { const t = setTimeout(() => { setQd(q); setPage(1); }, 300); return () => clearTimeout(t); }, [q]);
   const qs = useCallback(() => new URLSearchParams({ ...(tab !== 'all' && tab !== 'changes' ? { tab } : {}), ...(qd ? { q: qd } : {}), ...(from ? { from } : {}), ...(to ? { to } : {}) }), [tab, qd, from, to]);
   const load = useCallback(async () => {
@@ -55,14 +54,6 @@ export function BankImportClient() {
   }, [qs, tab, page, from, to]);
   useEffect(() => { void load(); }, [load]);
 
-  const upload = async (f: File) => {
-    setBusy(true); setErr(null); setInfo(null);
-    try {
-      const r = await api<{ imported: number; matched: number; partial: number; duplicates: number; debitsSkipped: number; badRows: number; errors: string[] }>('/api/bank/import', { method: 'POST', json: { text: await f.text() } });
-      setInfo(`CSV импорт: ${r.imported} импорт · ${r.matched} таарсан («Мөнгө орсон») · ${r.partial} хэсэгчлэн · ${r.duplicates} давхардсан${r.debitsSkipped ? ` · ${r.debitsSkipped} зарлага алгассан` : ''}${r.badRows ? ` · ${r.badRows} буруу мөр` : ''}${r.errors.length ? ` · алдаа ${r.errors.length}` : ''}`);
-      await load();
-    } catch (e) { setErr(msg(e)); } finally { setBusy(false); if (file.current) file.current.value = ''; }
-  };
   const sync = async () => {
     setBusy(true); setErr(null); setInfo(null);
     try { const r = await api<{ emails: number; imported: number; matched: number; duplicates: number; skipped: number }>('/api/bank/gmail', { method: 'POST', json: { action: 'sync' } }); setInfo(`Gmail: ${r.emails} имэйл · ${r.imported} импорт · ${r.matched} таарсан · ${r.duplicates} давхардсан · ${r.skipped} алгассан`); await load(); }
@@ -87,14 +78,13 @@ export function BankImportClient() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0"><h1 className="text-[24px] font-extrabold tracking-tight">Банкны импорт</h1><p className="text-[13.5px] text-muted">Хаан банкны орлого → утас + дүнгээр «Төлбөр хүлээж буй» захиалга «Мөнгө орсон» (дугаар солигдохгүй)</p></div>
         <div className="flex flex-wrap gap-2">
-          {canEdit ? <><input ref={file} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => e.target.files?.[0] && void upload(e.target.files[0])} />
-            <Button variant="primary" size="sm" loading={busy} onClick={() => file.current?.click()}>CSV импорт</Button>
-            <Button size="sm" loading={busy} disabled={!gmail?.configured} onClick={() => void sync()} title={gmail?.configured ? '' : 'Gmail холбогдоогүй — «Gmail тохиргоо»'}>Gmail sync</Button>
+          {canEdit ? <>
+            <Button variant="primary" size="sm" loading={busy} disabled={!gmail?.configured} onClick={() => void sync()} title={gmail?.configured ? '' : 'Gmail холбогдоогүй — «Gmail тохиргоо»'}>Gmail sync</Button>
             <Button size="sm" onClick={() => setGset(true)}>Gmail тохиргоо</Button></> : null}
-          <a href={`/api/bank/export?${qs()}`} className="inline-flex h-9 items-center rounded-[11px] border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2">CSV экспорт</a>
+          {canEdit ? <a href={`/api/bank/export?${qs()}`} className="inline-flex h-9 items-center rounded-[11px] border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2">CSV экспорт</a> : null}
         </div>
       </div>
-      {gmail ? <p className="text-[12.5px] text-subtle">{gmail.configured ? `Gmail ${gmail.settings.email}${gmail.settings.autoSync ? ` · автомат ${gmail.settings.minutes} мин тутам` : ' · автомат унтраалттай'}${gmail.settings.lastSyncAt ? ` · сүүлд ${ubDateTime(gmail.settings.lastSyncAt)}: ${gmail.settings.lastResult ?? ''}` : ''}` : 'Gmail холбогдоогүй — «Gmail тохиргоо» дээр хаяг, 16 оронтой App Password бичээд холбоно (эсвэл CSV-ээр импортлоно)'}</p> : null}
+      {gmail ? <p className="text-[12.5px] text-subtle">{gmail.configured ? `Gmail ${gmail.settings.email}${gmail.settings.autoSync ? ` · автомат ${gmail.settings.minutes} мин тутам` : ' · автомат унтраалттай'}${gmail.settings.lastSyncAt ? ` · сүүлд ${ubDateTime(gmail.settings.lastSyncAt)}: ${gmail.settings.lastResult ?? ''}` : ''}` : 'Gmail холбогдоогүй — «Gmail тохиргоо» дээр хаяг, 16 оронтой App Password, илгээгчийн Gmail бичээд холбоно'}</p> : null}
       {err ? <Notice>{err}</Notice> : null}
       {info ? <Notice tone="ok">{info}</Notice> : null}
       {stats ? (
@@ -205,12 +195,13 @@ function MatchDialog({ t, onClose, onDone }: { t: Tx; onClose: () => void; onDon
             <div className="min-w-0"><div className="text-[11.5px] font-bold text-subtle">ГҮЙЛГЭЭ</div><b>{money(t.amount)}</b><span className="block [overflow-wrap:anywhere]">{t.description}</span>{t.phone ? <span className="block text-muted">Утас: {t.phone}</span> : null}</div>
             <div className="min-w-0"><div className="text-[11.5px] font-bold text-subtle">ЗАХИАЛГА</div><b>№{pick.number}</b><span className="block">Утас: {pick.phone}</span><span className="block">Дүн {money(pick.total)}{pick.paid ? ` · өмнө төлсөн ${money(pick.paid)}` : ''}</span></div>
           </div>
-          {t.phone && t.phone !== pick.phone ? (<>
-            <p className="mt-2 font-semibold text-bad-ink">Анхаар: гүйлгээний утас захиалгын утастай таарахгүй байна. Итгэлтэй бол шалтгаанаа бичнэ үү (түүхэнд үлдэнэ).</p>
+          {(t.phone && t.phone !== pick.phone) || t.isDuplicate ? (<>
+            {t.isDuplicate ? <p className="mt-2 font-semibold text-bad-ink">Анхаар: энэ гүйлгээ «Давхардсан» (ижил өдөр, дүн, утастай өөр гүйлгээ аль хэдийн орсон). Нэг мөнгө хоёр захиалгад орохгүйн тулд үнэхээр өөр мөнгө эсэхийг шалгаад шалтгаанаа бичнэ үү.</p> : null}
+            {t.phone && t.phone !== pick.phone ? <p className="mt-2 font-semibold text-bad-ink">Анхаар: гүйлгээний утас захиалгын утастай таарахгүй байна. Итгэлтэй бол шалтгаанаа бичнэ үү (түүхэнд үлдэнэ).</p> : null}
             <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} placeholder="Жишээ: ах нь өөрийн данснаас шилжүүлсэн" aria-label="Шалтгаан" className="mt-1 h-10 w-full rounded-lg border border-line bg-surface px-2" />
           </>) : null}
           <p className="mt-2 text-muted">Тааруулсны дараа өөрчлөх боломжгүй.</p>
-          <div className="mt-2 flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => setPick(null)}>Болих</Button><Button size="sm" variant="primary" loading={busy} disabled={!!t.phone && t.phone !== pick.phone && note.replace(/\s/g, '').length < 5} onClick={() => void go(pick.number)}>Тийм, тааруулах</Button></div>
+          <div className="mt-2 flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => setPick(null)}>Болих</Button><Button size="sm" variant="primary" loading={busy} disabled={((!!t.phone && t.phone !== pick.phone) || t.isDuplicate) && note.replace(/\s/g, '').length < 5} onClick={() => void go(pick.number)}>Тийм, тааруулах</Button></div>
         </div>
       ) : null}
     </Modal>

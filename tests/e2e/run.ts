@@ -522,10 +522,11 @@ async function main() {
     check('«Өр» хэсэг компанийн өрийн бүртгэлд яг 1 удаа', led6.pending?.filter((x: { kind: string }) => x.kind === 'SETTLEMENT_DEBT').length === (debtPart ? 1 : 0), JSON.stringify(led6.summary));
     const wd6 = await req('/api/driver/income', { cookie: d5.cookie, method: 'POST', body: { action: 'withdraw', date: today6 } });
     check('баталгаажсан тооцоог буцаахгүй → 409', wd6.status === 409, wd6.text.slice(0, 80));
-    const bkOp = await req('/api/bank/import', { cookie: op4.cookie, method: 'POST', body: { text: 'a,b,c\n2026-01-01,x,1' } });
+    // Аудит #148: хуулга файл оруулах хэсэг хасагдсан (зөвхөн Gmail); оператор харна, утас нууцлагдана
+    const bkOp = await req('/api/bank/import', { cookie: ol6.cookie, method: 'POST', body: { text: 'a,b,c' } });
     const bkList = await req('/api/bank', { cookie: op4.cookie });
-    const bk = await req('/api/bank/import', { cookie: ol6.cookie, method: 'POST', body: { text: `Огноо,Утга,Дүн\n${today6},99000001 e2e,5000\n${today6},зарлага,-5000` } });
-    check('банк: оператор харна (импортлохгүй 403), ахлах оператор импортлоно, зарлага алгасна', bkOp.status === 403 && bkList.status === 200 && bk.status === 200 && JSON.parse(bk.text).debitsSkipped === 1, `${bkOp.status} ${bkList.status} ${bk.text.slice(0, 100)}`);
+    const expOp = await req('/api/bank/export', { cookie: op4.cookie });
+    check('банк: файл оруулах байхгүй (404), оператор харна (татаж авахгүй 403)', bkOp.status === 404 && bkList.status === 200 && expOp.status === 403, `${bkOp.status} ${bkList.status} ${expOp.status}`);
     const exp6 = await req('/api/bank/export', { cookie: ol6.cookie });
     check('банк: CSV экспорт', exp6.status === 200 && exp6.text.includes('Огноо,Утга,Дүн'), String(exp6.status));
     const rec6 = JSON.parse((await req('/api/stock/reconcile?fresh=1', { cookie: adm.cookie })).text);

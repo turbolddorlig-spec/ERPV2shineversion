@@ -468,10 +468,15 @@ describe('урьдчилгаа, нэмэлт барааны тооцоо', () =>
   });
 });
 
+/** Аудит #148: хуулга файл байхгүй — Gmail-ээр ирсэн гүйлгээ (имэйл бүр өөрийн дугаартай) */
+let gmSeq = 0;
+const gmailTx = (rows: { phone?: string | null; description: string; amount: number }[]) =>
+  B.importTransactions({ id: null, name: 'Gmail' }, rows.map((r) => ({ date: new Date(), description: r.description, amount: r.amount, phone: r.phone ?? null, emailMessageId: `gm-t-${++gmSeq}` })), 'GMAIL');
+
 describe('банкны импорт (хуучнаар нь)', () => {
   it('аудит Б1: хэсэгчлэн төлсөн захиалгыг цуцлахад мөнгө «Таараагүй» руу буцаж, тэр утсаар шинэ захиалгад автоматаар таарна', async () => {
     const o = (await O.createOrder(op, ub({ prepaidWait: true }))).order;
-    await B.importCsv(acc, { text: `Огноо,Утга,Дүн\n${today},${o.phone} урьдчилгаа,10000` });
+    await gmailTx([{ description: `${o.phone} урьдчилгаа`, amount: 10000 }]);
     const t0 = await db.bankTransaction.findFirstOrThrow({ where: { phone: o.phone } });
     expect([t0.orderId, t0.status]).toEqual([o.id, 'PARTIAL_PAYMENT']);
     await O.cancelOrder(op, o.id, { reason: 'CUSTOMER_CANCELLED', note: 'Бараагаа солино' });
@@ -484,7 +489,7 @@ describe('банкны импорт (хуучнаар нь)', () => {
     expect([t2.orderId, t2.status]).toEqual([n.id, 'PARTIAL_PAYMENT']);
     // нөгөө дараалал: шинийг эхлээд үүсгэж, хуучныг дараа нь цуцалбал ч таарна
     const o3 = (await O.createOrder(op, ub({ prepaidWait: true }))).order;
-    await B.importCsv(acc, { text: `Огноо,Утга,Дүн\n${today},${o3.phone} төлбөр,7000` });
+    await gmailTx([{ description: `${o3.phone} төлбөр`, amount: 7000 }]);
     await O.cancelOrder(op, n.id, { reason: 'CUSTOMER_CANCELLED', note: 'Дахин солино' });
     void o3;
     const n2 = (await O.createOrder(op, ub({ phone: o.phone, prepaidWait: true, idemKey: key() }))).order;
@@ -507,11 +512,12 @@ describe('банкны импорт (хуучнаар нь)', () => {
     expect(B.extractPhones('99 88 77 11 guilgee')).toEqual(['99887711']);
     expect(B.extractPhones('9988 7711 22, 1234 5678, 35,000.00, 2026/11/11 14:30, 5***2327')).toEqual([]);
     expect(B.parseKhanMessage('Khan Bank:Tany 5***2327 dansand ORLOGO:18,000.00MNT orj ULDEGDEL:1,600,559.00MNT bolloo.Utga:9988-7711 Uvs')?.phone).toBe('99887711');
-    const c = B.parseCsv('Огноо,Утга,Дүн\n2026-11-11 10:00,"99112233, захиалга",35000\n2026.11.11,зарлага,-5000\nбуруу\n11/11/2026,88001122,12,000');
-    expect(c.rows.map((r) => [r.description, r.amount])).toEqual([['99112233, захиалга', 35000]]);
-    // Жинхэнэ Хаан банкны мессеж (эзний илгээсэн хэлбэр), нэг имэйлд олон; Хаан банкны биш → алгасна
+    // Аудит #148: нэг имэйл = нэг гүйлгээ (эхнийх); утга доторх «Khan Bank ORLOGO:…» дүн биш
+    expect(B.parseKhanMessages('Khan Bank:Tany 5***2327 dansand ORLOGO:100.00MNT orj ULDEGDEL:1,000.00MNT bolloo.Utga:Khan Bank ORLOGO:500,000.00MNT Utga:99112233').map((x) => [x.amount, x.phone])).toEqual([[100, '99112233']]);
+    expect(B.parseKhanMessage('Khan Bank: 5102xxxx dansand 100.00 MNT orlogo orson. Guilgeenii utga: 99112233 ORLOGO:500000MNT')?.amount).toBe(100);
+    // Жинхэнэ Хаан банкны мессеж (эзний илгээсэн хэлбэр); Хаан банкны биш → алгасна
     const real = 'Khan Bank:Tany\n5***2327 dansand\nORLOGO:18,000.00MNT orj\nULDEGDEL:1,600,559.00MNT\nbolloo.Utga:88588868 dornod\n\nKhan Bank:Tany\n5***2327 dansand\nORLOGO:24,000.00MNT orj\nULDEGDEL:1,684,409.00MNT\nlloo.Utga:Bayan-olgii.65429490\n\nKhan Bank:Tany\n5***2327 dansand\nORLOGO:15,000.00MNT orj\nULDEGDEL:1,699,409.00MNT\nbolloo.Utga:\n\nKhan Bank:Tany\n5***2327 dansnaas\nZARLAGA:5,000.00MNT garj\nbolloo.Utga:x';
-    expect(B.parseKhanMessages(real).map((x) => [x.income, x.amount, x.phone])).toEqual([[true, 18000, '88588868'], [true, 24000, '65429490'], [true, 15000, null], [false, 5000, null]]);
+    expect(B.parseKhanMessages(real).map((x) => [x.income, x.amount, x.phone])).toEqual([[true, 18000, '88588868']]);
     expect(B.parseKhanMessage('Таны захиалга 25,000 MNT, хямдрал 99112233')).toBe(null);
     expect(B.parseKhanMessage('Khan Bank: шинэ үйлчилгээ 99112233')).toBe(null);
     expect(B.extractPhones('5***2327 1,600,559.00 55112233 66112233 77112233')).toEqual(['55112233', '66112233', '77112233']);
@@ -519,18 +525,19 @@ describe('банкны импорт (хуучнаар нь)', () => {
     expect(B.extractPhones('dans 5000 1234 5678 9012 tulbur')).toEqual([]);
     expect(B.extractPhones('99 88 77 11 22')).toEqual([]);
     expect(B.extractPhones('Utga: 9988 7711 ba 8800-1122')).toEqual(['99887711', '88001122']);
-    expect([c.debits, c.skipped >= 1]).toEqual([1, true]);
   });
 
   it('утас + дүнгээр «Мөнгө орсон» (дугаар солигдохгүй, Meta); хэсэгчлэн → нэмэлт гүйлгээгээр; давхардал; эрх', async () => {
     const o = (await O.createOrder(op, ub({ prepaidWait: true }))).order;
     expect(o.status).toBe('PENDING_PAYMENT');
-    await err(B.importCsv(op, { text: 'a,b,c\n2026-11-11,x,1' }), 403);
-    const r1 = await B.importCsv(acc, { text: `Огноо,Утга,Дүн\n${today},${o.phone} төлбөр,20000` });
+    const r1 = await gmailTx([{ description: `${o.phone} төлбөр`, amount: 20000 }]);
     expect([r1.imported, r1.partial, r1.matched]).toEqual([1, 1, 0]);
     expect((await db.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe('PENDING_PAYMENT');
-    const r2 = await B.importCsv(acc, { text: `Огноо,Утга,Дүн\n${today},${o.phone} үлдэгдэл,10000\n${today},${o.phone} үлдэгдэл,10000` });
-    expect([r2.imported, r2.matched, r2.duplicates]).toEqual([1, 1, 1]);
+    const r2 = await gmailTx([{ description: `${o.phone} үлдэгдэл`, amount: 10000 }]);
+    expect([r2.imported, r2.matched]).toEqual([1, 1]);
+    // ижил имэйл дахин ирвэл (дугаараар) давхардал; дугааргүй ижил өдөр+дүн+утас — «Давхардсан» (хянана)
+    const r3 = await B.importTransactions({ id: null, name: 'x' }, [{ date: new Date(), description: `${o.phone} үлдэгдэл`, amount: 10000, phone: o.phone }], 'GMAIL');
+    expect(r3.duplicates).toBe(1);
     const u = await db.order.findUniqueOrThrow({ where: { id: o.id } });
     expect([u.number, u.status, u.prepaid]).toEqual([o.number, 'NEW', true]);
     expect(await db.metaEvent.count({ where: { orderId: o.id } })).toBe(1);
@@ -539,7 +546,8 @@ describe('банкны импорт (хуучнаар нь)', () => {
     const st = await B.bankStats(op, {});
     expect([st.total.count, st.matched.count, st.duplicate.count]).toEqual([3, 2, 1]);
     expect((await B.listTransactions(op, { tab: 'DUPLICATE' })).items).toHaveLength(1);
-    expect((await B.exportCsv(op, {})).split('\n')).toHaveLength(4);
+    await err(B.exportCsv(op, {}), 403); // #148: татаж авах — засах эрхтэй
+    expect((await B.exportCsv(acc, {})).split('\n')).toHaveLength(4);
     // Аудит А9: Gmail — тайлбарт 2 утас; захиалга 2 дахь утсанд → таарна (өмнө нь зөвхөн эхнийхийг шалгадаг байв)
     const o2 = (await O.createOrder(op, ub({ prepaidWait: true }))).order;
     const g = B.parseKhanMessage(`Khan Bank:Tany 5***2327 dansand ORLOGO:${o2.total.toLocaleString('en-US')}.00MNT orj ULDEGDEL:1,000.00MNT bolloo.Utga:88001199 ${o2.phone}`)!;
@@ -550,7 +558,7 @@ describe('банкны импорт (хуучнаар нь)', () => {
 
   it('гүйлгээ түрүүлж орсон бол шинэ «Төлбөр хүлээж буй» захиалга автоматаар таарна; гараар тааруулах; буцаасан; дүн өөрчлөгдсөн', async () => {
     const phone = '99887711';
-    await B.importCsv(acc, { text: `Огноо,Утга,Дүн\n${today},${phone},${TOTAL}\n${today},өөр хүн,7000` });
+    await gmailTx([{ description: phone, amount: TOTAL }, { description: 'өөр хүн', amount: 7000 }]);
     const o = (await O.createOrder(op, ub({ phone, prepaidWait: true }))).order;
     expect((await db.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe('NEW');
     const other = (await O.createOrder(op, ub({ prepaidWait: true, lines: [{ variantId: v1, qty: 1 }] }))).order;
@@ -581,7 +589,9 @@ describe('банкны импорт (хуучнаар нь)', () => {
     await err(GM.setGmailSettings(op, { email: 'a@gmail.com', appPassword: 'abcdefghijklmnop' }), 403);
     await err(GM.setGmailSettings(sa, { email: 'a@gmail.com', appPassword: '12345' }), 400, 'bad_app_password');
     await err(GM.gmailSync(sa), 400, 'gmail_not_configured');
-    const v = await GM.setGmailSettings(sa, { email: 'Shop@Gmail.com', appPassword: 'abcd efgh ijkl mnop', autoSync: true });
+    await err(GM.setGmailSettings(sa, { email: 'Shop@Gmail.com', appPassword: 'abcd efgh ijkl mnop', autoSync: true }), 400, 'sender_required');
+    await err(GM.setGmailSettings(acc, { email: 'Shop@Gmail.com', appPassword: 'abcd efgh ijkl mnop', sender: 'info@khanbank.com' }), 403); // #148: зөвхөн СА/Админ
+    const v = await GM.setGmailSettings(sa, { email: 'Shop@Gmail.com', appPassword: 'abcd efgh ijkl mnop', autoSync: true, sender: 'Info@KhanBank.com' });
     expect(v).toMatchObject({ email: 'shop@gmail.com', hasPassword: true });
     expect(JSON.stringify(v)).not.toContain('abcdefghijklmnop');
     const raw = JSON.stringify((await db.appSetting.findUniqueOrThrow({ where: { key: 'bank.gmail' } })).value);
@@ -589,32 +599,38 @@ describe('банкны импорт (хуучнаар нь)', () => {
     expect(JSON.stringify(await GM.gmailStatus(sa))).not.toContain('passwordEnc');
     const o = (await O.createOrder(op, ub({ prepaidWait: true }))).order;
     let seen: { email: string; password: string } | null = null;
+    const bank = { from: 'info@khanbank.com', authOk: true };
     GM._setMailFetcher(async (x) => { seen = x; return [
-      { id: 'm1', date: new Date(), text: `Khan Bank: 5102xxxx dansand 30,000.00 MNT orlogo orson. Guilgeenii utga: ${o.phone} tulbur. Uldegdel: 1,000.00 MNT` },
-      { id: 'm2', date: new Date(), text: 'Khan Bank: 5102xxxx dansnaas 5,000.00 MNT zarlaga garsan. Guilgeenii utga: 88112233' },
-      { id: 'm3', date: new Date(), text: 'Сайн байна уу, энэ банкны мэдэгдэл биш' },
-      { id: 'm4', date: new Date(), text: 'Khan Bank:Tany\n5***2327 dansand\nORLOGO:20,000.00MNT orj\nULDEGDEL:1,000.00MNT\nbolloo.Utga:' },
-      { id: 'm5', date: new Date(), text: 'Khan Bank:Tany\n5***2327 dansand\nORLOGO:20,000.00MNT orj\nULDEGDEL:1,020.00MNT\nbolloo.Utga:' },
+      { id: 'm1', date: new Date(), ...bank, text: `Khan Bank: 5102xxxx dansand 30,000.00 MNT orlogo orson. Guilgeenii utga: ${o.phone} tulbur. Uldegdel: 1,000.00 MNT` },
+      { id: 'm2', date: new Date(), ...bank, text: 'Khan Bank: 5102xxxx dansnaas 5,000.00 MNT zarlaga garsan. Guilgeenii utga: 88112233' },
+      { id: 'm3', date: new Date(), ...bank, text: 'Сайн байна уу, энэ банкны мэдэгдэл биш' },
+      { id: 'm4', date: new Date(), ...bank, text: 'Khan Bank:Tany\n5***2327 dansand\nORLOGO:20,000.00MNT orj\nULDEGDEL:1,000.00MNT\nbolloo.Utga:' },
+      { id: 'm5', date: new Date(), ...bank, text: 'Khan Bank:Tany\n5***2327 dansand\nORLOGO:20,000.00MNT orj\nULDEGDEL:1,020.00MNT\nbolloo.Utga:' },
+      // #148: хуурамч — өөр хаягаас / баталгаажаагүй
+      { id: 'f1', date: new Date(), from: 'attacker@gmail.com', authOk: true, text: `Khan Bank: ORLOGO:500,000.00MNT Utga:${o.phone}` },
+      { id: 'f2', date: new Date(), from: 'info@khanbank.com', authOk: false, text: `Khan Bank: ORLOGO:500,000.00MNT Utga:${o.phone}` },
     ]; });
     try {
       const r = await GM.gmailSync(sa);
-      expect(seen).toEqual({ email: 'shop@gmail.com', password: 'abcdefghijklmnop', sender: '', days: 3 });
-      expect([r.emails, r.imported, r.matched, r.skipped]).toEqual([5, 3, 1, 2]); // утгагүй ижил дүнтэй 2 өөр гүйлгээ давхардал биш
+      expect(seen).toEqual({ email: 'shop@gmail.com', password: 'abcdefghijklmnop', sender: 'info@khanbank.com', days: 3 });
+      expect([r.emails, r.imported, r.matched, r.skipped, r.rejected]).toEqual([7, 3, 1, 2, 2]); // утгагүй ижил дүнтэй 2 өөр гүйлгээ давхардал биш
+      expect(await db.auditLog.count({ where: { action: 'bank.gmail_rejected' } })).toBe(1);
       expect((await db.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe('NEW');
       const r2 = await GM.gmailSync(sa);
       expect([r2.imported, r2.alreadyImported]).toEqual([0, 3]);
-      // Цэвэрлэгээ: холбогдоогүй Gmail гүйлгээ устаж дахин орно, таарсан нь хэвээр
-      await db.bankTransaction.create({ data: { txDate: new Date(), description: 'хог имэйл', amount: 999, source: 'GMAIL', emailMessageId: 'junk1', importedByName: 'x' } });
+      // #148: «Дахин шалгах» мөнгөний бичлэг устгахгүй — зөвхөн дахин уншина
+      await db.bankTransaction.create({ data: { txDate: new Date(), description: 'хуучин', amount: 999, source: 'GMAIL', emailMessageId: 'junk1', importedByName: 'x' } });
       await err(GM.cleanupGmailImports(op), 403);
       const cl = await GM.cleanupGmailImports(sa);
-      expect([cl.deleted, cl.linkedKept, cl.resync?.imported]).toEqual([3, 1, 2]);
-      expect(await db.bankTransaction.count({ where: { emailMessageId: 'junk1' } })).toBe(0);
+      expect([cl.deleted, cl.resync?.imported]).toEqual([0, 0]);
+      expect(await db.bankTransaction.count({ where: { emailMessageId: 'junk1' } })).toBe(1);
       expect((await GM.gmailStatus(sa)).settings.lastOk).toBe(true);
       GM._setMailFetcher(async () => { throw new (await import('@/lib/errors')).AppError(400, 'Gmail нэвтэрч чадсангүй', 'gmail_auth'); });
       await err(GM.gmailSync(sa), 400, 'gmail_auth');
       expect((await GM.gmailStatus(sa)).settings).toMatchObject({ lastOk: false });
       // Нууц үг хоосон үлдээвэл хуучнаараа
-      await GM.setGmailSettings(sa, { email: 'shop@gmail.com', sender: 'khanbank' });
+      await err(GM.setGmailSettings(sa, { email: 'shop@gmail.com', sender: 'khanbank' }), 400, 'sender_required');
+      await GM.setGmailSettings(sa, { email: 'shop@gmail.com', sender: 'info@khanbank.com' });
       expect((await GM.gmailStatus(sa)).settings.hasPassword).toBe(true);
       await GM.setGmailSettings(sa, { disconnect: true });
       expect((await GM.gmailStatus(sa)).configured).toBe(false);

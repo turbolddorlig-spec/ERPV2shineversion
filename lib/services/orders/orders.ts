@@ -224,7 +224,7 @@ export async function createOrder(actor: UserActor, input: CreateInput) {
       return o;
     });
     // Модуль 6: тухайн утасны таараагүй банкны гүйлгээ байвал «Мөнгө орсон» (хуучин шиг)
-    if (!replay && order.status === 'PENDING_PAYMENT') await bankRematch(order.id);
+    if (!replay && order.status === 'PENDING_PAYMENT') await bankRematch(order.id, actor, 'захиалга үүссэн');
     return { order, duplicate: replay !== null };
   } catch (e) {
     if (uniqueViolation(e)) { const r = await db.order.findUnique({ where: { idemKey } }); if (r) return { order: r, duplicate: true }; }
@@ -378,7 +378,8 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
       [...(discountNow ? ['order', 'discount'] : ['order']), ...(changes.payment ? ['money'] : [])]);
     return { order: u, changed: true, rebank: o.prepaid && t.total !== o.total };
   });
-  if (res.changed && res.order.status === 'PENDING_PAYMENT') await bankRematch(res.order.id);
+  // Аудит #148: утас / дүн солиход — хэн, юуны дараа таарсныг түүхэнд
+  if (res.changed && res.order.status === 'PENDING_PAYMENT') await bankRematch(res.order.id, actor, 'захиалга засагдсан');
   else if (res.changed && 'rebank' in res && res.rebank) await bankRestatus(res.order.id);
   return res;
 }
@@ -503,9 +504,9 @@ async function bankRelease(orderId: number) {
     await releaseCancelledOrderPayments(orderId);
   } catch (e) { console.error('[bank] release', (e as Error).message); }
 }
-async function bankRematch(orderId: number) {
+async function bankRematch(orderId: number, actor?: UserActor, reason?: string) {
   try {
     const { matchOrderWithTransactions } = await import('../accounting/bank');
-    await matchOrderWithTransactions(orderId);
+    await matchOrderWithTransactions(orderId, actor && reason ? { actor, reason } : undefined);
   } catch (e) { console.error('[bank] rematch', (e as Error).message); }
 }

@@ -115,8 +115,6 @@ async function bank(phone: string) {
   const c = await login(phone); if (!c) { errors++; return; }
   for (let k = 0; k < ITER; k++) {
     await think();
-    const rows = Array.from({ length: 20 }, () => `${today} 12:00,${'9' + String(Math.floor(Math.random() * 1e7)).padStart(7, '0')} ачаалал,${(1 + Math.floor(Math.random() * 9)) * 5000}`);
-    await hit('банк: CSV импорт', '/api/bank/import', c, { text: ['Огноо,Утга,Дүн', ...rows].join('\n') });
     await think(); await hit('банк: жагсаалт', `/api/bank?tab=${pick(['all', 'UNMATCHED', 'MATCHED'])}`, c);
     await hit('банк: статистик', '/api/bank/stats', c);
   }
