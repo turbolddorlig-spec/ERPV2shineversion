@@ -18,7 +18,7 @@ export interface PenaltyRow {
   createdByName: string; createdAt: string; status: string; deductedAmount: number; cancelledByName: string | null; cancelNote: string | null; deducted: boolean; deductedAt: string | null; deductedByName: string | null;
 }
 export type Summary = { total: number; count: number; pending: number; deducted: number; cancelled: number; byType: Record<string, { count: number; amount: number }> };
-interface Staff { id: string; name: string; phone: string; roles: string[]; defaultType: string | null }
+interface Staff { id: string; name: string; phone: string; roles: string[]; defaultType: string | null; fixedType?: string | null }
 interface ListResp { page: number; total: number; pages: number; summary: Summary; canManage: boolean; canDeduct: boolean; canCancel?: boolean; items: PenaltyRow[]; staff: Staff[] }
 interface Cat { id: string; type: string; name: string; defaultAmount: number; active: boolean; lateMinutes?: boolean }
 interface Config { autoAmount: Record<string, number>; categories: Cat[]; types: { type: string; label: string }[]; canManage: boolean; canAutoAmount: boolean }
@@ -165,6 +165,7 @@ function AddDialog({ staff, onClose, onDone }: { staff: Staff[]; onClose: () => 
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => { api<Config>('/api/penalties/config').then(setCfg).catch((e) => setErr(msg(e))); }, []);
   const user = staff.find((u) => u.id === userId);
+  const fixedType = user?.fixedType ?? null;
   const list = useMemo(() => (cfg?.categories ?? []).filter((c) => c.active && c.type === type), [cfg, type]);
   const cat = list.find((c) => c.id === catId);
   const people = staff.filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase()) || u.phone.includes(q)).slice(0, 30);
@@ -201,7 +202,8 @@ function AddDialog({ staff, onClose, onDone }: { staff: Staff[]; onClose: () => 
           <>
             <div>
               <div className="mb-1 text-[13px] font-bold">2. Төрөл</div>
-              <div className="flex flex-wrap gap-1.5">{cfg?.types.map((t) => <button key={t.type} onClick={() => { setType(t.type); setCatId(''); }} className={clsx('flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-semibold', type === t.type ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface')}><span className={clsx('h-2 w-2 rounded-full', TYPE_TONE[t.type])} />{t.label}</button>)}</div>
+              {/* Аудит #150: тухайн хүний ролд тохирох (цалингаас хасагдах) төрлийг л */}
+              <div className="flex flex-wrap gap-1.5">{cfg?.types.map((t) => <button key={t.type} disabled={!!fixedType && t.type !== fixedType} title={fixedType && t.type !== fixedType ? 'Энэ ажилтны цалингаас хасагдахгүй төрөл' : undefined} onClick={() => { setType(t.type); setCatId(''); }} className={clsx('flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-semibold disabled:cursor-not-allowed disabled:opacity-40', type === t.type ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface')}><span className={clsx('h-2 w-2 rounded-full', TYPE_TONE[t.type])} />{t.label}</button>)}</div>
             </div>
             <div>
               <div className="mb-1 text-[13px] font-bold">3. Алдааны нэр</div>

@@ -70,7 +70,13 @@ describe('гараар торгууль', () => {
     await err(PN.createPenalty(pen, { userId: op.id, amount: 3000 }), 400, 'category_required');
     const p1 = await PN.createPenalty(pen, { userId: op.id, categoryId: c.id, amount: 3000, lateMinutes: 15 });
     expect([p1.type, p1.category, p1.amount, p1.createdByName]).toEqual(['OPP_ERROR', 'Хоцролт (15 мин)', 3000, pen.name]);
-    const p2 = await PN.createPenalty(olead, { userId: mk.id, customName: 'Зураг буруу оруулсан', amount: 10000 });
+    // #150: ахлах оператор зөвхөн операторт; ролд тохирохгүй төрөл, өөртөө — хориотой
+    await err(PN.createPenalty(olead, { userId: mk.id, customName: 'Зураг буруу оруулсан', amount: 10000 }), 403);
+    await err(PN.createPenalty(pen, { userId: op.id, type: 'WAREHOUSE_ERROR', customName: 'Агуулах', amount: 1000 }), 400, 'type_mismatch');
+    await err(PN.createPenalty(pen, { userId: pen.id, customName: 'Өөртөө', amount: 1 }), 403);
+    await err(PN.createPenalty(pen, { userId: sa.id, customName: 'Супер', amount: 1000 }), 400, 'bad_target');
+    await err(PN.createPenalty(pen, { userId: op.id, customName: 'Их дүн', amount: 1_000_001 }), 400);
+    const p2 = await PN.createPenalty(pen, { userId: mk.id, customName: 'Зураг буруу оруулсан', amount: 10000 });
     expect(p2.type).toBe('MARKETING_ERROR');
     const p3 = await PN.createPenalty(pen, { userId: op.id, customName: 'Бусад', amount: 2000 });
     // Нуусан нэрийг сонгохгүй
@@ -152,7 +158,9 @@ describe('асуудлаас автомат торгууль (хуучин ши�
     await H.confirmHandover(wh, h2.id); await H.setDriverCheck(drv, h2.id, { variantId: 'all', checked: true }); await H.receiveHandover(drv, h2.id);
     await DR.reportIssue(drv, mid, { type: 'WRONG_PRODUCT' });
     await DR.resolveIssue(olead, mid, { action: 'cancel', note: 'Маркетинг буруу', fault: 'MARKETING' });
-    const mp = await db.penalty.findFirstOrThrow({ where: { type: 'MARKETING_ERROR' } });
+    // #150: оператор + маркетинг хүний цалингаас хасагдах төрөл — опп-ын алдаа
+    const mp = await db.penalty.findFirstOrThrow({ where: { userId: mkop.id, auto: true } });
+    expect(mp.type).toBe('OPP_ERROR');
     expect([mp.userId, mp.amount, mp.orderNumber, mp.category]).toEqual([mkop.id, 5000, nh.number, 'Бараа буруу']);
     expect((await PN.myPenalties(mkop, {})).summary.total).toBe(5000);
   });

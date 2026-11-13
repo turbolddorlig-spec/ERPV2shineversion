@@ -42,6 +42,25 @@ const canManage = (r: Role[]) => canEdit(r, 'penalties');
 const canCancel = (r: Role[]) => r.includes('SUPER_ADMIN') || r.includes('ADMIN');
 const canDeduct = (r: Role[]) => r.some((x) => ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTING'].includes(x));
 const canAutoAmount = (r: Role[]) => canEdit(r, 'settings');
+/**
+ * Аудит #150 (эзний шийдвэр «тохирох төрлийг л»): цалингаас хасагдах торгуулийн төрөл — хүний ролоос (нэг л төрөл).
+ * Жолооч → «Хүргэлтийн алдаа» (тооцоонд); null = бүх төрөл (нягтлан, админ, ахлах жолооч г.м.). Цалингийн модуль ч үүнийг ашиглана.
+ */
+export function salaryPenaltyType(roles: Role[]): PenaltyType | null {
+  if (roles.includes('DRIVER')) return 'DELIVERY_ERROR';
+  if (roles.some((r) => r === 'OPERATOR' || r === 'OPERATOR_LEAD')) return 'OPP_ERROR';
+  if (roles.some((r) => r === 'MARKETING' || r === 'MARKETING_LEAD')) return 'MARKETING_ERROR';
+  if (roles.includes('WAREHOUSE')) return 'WAREHOUSE_ERROR';
+  return null;
+}
+/** «Хаяг тодорхойгүй» — зөвхөн системийн автомат ангилал цалингаас хасагдахгүй (хуучин шиг), гараар бичсэн тайлбар биш */
+export const isUnclearAddressAuto = (p: { auto: boolean; category: string }) => p.auto && /^Хаяг тодорхойгүй/.test(p.category);
+/** Аудит #150: нэг торгуулийн дээд хэмжээ */
+export const PENALTY_MAX = 1_000_000;
+const isSA = (r: Role[]) => r.includes('SUPER_ADMIN');
+/** Ахлах оператор (бусад удирдах эрхгүй) — зөвхөн операторуудад */
+const onlyOppLead = (r: Role[]) => r.includes('OPERATOR_LEAD') && !r.some((x) => ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTING', 'PENALTY_OFFICER'].includes(x));
+
 /** Ролоос торгуулийн анхдагч төрөл */
 export function typeForRoles(roles: Role[]): PenaltyType | null {
   if (roles.some((r) => r === 'OPERATOR' || r === 'OPERATOR_LEAD')) return 'OPP_ERROR';
@@ -59,7 +78,7 @@ export async function readPenaltyConfig(tx: Tx | typeof db = db): Promise<Penalt
 async function saveConfig(c: PenaltyConfig, actor: UserActor) {
   await db.appSetting.upsert({ where: { key: KEY }, create: { key: KEY, value: c as unknown as Prisma.InputJsonValue, updatedById: actor.id }, update: { value: c as unknown as Prisma.InputJsonValue, updatedById: actor.id } });
 }
-const cleanAmount = (v: unknown, label = 'Дүн') => { const n = Number(v); if (!Number.isInteger(n) || n <= 0 || n > 10_000_000) throw badRequest(`${label} буруу`); return n; };
+const cleanAmount = (v: unknown, label = 'Дүн') => { const n = Number(v); if (!Number.isInteger(n) || n <= 0 || n > PENALTY_MAX) throw badRequest(`${label} буруу (1 – ${PENALTY_MAX.toLocaleString('en-US')}₮)`); return n; };
 const cleanType = (v: unknown) => { const t = String(v ?? '') as PenaltyType; if (!TYPES.includes(t)) throw badRequest('Алдааны төрлөө сонгоно уу'); return t; };
 
 // ───────────────────────── Алдааны нэр (хэрэглэгч шинээр үүсгэнэ) ─────────────────────────
@@ -110,7 +129,15 @@ export async function createPenalty(actor: UserActor, input: { userId?: unknown;
   if (!/^[0-9a-f-]{36}$/i.test(userId)) throw badRequest('Ажилтнаа сонгоно уу', 'user_required');
   const u = await db.user.findUnique({ where: { id: userId }, select: { id: true, name: true, roles: true, isActive: true } });
   if (!u) throw notFound('Ажилтан олдсонгүй');
-  const type = cleanType(input.type ?? typeForRoles(u.roles));
+  // Аудит #150 (эзний шийдвэр): өөртөө, Супер админ, нийлүүлэгч, идэвхгүй хүнд торгууль тавихгүй; ахлах оператор — зөвхөн операторт
+  if (u.id === actor.id) throw forbidden('Өөртөө торгууль тавих боломжгүй');
+  if (u.roles.includes('SUPER_ADMIN') || u.roles.includes('SUPPLIER')) throw badRequest('Супер админ, нийлүүлэгчид торгууль тавихгүй', 'bad_target');
+  if (!u.isActive) throw badRequest('Идэвхгүй ажилтанд торгууль тавихгүй', 'bad_target');
+  if (onlyOppLead(actor.roles) && !u.roles.some((r) => r === 'OPERATOR' || r === 'OPERATOR_LEAD')) throw forbidden('Ахлах оператор зөвхөн операторт торгууль тавина');
+  const type = cleanType(input.type ?? salaryPenaltyType(u.roles) ?? typeForRoles(u.roles));
+  // Аудит #150 (эзний шийдвэр): тухайн хүний ролд тохирох төрлийг л — эс бөгөөс цалингаас хасагдахгүй үлддэг байв
+  const must = salaryPenaltyType(u.roles);
+  if (must && type !== must) throw badRequest(`${u.name}-д «${PENALTY_TYPE_LABEL[must]}» төрлийн торгууль л тавина (цалингаас хасагдах төрөл)`, 'type_mismatch');
   const cfg = await readPenaltyConfig();
   const cat = input.categoryId ? cfg.categories.find((c) => c.id === String(input.categoryId) && c.active) : undefined;
   if (input.categoryId && !cat) throw badRequest('Алдааны нэр олдсонгүй (идэвхгүй болсон байж магадгүй)');
@@ -124,6 +151,11 @@ export async function createPenalty(actor: UserActor, input: { userId?: unknown;
   const order = orderNumber ? await db.order.findUnique({ where: { number: orderNumber }, select: { id: true } }) : null;
   if (orderNumber && !order) throw badRequest('Захиалгын дугаар олдсонгүй', 'order_not_found');
   const p = await db.$transaction(async (tx) => {
+    // Аудит #150: давхар дарахад 2 торгууль үүсэхгүй (10 сек дотор ижил хүн, алдаа, дүн, тавьсан хүн)
+    await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(9::int4, hashtext(${'u:' + userId}))`;
+    const dup = await tx.penalty.findFirst({ where: { userId, createdById: actor.id, amount, category: lateMinutes ? `${category} (${lateMinutes} мин)` : category, status: 'ACTIVE', createdAt: { gte: new Date(Date.now() - 10_000) } } });
+    if (dup) return dup;
     const p = await tx.penalty.create({ data: {
       type, category: lateMinutes ? `${category} (${lateMinutes} мин)` : category, amount, description: s(input.description, 500), userId, userName: u.name,
       orderId: order?.id ?? null, orderNumber, pageName: s(input.pageName, 120), customerPhone: s(input.customerPhone, 20), customerName: s(input.customerName, 120), lateMinutes,
@@ -139,11 +171,17 @@ export async function cancelPenalty(actor: UserActor, idIn: unknown, input: { no
   if (!canCancel(actor.roles)) throw forbidden('Торгуулийг зөвхөн Супер админ, Админ цуцална');
   const id = Number(idIn);
   const note = String(input.note ?? '').trim().slice(0, 300);
-  if (note.length < 3) throw badRequest('Цуцлах шалтгаанаа бичнэ үү', 'reason_required');
+  if (note.length < 5) throw badRequest('Цуцлах шалтгаанаа бичнэ үү', 'reason_required');
+  if (!Number.isInteger(id) || id <= 0) throw notFound('Торгууль олдсонгүй');
   return db.$transaction(async (tx) => {
-    const p = await tx.penalty.findUnique({ where: { id } });
-    if (!p) throw notFound('Торгууль олдсонгүй');
+    await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
+    const p0 = await tx.penalty.findUnique({ where: { id }, select: { userId: true } });
+    if (!p0) throw notFound('Торгууль олдсонгүй');
+    // Аудит #150: цалин цоожлохтой ижил (ажилтны) түгжээ — цоожлох мөчид цуцалж хасагдсан мөнгө алдагдахгүй
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(9::int4, hashtext(${'u:' + p0.userId}))`;
+    const p = await tx.penalty.findUniqueOrThrow({ where: { id } });
     if (p.status === 'CANCELLED') return { penalty: serialize(p), duplicate: true };
+    if (p.userId === actor.id) throw forbidden('Өөрийнхөө торгуулийг цуцлах боломжгүй — өөр хүн (Супер админ) цуцална');
     if (p.deducted) throw conflict('Цалингаас хасагдсан торгууль — эхлээд цалингийн тооцоонд засна', 'deducted');
     // Хэсэгчлэн суутгагдсан (#124-Е1): бүхэлд нь цуцлахгүй — зөвхөн суутгаагүй үлдэгдлийг цуцална (суутгасан дүн хэвээр)
     if (p.deductedAmount > 0) {
@@ -153,7 +191,7 @@ export async function cancelPenalty(actor: UserActor, idIn: unknown, input: { no
       await writeAudit(actor, 'penalty.remaining_cancelled', 'Penalty', String(id), { user: p.userName, category: p.category, amount: p.amount, deducted: p.deductedAmount, cancelled: p.amount - p.deductedAmount, note }, tx, ['penalty', 'money']);
       return { penalty: serialize(await tx.penalty.findUniqueOrThrow({ where: { id } })), duplicate: false };
     }
-    const n = await tx.penalty.updateMany({ where: { id, status: 'ACTIVE', deducted: false }, data: { status: 'CANCELLED', cancelledAt: new Date(), cancelledByName: actor.name, cancelNote: note, version: { increment: 1 } } });
+    const n = await tx.penalty.updateMany({ where: { id, status: 'ACTIVE', deducted: false, deductedAmount: 0 }, data: { status: 'CANCELLED', cancelledAt: new Date(), cancelledByName: actor.name, cancelNote: note, version: { increment: 1 } } });
     if (!n.count) throw conflict('Торгууль өөрчлөгдсөн байна — дахин ачаална уу', 'stale');
     await writeAudit(actor, 'penalty.cancelled', 'Penalty', String(id), { user: p.userName, category: p.category, amount: p.amount, note }, tx, ['penalty', 'money']);
     return { penalty: serialize(await tx.penalty.findUniqueOrThrow({ where: { id } })), duplicate: false };
@@ -164,9 +202,12 @@ export async function cancelPenalty(actor: UserActor, idIn: unknown, input: { no
 export async function setDeducted(actor: UserActor, idIn: unknown) {
   if (!canDeduct(actor.roles)) throw forbidden('Торгуулийг цалингаас хасах эрх нягтлан, админд');
   const id = Number(idIn);
+  if (!Number.isInteger(id) || id <= 0) throw notFound('Торгууль олдсонгүй');
   return db.$transaction(async (tx) => {
+    await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
     const p = await tx.penalty.findUnique({ where: { id } });
     if (!p) throw notFound('Торгууль олдсонгүй');
+    if (p.userId === actor.id) throw forbidden('Өөрийнхөө торгуулийг «Цалингаас хассан» гэж тэмдэглэх боломжгүй');
     if (p.status !== 'ACTIVE') throw conflict('Цуцлагдсан торгууль', 'cancelled');
     if (p.deducted) return { penalty: serialize(p), duplicate: true };
     await markDeducted(tx, [id], actor);
@@ -175,8 +216,10 @@ export async function setDeducted(actor: UserActor, idIn: unknown) {
 }
 export async function markDeducted(tx: Tx, ids: number[], actor: Actor) {
   if (!ids.length) return 0;
+  const before = await tx.penalty.findMany({ where: { id: { in: ids }, status: 'ACTIVE', deducted: false }, select: { id: true, userName: true, amount: true, deductedAmount: true, category: true } });
   const n = await tx.penalty.updateMany({ where: { id: { in: ids }, status: 'ACTIVE', deducted: false }, data: { deducted: true, deductedAt: new Date(), deductedByName: actor.name, version: { increment: 1 } } });
-  if (n.count) await writeAudit(actor, 'penalty.deducted', 'Penalty', ids.join(','), { count: n.count }, tx, ['penalty', 'money']);
+  // Аудит #150: түүхэнд дэлгэрэнгүй — хэн, хэдэн төгрөг, өмнө нь хэд хасагдсан байсан
+  if (n.count) await writeAudit(actor, 'penalty.deducted', 'Penalty', ids.join(','), { count: n.count, items: before.map((b) => ({ id: b.id, user: b.userName, category: b.category, amount: b.amount, deductedBefore: b.deductedAmount })) } as unknown as Prisma.InputJsonValue, tx, ['penalty', 'money']);
   return n.count;
 }
 
@@ -211,7 +254,13 @@ async function summarize(w: Prisma.PenaltyWhereInput) {
 
 export async function listPenalties(actor: UserActor, f: PenaltyFilter) {
   if (!canView(actor.roles, 'penalties')) throw forbidden();
-  const page = Math.max(1, Math.floor(Number(f.page) || 1));
+  const page = Math.max(1, Math.min(500, Math.floor(Number(f.page) || 1)));
+  // Аудит #150: хугацаа 1 жил хүртэл (хоосон бол сүүлийн 1 жил) — бүх түүхийг хуудас бүрт нийлүүлэхгүй
+  const to = f.to && isYmd(f.to) ? f.to : ubDay();
+  const from = f.from && isYmd(f.from) ? f.from : addDays(to, -365);
+  if (from > to) throw badRequest('Эхлэх огноо дуусахаас хойш байна');
+  if (addDays(from, 366) < to) throw badRequest('Хугацаа 1 жилээс урт байж болохгүй', 'range_too_long');
+  f = { ...f, from, to };
   const w = where(f);
   const [items, total, summary, staff] = await Promise.all([
     db.penalty.findMany({ where: w, orderBy: { createdAt: 'desc' }, skip: (page - 1) * 50, take: 50 }),
@@ -223,7 +272,8 @@ export async function listPenalties(actor: UserActor, f: PenaltyFilter) {
     page, total, pages: Math.max(1, Math.ceil(total / 50)), summary,
     canManage: canManage(actor.roles), canDeduct: canDeduct(actor.roles), canCancel: canCancel(actor.roles),
     items: items.map(serialize),
-    staff: staff.map((s) => ({ ...s, defaultType: typeForRoles(s.roles) })),
+    staff: staff.filter((s) => s.id !== actor.id && (!onlyOppLead(actor.roles) || s.roles.some((r) => r === 'OPERATOR' || r === 'OPERATOR_LEAD')))
+      .map((s) => ({ ...s, defaultType: salaryPenaltyType(s.roles) ?? typeForRoles(s.roles), fixedType: salaryPenaltyType(s.roles) })),
   };
 }
 
@@ -249,7 +299,7 @@ export async function employeeInfo(actor: UserActor, userIdIn: unknown) {
 /** «Миний торгууль» — зөвхөн өөрийнх */
 export async function myPenalties(actor: UserActor, f: PenaltyFilter) {
   if (!canView(actor.roles, 'my-penalties')) throw forbidden();
-  const page = Math.max(1, Math.floor(Number(f.page) || 1));
+  const page = Math.max(1, Math.min(500, Math.floor(Number(f.page) || 1)));
   const w = where(f, actor.id);
   const [items, total, summary] = await Promise.all([
     db.penalty.findMany({ where: w, orderBy: { createdAt: 'desc' }, skip: (page - 1) * 50, take: 50 }),
@@ -282,13 +332,15 @@ export async function autoPenaltyForIssue(tx: Tx, actor: Actor, o: { id: number;
     }
   }
   if (!user) return `${PENALTY_TYPE_LABEL[type]}: хариуцагч олдсонгүй — торгууль үүссэнгүй (Алдаа удирдлагаас гараар тавина)`;
-  const exists = await tx.penalty.findFirst({ where: { orderId: o.id, type, auto: true, status: 'ACTIVE' }, select: { id: true } });
+  // Аудит #150: хариуцагчийн цалингаас хасагдах төрлөөр (жишээ: оператор + маркетинг хүнд маркетингийн алдаа → опп-ын төрөл)
+  const tKind = salaryPenaltyType(user.roles) ?? type;
+  const exists = await tx.penalty.findFirst({ where: { orderId: o.id, type: { in: [type, tKind] }, auto: true, status: 'ACTIVE' }, select: { id: true } });
   if (exists) return null;
   const cfg = await readPenaltyConfig(tx);
   const amount = cfg.autoAmount[type as keyof PenaltyConfig['autoAmount']];
   const what = ISSUE_TEXT[o.issueType ?? ''] ?? 'Асуудал';
   const p = await tx.penalty.create({ data: {
-    type, category: `${what}${fault === 'WAREHOUSE' ? ' (Агуулах)' : ''}`, amount, description: `${what} — Захиалга №${o.number}`, userId: user.id, userName: user.name,
+    type: tKind, category: `${what}${fault === 'WAREHOUSE' ? ' (Агуулах)' : ''}`, amount, description: `${what} — Захиалга №${o.number}`, userId: user.id, userName: user.name,
     orderId: o.id, orderNumber: o.number, auto: true, createdById: actor.id, createdByName: actor.name,
   } });
   await writeAudit(actor, 'penalty.auto_created', 'Penalty', String(p.id), { user: user.name, type, amount, order: o.number }, tx, ['penalty', 'money']);

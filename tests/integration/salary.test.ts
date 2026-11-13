@@ -116,7 +116,9 @@ describe('цоож: торгууль, зээл, өр — давхардахгү�
     await S.setConfig(acc, { staffKey: key, baseSalary: 1_000_000 });
     const p1 = await PN.createPenalty(pen, { userId: op.id, customName: 'Коммент шүүгээгүй', amount: 5000 });
     const p2 = await PN.createPenalty(pen, { userId: op.id, customName: 'Чат шүүгээгүй', amount: 5000 });
-    await PN.createPenalty(pen, { userId: op.id, customName: 'Хаяг тодорхойгүй', amount: 5000 }); // хуучин шиг хасагдахгүй
+    // #150: зөвхөн системийн автомат «Хаяг тодорхойгүй» хасагдахгүй (гараар бичсэн нэр биш)
+    const pa = await PN.createPenalty(pen, { userId: op.id, customName: 'Хаяг тодорхойгүй', amount: 5000 });
+    await db.penalty.update({ where: { id: pa.id }, data: { auto: true } });
     const half = Number(U.ubDay().slice(8)) <= 15 ? 1 : 2;
     const prep = await S.prepareSalary(acc, key, ym, half);
     expect(prep.auto.penaltyTotal).toBe(10000);

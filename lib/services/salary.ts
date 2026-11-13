@@ -1,4 +1,4 @@
-import type { PenaltyType, Prisma, Role } from '@prisma/client';
+import type { Prisma, Role } from '@prisma/client';
 import { db } from '../db';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../errors';
 import { writeAudit } from '../audit';
@@ -8,6 +8,7 @@ import { dateOnly, isYmd, ubDayStart, ymdOf } from '../ubdate';
 import { hashPassword, verifyPassword } from '../password';
 import { addDays } from './delivery/core';
 import { chargeLoanTx } from './stock/loans';
+import { isUnclearAddressAuto, salaryPenaltyType } from './penalties';
 import { evaluationSalary } from './outflow';
 import type { UserActor } from './users';
 
@@ -25,7 +26,6 @@ const KEY_CODE = 'salary.lockCode';
 export const EVAL_LABEL = 'Үнэлгээний цалин (автомат)';
 // Аудит #149: ахлах жолоочийн цалин энд (бараа зээл нь цалингаас суутгагдана); жолооч — «Тооцоо»-д
 const EXCLUDED_ROLES: Role[] = ['DRIVER', 'SUPER_ADMIN', 'SUPPLIER'];
-const ROLE_PENALTY: Partial<Record<Role, PenaltyType>> = { OPERATOR: 'OPP_ERROR', OPERATOR_LEAD: 'OPP_ERROR', MARKETING: 'MARKETING_ERROR', MARKETING_LEAD: 'MARKETING_ERROR', WAREHOUSE: 'WAREHOUSE_ERROR' };
 export const DAY_TYPE_LABEL: Record<string, string> = { LEAVE: 'Чөлөөтэй', SICK: 'Өвчтэй', ABSENT: 'Тасалсан', DAY_OFF: 'Амарсан' };
 
 const assert = (a: UserActor) => { if (!canEdit(a.roles, 'salary')) throw forbidden('Ажилтны цалинг Супер админ, Админ, Нягтлан хөтөлнө'); };
@@ -112,7 +112,8 @@ export async function salaryBoard(actor: UserActor, ymIn?: string) {
   const [loanIds, debtKeys, penIds, recKeys] = await Promise.all([
     db.staffLoan.findMany({ where: { status: 'ISSUED' }, select: { staffId: true }, distinct: ['staffId'] }),
     db.staffDebt.findMany({ where: { isActive: true, staffKey: { startsWith: 'u:' } }, select: { staffKey: true }, distinct: ['staffKey'] }),
-    db.penalty.findMany({ where: { status: 'ACTIVE', deducted: false }, select: { userId: true }, distinct: ['userId'] }),
+    // Аудит #150: DB дээр DISTINCT (бүх мөрийг Node руу уншихгүй)
+    db.$queryRaw<{ userId: string }[]>`SELECT DISTINCT "userId" FROM "Penalty" WHERE status = 'ACTIVE' AND deducted = false`,
     // Аудит #146: цоожтой ч шилжүүлээгүй цалин бас «дутуу» — ажлаас гарсан хүн самбараас алга болохгүй
     db.staffSalaryRecord.findMany({ where: { OR: [{ isLocked: false }, { transferred: false }] }, select: { staffKey: true }, distinct: ['staffKey'] }),
   ]);
@@ -277,9 +278,10 @@ async function computeInputs(tx: Tx | typeof db, st: Staff, p: Period) {
     orderCount = r[0]?.n ?? 0;
   }
   // Торгууль: хасагдаагүй үлдэгдэл (энэ хугацаа + өмнөхөөс үлдсэн), ролын төрлөөр; «Хаяг тодорхойгүй» хасна (хуучин шиг)
-  const ptype = st.external ? null : st.roles.map((r) => ROLE_PENALTY[r]).find(Boolean) ?? null;
+  // Аудит #150: торгуулийн модультай нэг эх сурвалж (salaryPenaltyType)
+  const ptype = st.external ? null : salaryPenaltyType(st.roles);
   const pens = st.external ? [] : await tx.penalty.findMany({ where: { userId: st.userId!, status: 'ACTIVE', deducted: false, createdAt: { lt: ubDayStart(addDays(p.end, 1)) }, ...(ptype ? { type: ptype } : {}) }, orderBy: { createdAt: 'asc' } });
-  const penalties = pens.filter((x) => !/хаяг тодорхойгүй/i.test(`${x.category} ${x.description ?? ''}`)).map((x) => ({ id: x.id, category: x.category, createdAt: x.createdAt, amount: x.amount, remaining: x.amount - x.deductedAmount }));
+  const penalties = pens.filter((x) => !isUnclearAddressAuto(x)).map((x) => ({ id: x.id, category: x.category, createdAt: x.createdAt, amount: x.amount, remaining: x.amount - x.deductedAmount }));
   // Зээлсэн бараа: олгосон, буцаагаагүй (хөнгөлөлттэй үнээр)
   const loans = st.external ? [] : (await tx.staffLoan.findMany({ where: { staffId: st.userId!, status: 'ISSUED' }, include: { lines: true }, orderBy: { issuedAt: 'asc' } }))
     .map((l) => { const open = l.lines.map((x) => ({ q: x.qty - x.returnedQty - x.chargedQty, d: x.deduction ?? 0 })).filter((x) => x.q > 0); return { id: l.id, issuedAt: l.issuedAt, pieces: open.reduce((s, x) => s + x.q, 0), amount: open.reduce((s, x) => s + x.q * x.d, 0), note: l.note }; })

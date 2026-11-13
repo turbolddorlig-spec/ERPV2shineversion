@@ -397,6 +397,8 @@ export async function resolveIssue(actor: UserActor, idIn: unknown, input: { act
     const o = await tx.order.findUniqueOrThrow({ where: { id } });
     assertLockedDrivers(locked, [o.driverId, o.postponedByDriverId]);
     if (o.issueStatus !== 'PENDING') return { order: o, duplicate: true, penaltyWarning: null as string | null };
+    // Аудит #150: өөрийн авсан захиалгын асуудлыг өөрөө «Цуцлах»-аар шийдэж бурууг бусдад хуваарилахгүй (Супер админаас бусад)
+    if (action === 'cancel' && o.operatorId === actor.id && !actor.roles.includes('SUPER_ADMIN')) throw forbidden('Өөрийн авсан захиалгын асуудлыг өөр хүн (ахлах оператор, админ) шийднэ');
     let penaltyWarning: string | null = null;
     const base = { issueResolvedAt: new Date(), issueResolvedByName: actor.name, issueResolveNote: note };
     if (action === 'fix') {
