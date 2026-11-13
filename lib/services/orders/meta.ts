@@ -5,6 +5,7 @@ import { badRequest, forbidden } from '../../errors';
 import { writeAudit } from '../../audit';
 import { canManageOrderSettings } from '../../permissions';
 import type { UserActor } from '../users';
+import { decrypt, encrypt } from '../../secret';
 
 /**
  * Meta Conversions API — Purchase (#7, #43 5, MASTER §7).
@@ -23,7 +24,10 @@ const sha = (s: string) => createHash('sha256').update(s.trim().toLowerCase()).d
 async function readConfig(tx: Prisma.TransactionClient | typeof db = db) {
   const rows = await tx.appSetting.findMany({ where: { key: { in: Object.values(KEYS) } } });
   const m = new Map(rows.map((r) => [r.key, typeof r.value === 'string' ? r.value : String(r.value ?? '')]));
-  return { pixelId: m.get(KEYS.pixel) || '', token: m.get(KEYS.token) || '', testCode: m.get(KEYS.test) || '' };
+  // Аудит #155: токен шифрлэгдсэн (v1:…) хадгалагдана; өмнөх энгийн текстийг ч уншина (дараагийн хадгалалтад шифрлэгдэнэ)
+  const raw = m.get(KEYS.token) || '';
+  const token = raw.startsWith('v1:') ? decrypt(raw) ?? '' : raw;
+  return { pixelId: m.get(KEYS.pixel) || '', token, testCode: m.get(KEYS.test) || '' };
 }
 
 /** Баталгаажсан захиалгыг дараалалд оруулна. Pixel тохируулаагүй бол SKIPPED (дараа нь тохируулахад хуучнууд үерлэхгүй). */
@@ -96,11 +100,19 @@ export async function processMetaQueue(limit = 25): Promise<{ sent: number; fail
 
 // ───────────────────────── тохиргоо, лог (админ) ─────────────────────────
 
+let countsCache: { at: number; v: { status: string; _count: number }[] } | null = null;
+async function metaCounts() {
+  if (countsCache && Date.now() - countsCache.at < (process.env.NODE_ENV === 'test' ? 0 : 60_000)) return countsCache.v;
+  const v = (await db.metaEvent.groupBy({ by: ['status'], _count: true })).map((c) => ({ status: c.status as string, _count: c._count }));
+  countsCache = { at: Date.now(), v };
+  return v;
+}
 export async function getMetaSettings(actor: UserActor) {
   if (!canManageOrderSettings(actor.roles)) throw forbidden();
   const cfg = await readConfig();
+  // Аудит #155: бүх үйл явдлын тоо (захиалга бүрт нэг, ~1 сая) — 60 сек кэш
   const [counts, recent] = await Promise.all([
-    db.metaEvent.groupBy({ by: ['status'], _count: true }),
+    metaCounts(),
     db.metaEvent.findMany({ orderBy: { id: 'desc' }, take: 30 }),
   ]);
   const nums = new Map((await db.order.findMany({ where: { id: { in: recent.map((r) => r.orderId) } }, select: { id: true, number: true, total: true } })).map((o) => [o.id, o]));
@@ -122,7 +134,7 @@ export async function setMetaSettings(actor: UserActor, input: { pixelId?: unkno
   if (input.token !== undefined && String(input.token).trim()) {
     const t = String(input.token).trim();
     if (t.length < 20 || t.length > 500 || /\s/.test(t)) throw badRequest('Access Token буруу');
-    upd.push([KEYS.token, t]);
+    upd.push([KEYS.token, encrypt(t)]);
   }
   if (input.testCode !== undefined) upd.push([KEYS.test, String(input.testCode ?? '').trim().slice(0, 40)]);
   await db.$transaction(async (tx) => {

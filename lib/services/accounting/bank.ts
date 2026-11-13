@@ -569,3 +569,48 @@ export async function searchOrdersForMatch(actor: UserActor, qIn: unknown) {
   const pm = new Map(paid.map((p) => [p.orderId, p._sum.amount ?? 0]));
   return { items: items.map((i) => ({ ...i, paid: pm.get(i.id) ?? 0 })) };
 }
+
+// ───────────── Аудит #155: төлсөн ч жолооч / асуудлаар цуцлагдсан (эзний шийдвэр) ─────────────
+/**
+ * Оператор цуцлахад мөнгө «Таараагүй» руу буцна (Б1). Жолооч эсвэл «Асуудлууд»-аар цуцлахад мөнгө захиалгадаа НААЛДСАН чигтээ
+ * үлдэнэ (хуучин шиг, дахин хүргэвэл бэлэн) — харин Супер админд дээд сануулга + жагсаалт; шалтгааныг олоод «Шийдсэн» гэж тэмдэглэнэ.
+ * Дахин хүргэгдсэн, мөнгийг нь буцаасан / өөр захиалгад тааруулсан бол жагсаалтаас өөрөө алга болно.
+ */
+const PAID_CANCELLED = Prisma.sql`
+  FROM "Order" o
+  JOIN LATERAL (SELECT sum(t.amount - t."excessRefunded")::int AS paid, count(*)::int AS n FROM "BankTransaction" t
+    WHERE t."orderId" = o.id AND t.status IN ('MATCHED','EXCESS_AMOUNT','PARTIAL_PAYMENT') AND NOT t.refunded AND NOT t."isDuplicate") b ON b.n > 0
+  WHERE o.status = 'CANCELLED' AND o."paidCancelReviewedAt" IS NULL AND o.id IN (SELECT DISTINCT "orderId" FROM "BankTransaction" WHERE "orderId" IS NOT NULL AND status IN ('MATCHED','EXCESS_AMOUNT','PARTIAL_PAYMENT') AND NOT refunded AND NOT "isDuplicate")`;
+let paidCancelCache: { at: number; n: number } | null = null;
+export async function paidCancelledAlert(roles: string[]): Promise<{ count: number } | null> {
+  if (!roles.includes('SUPER_ADMIN')) return null;
+  if (!paidCancelCache || Date.now() - paidCancelCache.at > (process.env.NODE_ENV === 'test' ? 0 : 60_000)) {
+    const r = await db.$queryRaw<{ n: number }[]>`SELECT count(*)::int AS n ${PAID_CANCELLED}`;
+    paidCancelCache = { at: Date.now(), n: r[0]?.n ?? 0 };
+  }
+  return paidCancelCache.n ? { count: paidCancelCache.n } : null;
+}
+export async function paidCancelledList(actor: UserActor) {
+  if (!actor.roles.includes('SUPER_ADMIN')) throw forbidden('Зөвхөн Супер админ');
+  const rows = await db.$queryRaw<{ id: number; number: string; phone: string; total: number; paid: number; cancelReason: string | null; cancelNote: string | null; cancelledByName: string | null; cancelledAt: Date | null; driverName: string | null }[]>`
+    SELECT o.id, o.number, o.phone, o.total, b.paid, o."cancelReason"::text AS "cancelReason", o."cancelNote", o."cancelledByName", o."cancelledAt", o."driverName"
+    ${PAID_CANCELLED} ORDER BY o."cancelledAt" DESC NULLS LAST LIMIT 500`;
+  return { items: rows };
+}
+export async function markPaidCancelReviewed(actor: UserActor, idIn: unknown, noteIn: unknown) {
+  if (!actor.roles.includes('SUPER_ADMIN')) throw forbidden('Зөвхөн Супер админ');
+  const id = Number(idIn);
+  if (!Number.isInteger(id) || id <= 0) throw notFound('Захиалга олдсонгүй');
+  const note = String(noteIn ?? '').trim().slice(0, 300);
+  if (note.length < 3) throw badRequest('Юу болсныг товч бичнэ үү', 'reason_required');
+  return inTx(async (tx) => {
+    if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
+    const o = await tx.order.findUniqueOrThrow({ where: { id }, select: { number: true, status: true, paidCancelReviewedAt: true } });
+    if (o.paidCancelReviewedAt) return { ok: true, duplicate: true };
+    if (o.status !== 'CANCELLED') throw conflict('Захиалга цуцлагдсан төлөвт байхгүй', 'bad_status');
+    await tx.order.update({ where: { id }, data: { paidCancelReviewedAt: new Date(), paidCancelReviewedByName: actor.name } });
+    await writeAudit(actor, 'bank.paid_cancel_reviewed', 'Order', String(id), { number: o.number, note }, tx, ['money', 'bank']);
+    paidCancelCache = null;
+    return { ok: true, duplicate: false };
+  });
+}

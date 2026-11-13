@@ -68,9 +68,10 @@ export async function login(phoneInput: string, password: string, meta: ClientMe
     throw new AppError(401, GENERIC_FAIL, 'invalid_credentials');
   }
 
-  if (user.lockedUntil && user.lockedUntil.getTime() > now) {
-    throw new AppError(423, lockMessage(user.lockedUntil), 'locked');
-  }
+  // Аудит #155 (эзний шийдвэр): өмнө нь энэ хүн амжилттай нэвтэрч байсан (90 хоногт) «танил» сүлжээ — бусад сүлжээний буруу
+  // оролдлогоор тавигдсан нийт цоож түүнд хамаарахгүй (халдагч эзнийг байнга түгжиж чадахгүй); энэ IP-ийн 5 удаагийн хязгаар хэвээр.
+  const knownIp = !!meta.ip && !!(await db.auditLog.findFirst({ where: { actorId: user.id, action: 'auth.login', ip: meta.ip, at: { gte: new Date(now - 90 * 86_400_000) } }, select: { id: true } }));
+  const globallyLocked = !knownIp && !!user.lockedUntil && user.lockedUntil.getTime() > now;
   const uS = slot(byUserIp, `${user.id}|${ipKey}`);
   if (uS.lockedUntil > now) throw new AppError(423, lockMessage(new Date(uS.lockedUntil)), 'locked');
   // Суудал (синхрон — await-аас өмнө): энэ IP-аас шалгагдаж буй + сүүлийн буруу < 5
@@ -86,10 +87,17 @@ export async function login(phoneInput: string, password: string, meta: ClientMe
     ok = (await verifyPassword(password, user.passwordHash)) || (password.trim() !== password && password.trim().length > 0 && (await verifyPassword(password.trim(), user.passwordHash)));
   } finally { uS.inflight--; ipS.inflight--; }
 
+  // Аудит #155: түгжээтэй эсэхийг нууц үг шалгасны ДАРАА хэлнэ — буруу нууц үгтэйд энгийн «буруу» (утас бүртгэлтэй эсэх задрахгүй)
+  if (ok && globallyLocked) throw new AppError(423, lockMessage(user.lockedUntil!), 'locked');
   if (!ok) {
     const t = Date.now();
     uS.fails.push(t); ipS.fails.push(t);
     if (recent(ipS, t) >= MAX_FAILED_IP) ipS.lockedUntil = t + WINDOW_MS;
+    if (globallyLocked || knownIp) {
+      // Аль хэдийн нийт цоожтой (дахин сунгахгүй), эсвэл танил сүлжээ (нийт тоолуурт оруулахгүй) — зөвхөн энэ IP-ийн хязгаар
+      if (recent(uS, t) >= MAX_FAILED) { uS.lockedUntil = t + WINDOW_MS; throw new AppError(423, lockMessage(new Date(uS.lockedUntil)), 'locked'); }
+      throw new AppError(401, GENERIC_FAIL, 'invalid_credentials');
+    }
     // Атомаар нэмэгдүүлнэ — бүх IP нийлсэн тоо (тархсан халдлага)
     const rows = await db.$queryRaw<{ failedLoginCount: number }[]>`
       UPDATE "User" SET "failedLoginCount" = "failedLoginCount" + 1, "updatedAt" = now()

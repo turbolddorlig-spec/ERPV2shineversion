@@ -387,6 +387,26 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
 const CANCEL_REASONS: CancelReason[] = ['CUSTOMER_CANCELLED', 'DUPLICATE', 'OUT_OF_STOCK', 'NO_ANSWER', 'OTHER'];
 
 /** Цуцлах (#43 11): шалтгаан сонгоно + тайлбар. Нөөц суллагдана. Хүргэлтэд гарсан бол жолоочийн модульд (Модуль 5). */
+/**
+ * Аудит #155 (эзний шийдвэр): Супер админы «Цуцлах» — ЯМАР Ч төлөвт нэг товчоор. Үлдэгдэл зөвхөн журналаар (B2):
+ *  • Төлбөр хүлээж буй / Шинэ / Оноосон — нөөц суллагдана (бараа агуулахад);
+ *  • Хүргэлтэд — бараа жолоочид үлдэж агуулахад буцаалтаар орно;
+ *  • Хүргэсэн — нягтлангийн «Төлөв солих»-оор: бараа үйлчлүүлэгчээс → жолоочид, тэндээс агуулахад буцаалтаар (тооцоо ноорог болно).
+ */
+export async function saCancelOrder(actor: UserActor, idInput: unknown, input: { reason?: unknown; note?: unknown; version?: unknown }) {
+  if (!actor.roles.includes('SUPER_ADMIN')) throw forbidden('Зөвхөн Супер админ');
+  const id = Number(idInput);
+  if (!Number.isInteger(id) || id <= 0) throw notFound('Захиалга олдсонгүй');
+  const o = await db.order.findUnique({ where: { id }, select: { status: true, version: true } });
+  if (!o) throw notFound('Захиалга олдсонгүй');
+  if (o.status !== 'DELIVERED') return cancelOrder(actor, id, input);
+  if (input.version !== undefined && Number(input.version) !== o.version) throw staleError();
+  const note = String(input.note ?? '').trim();
+  if (note.replace(/\s/g, '').length < 5) throw badRequest('Цуцлах тайлбараа бичнэ үү (5+ тэмдэгт)', 'reason_required');
+  const { toggleOrderStatus } = await import('../accounting/settle');
+  return toggleOrderStatus(actor, id, { target: 'CANCELLED', note: `Супер админ цуцалсан (хүргэсэн): ${note}`, version: input.version });
+}
+
 export async function cancelOrder(actor: UserActor | typeof SYSTEM_ACTOR & { roles?: never }, idInput: unknown, input: { reason?: unknown; note?: unknown; version?: unknown }, opts: { system?: boolean } = {}) {
   if (!opts.system && !canEditOrders((actor as UserActor).roles)) throw forbidden('Захиалга цуцлах эрхгүй');
   const id = Number(idInput);

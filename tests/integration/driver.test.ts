@@ -445,9 +445,7 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     const y = U.ubDay(new Date(), -1);
     await db.handover.updateMany({ where: { driverId: drv.id }, data: { date: U.dateOnly(y) } });
     const app2 = await DR.driverOrders(drv, 'delivered');
-    // Шөнийн ээлж (#144): 06:00-оос өмнө хүлээн авсан өчигдрийн падаан аппад идэвхтэй хэвээр — тестийн цагаас үл хамаарна
-    const night = (new Date().getUTCHours() + 8) % 24 < 6;
-    expect([app2.counts.delivered, app2.money.cash, app2.items.length]).toEqual(night ? [2, 30000, 2] : [0, 0, 0]);
+    expect([app2.counts.delivered, app2.money.cash, app2.items.length]).toEqual([0, 0, 0]);
     expect((await G.driverControl(sa)).items.find((x) => x.id === drv.id)?.delivered ?? 0).toBe(0);
     expect((await G.driverControl(sa, y)).items.find((x) => x.id === drv.id)?.delivered).toBe(2);
   });

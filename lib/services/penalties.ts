@@ -75,8 +75,8 @@ export async function readPenaltyConfig(tx: Tx | typeof db = db): Promise<Penalt
   const v = (s?.value ?? {}) as Partial<PenaltyConfig>;
   return { autoAmount: { ...DEFAULT_CONFIG.autoAmount, ...(v.autoAmount ?? {}) }, categories: v.categories ?? DEFAULT_CONFIG.categories };
 }
-async function saveConfig(c: PenaltyConfig, actor: UserActor) {
-  await db.appSetting.upsert({ where: { key: KEY }, create: { key: KEY, value: c as unknown as Prisma.InputJsonValue, updatedById: actor.id }, update: { value: c as unknown as Prisma.InputJsonValue, updatedById: actor.id } });
+async function saveConfig(c: PenaltyConfig, actor: UserActor, tx: Tx | typeof db = db) {
+  await tx.appSetting.upsert({ where: { key: KEY }, create: { key: KEY, value: c as unknown as Prisma.InputJsonValue, updatedById: actor.id }, update: { value: c as unknown as Prisma.InputJsonValue, updatedById: actor.id } });
 }
 const cleanAmount = (v: unknown, label = 'Дүн') => { const n = Number(v); if (!Number.isInteger(n) || n <= 0 || n > PENALTY_MAX) throw badRequest(`${label} буруу (1 – ${PENALTY_MAX.toLocaleString('en-US')}₮)`); return n; };
 const cleanType = (v: unknown) => { const t = String(v ?? '') as PenaltyType; if (!TYPES.includes(t)) throw badRequest('Алдааны төрлөө сонгоно уу'); return t; };
@@ -91,7 +91,10 @@ export async function penaltyConfig(actor: UserActor) {
 /** Алдааны нэр нэмэх / засах (нэр, анхдагч дүн, идэвхтэй) — Алдаа удирдлагын эрхтэй хүн */
 export async function saveCategory(actor: UserActor, input: { id?: unknown; type?: unknown; name?: unknown; defaultAmount?: unknown; active?: unknown; lateMinutes?: unknown }) {
   if (!canManage(actor.roles)) throw forbidden('Алдааны нэрийг Алдаа удирдлагын эрхтэй хүн үүсгэнэ');
-  const c = await readPenaltyConfig();
+  // Аудит #155: зэрэг хадгалахад нэг нь нөгөөгөө дарахгүй — тохиргоог түгжээд уншиж, бичнэ
+  return db.$transaction(async (tx) => {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(7500, 1)`;
+  const c = await readPenaltyConfig(tx);
   const name = String(input.name ?? '').trim().replace(/\s+/g, ' ').slice(0, 80);
   if (name.length < 2) throw badRequest('Алдааны нэрийг бичнэ үү', 'name_required');
   const defaultAmount = cleanAmount(input.defaultAmount, 'Анхдагч дүн');
@@ -103,20 +106,24 @@ export async function saveCategory(actor: UserActor, input: { id?: unknown; type
   const next: PenaltyCategory = { id: cur?.id ?? `c${Date.now().toString(36)}`, type, name, defaultAmount, active: input.active === undefined ? cur?.active ?? true : input.active === true, lateMinutes: input.lateMinutes === undefined ? cur?.lateMinutes : input.lateMinutes === true };
   c.categories = cur ? c.categories.map((x) => (x.id === id ? next : x)) : [...c.categories, next];
   if (c.categories.length > 200) throw badRequest('Хэт олон алдааны нэр');
-  await saveConfig(c, actor);
-  await writeAudit(actor, cur ? 'penalty.category_updated' : 'penalty.category_created', 'AppSetting', KEY, { type, name, defaultAmount, active: next.active, ...(cur ? { from: { name: cur.name, defaultAmount: cur.defaultAmount, active: cur.active } } : {}) }, db, ['settings', 'penalty']);
+  await saveConfig(c, actor, tx);
+  await writeAudit(actor, cur ? 'penalty.category_updated' : 'penalty.category_created', 'AppSetting', KEY, { type, name, defaultAmount, active: next.active, ...(cur ? { from: { name: cur.name, defaultAmount: cur.defaultAmount, active: cur.active } } : {}) }, tx, ['settings', 'penalty']);
   return next;
+  });
 }
 
 /** Автомат торгуулийн дүн (Тохиргоо) */
 export async function setAutoAmounts(actor: UserActor, input: Record<string, unknown>) {
   if (!canAutoAmount(actor.roles)) throw forbidden('Автомат торгуулийн дүнг админ тохируулна');
-  const c = await readPenaltyConfig();
-  const before = { ...c.autoAmount };
-  for (const k of ['OPP_ERROR', 'MARKETING_ERROR', 'WAREHOUSE_ERROR'] as const) if (input[k] !== undefined) c.autoAmount[k] = cleanAmount(input[k], PENALTY_TYPE_LABEL[k]);
-  await saveConfig(c, actor);
-  await writeAudit(actor, 'penalty.auto_amount', 'AppSetting', KEY, { from: before, to: c.autoAmount }, db, ['settings', 'penalty', 'money']);
-  return c.autoAmount;
+  return db.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(7500, 1)`; // Аудит #155
+    const c = await readPenaltyConfig(tx);
+    const before = { ...c.autoAmount };
+    for (const k of ['OPP_ERROR', 'MARKETING_ERROR', 'WAREHOUSE_ERROR'] as const) if (input[k] !== undefined) c.autoAmount[k] = cleanAmount(input[k], PENALTY_TYPE_LABEL[k]);
+    await saveConfig(c, actor, tx);
+    await writeAudit(actor, 'penalty.auto_amount', 'AppSetting', KEY, { from: before, to: c.autoAmount }, tx, ['settings', 'penalty', 'money']);
+    return c.autoAmount;
+  });
 }
 
 // ───────────────────────── Торгууль ─────────────────────────

@@ -4,6 +4,7 @@ import { badRequest, forbidden, notFound } from '../errors';
 import { canReviewProductEdits, canSeeCost, canView } from '../permissions';
 import { writeAudit } from '../audit';
 import type { UserActor } from './users';
+import { isYmd } from '../ubdate';
 
 /**
  * "Барааны засварын түүх" (шийдвэр #29): бүх засвар нэг дор, хэн/хэзээ/юу/тайлбар.
@@ -48,7 +49,8 @@ function redact(details: Prisma.JsonValue, showCost: boolean): Prisma.JsonValue 
 
 /** Улаанбаатарын өдрийн эхлэл (UTC+8) */
 function ubDayStart(ymd: string, addDays = 0): Date {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) throw badRequest('Огноо буруу');
+  // Аудит #155: байхгүй огноо (2026-13-45) — 500 биш 400
+  if (!isYmd(ymd)) throw badRequest('Огноо буруу');
   const d = new Date(`${ymd}T00:00:00+08:00`);
   d.setUTCDate(d.getUTCDate() + addDays);
   return d;
@@ -56,7 +58,7 @@ function ubDayStart(ymd: string, addDays = 0): Date {
 
 export async function listProductHistory(actor: UserActor, params: HistoryParams) {
   if (!canView(actor.roles, 'product-history') && !(params.productId && canView(actor.roles, 'products'))) throw forbidden();
-  const and: Prisma.AuditLogWhereInput[] = [{ entityType: 'Product' }, { NOT: { action: { startsWith: 'outflow.' } } }];
+  const and: Prisma.AuditLogWhereInput[] = [{ entityType: 'Product' }, { NOT: { action: { startsWith: 'outflow.' } } }, { NOT: { action: { startsWith: 'stock.' } } }];
   if (params.productId) and.push({ entityId: String(params.productId) });
   if (params.actorId) {
     if (!/^[0-9a-f-]{36}$/i.test(params.actorId)) throw badRequest('Хэрэглэгч буруу');
@@ -69,7 +71,7 @@ export async function listProductHistory(actor: UserActor, params: HistoryParams
   let total: number; let rows: Awaited<ReturnType<typeof db.auditLog.findMany>>;
   if (params.unreviewed) {
     // Шалгаагүй: AuditReview-д бичлэггүй (NOT EXISTS — шалгасан засвар олширсон ч хурдан, #124-10), бараа үүсгэснээс бусад засвар
-    const conds: Prisma.Sql[] = [Prisma.sql`a."entityType" = 'Product'`, Prisma.sql`a.action NOT LIKE 'outflow.%'`, Prisma.sql`a.action NOT IN (${Prisma.join(NOT_REVIEWABLE)})`,
+    const conds: Prisma.Sql[] = [Prisma.sql`a."entityType" = 'Product'`, Prisma.sql`a.action NOT LIKE 'outflow.%'`, Prisma.sql`a.action NOT LIKE 'stock.%'`, Prisma.sql`a.action NOT IN (${Prisma.join(NOT_REVIEWABLE)})`,
       Prisma.sql`NOT EXISTS (SELECT 1 FROM "AuditReview" r WHERE r."auditLogId" = a.id)`];
     if (params.productId) conds.push(Prisma.sql`a."entityId" = ${String(params.productId)}`);
     if (params.actorId) conds.push(Prisma.sql`a."actorId" = ${params.actorId}::uuid`);
@@ -120,7 +122,7 @@ export async function unreviewedCount(actor: UserActor, opts: { fresh?: boolean 
   if (!opts.fresh && badgeCache && Date.now() - badgeCache.at < 30_000) return badgeCache.n;
   const rows = await db.$queryRaw<{ n: bigint }[]>`
     SELECT count(*)::bigint AS n FROM "AuditLog" a
-    WHERE a."entityType" = 'Product' AND a.action NOT IN ('product.created', 'product.cost') AND a.action NOT LIKE 'outflow.%'
+    WHERE a."entityType" = 'Product' AND a.action NOT IN ('product.created', 'product.cost') AND a.action NOT LIKE 'outflow.%' AND a.action NOT LIKE 'stock.%'
       AND NOT EXISTS (SELECT 1 FROM "AuditReview" r WHERE r."auditLogId" = a.id)`;
   const n = Number(rows[0]?.n ?? 0);
   badgeCache = { n, at: Date.now() };
@@ -136,7 +138,7 @@ export async function reviewProductEdit(actor: UserActor, auditId: string) {
   if (!/^\d+$/.test(auditId)) throw notFound();
   const row = await db.auditLog.findUnique({ where: { id: BigInt(auditId) } });
   if (!row || row.entityType !== 'Product') throw notFound('Засвар олдсонгүй');
-  if (NOT_REVIEWABLE.includes(row.action)) throw badRequest('Энэ бичлэгийг шалгах шаардлагагүй');
+  if (NOT_REVIEWABLE.includes(row.action) || row.action.startsWith('outflow.') || row.action.startsWith('stock.')) throw badRequest('Энэ бичлэгийг шалгах шаардлагагүй');
   if (row.actorId === actor.id && !actor.roles.includes('SUPER_ADMIN')) throw forbidden('Өөрийн засварыг өөрөө шалгаж болохгүй');
   const made = await db.auditReview.createMany({
     data: [{ auditLogId: row.id, reviewedById: actor.id, reviewedByName: actor.name }],
@@ -156,7 +158,7 @@ export async function reviewAllProductEdits(actor: UserActor) {
     const n = await tx.$executeRaw`
       INSERT INTO "AuditReview" ("auditLogId", "reviewedById", "reviewedByName", "reviewedAt")
       SELECT a.id, ${actor.id}::uuid, ${actor.name}, now() FROM "AuditLog" a
-      WHERE a."entityType" = 'Product' AND a.action NOT IN ('product.created', 'product.cost')
+      WHERE a."entityType" = 'Product' AND a.action NOT IN ('product.created', 'product.cost') AND a.action NOT LIKE 'outflow.%' AND a.action NOT LIKE 'stock.%'
         AND NOT EXISTS (SELECT 1 FROM "AuditReview" r WHERE r."auditLogId" = a.id)
       ON CONFLICT ("auditLogId") DO NOTHING`;
     if (n > 0) await writeAudit(actor, 'product.review_all', 'ProductReview', null, { count: n }, tx);

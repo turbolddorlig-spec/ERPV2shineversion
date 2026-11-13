@@ -66,7 +66,7 @@ describe('эрхийн хүснэгт', () => {
 
 describe('хэн хэнийг удирдах вэ (шийдвэр #19)', () => {
   it('Супер админ — бүгдийг', () => expect(manageableRoles(['SUPER_ADMIN'])).toEqual(ALL_ROLES));
-  it('Админ — Супер админаас бусдыг', () => expect(manageableRoles(['ADMIN'])).not.toContain('SUPER_ADMIN'));
+  it('Админ — Супер админ, админаас бусдыг (#155)', () => { expect(manageableRoles(['ADMIN'])).not.toContain('SUPER_ADMIN'); expect(manageableRoles(['ADMIN'])).not.toContain('ADMIN'); });
   it('Ахлах оператор — зөвхөн Оператор', () => expect(manageableRoles(['OPERATOR_LEAD'])).toEqual(['OPERATOR']));
   it('Ахлах жолооч — зөвхөн Жолооч', () => expect(manageableRoles(['DRIVER_LEAD'])).toEqual(['DRIVER']));
   it('Ахлах маркетинг — зөвхөн Маркетинг', () => expect(manageableRoles(['MARKETING_LEAD'])).toEqual(['MARKETING']));

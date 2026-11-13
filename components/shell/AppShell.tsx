@@ -33,7 +33,7 @@ async function logout() {
 export interface StockAlert { kind: 'mismatch' | 'stale'; count: number; at: string | null; since: string | null }
 const ubTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString('mn-MN', { timeZone: 'Asia/Ulaanbaatar', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 
-export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHref, assignAlert, handoverAlert, jobsAlert, shortageSkip, backupAlert, children }: { user: { name: string; roleLabels: string[] }; nav: NavItem[]; alert?: StockAlert | null; boostAlert?: { red: number; orange: number } | null; reorderAlert?: { urgent: number; order: number; late: number } | null; reorderHref?: string; assignAlert?: { today: number; leftover: number; late: boolean; hour: number } | null; handoverAlert?: { count: number } | null; jobsAlert?: { at: string } | null; shortageSkip?: { date: string; at: string } | null; backupAlert?: { level: 'bad' | 'warn'; text: string }[] | null; children: ReactNode }) {
+export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHref, assignAlert, handoverAlert, paidCancelAlert, jobsAlert, shortageSkip, backupAlert, children }: { user: { name: string; roleLabels: string[] }; nav: NavItem[]; alert?: StockAlert | null; boostAlert?: { red: number; orange: number } | null; reorderAlert?: { urgent: number; order: number; late: number } | null; reorderHref?: string; assignAlert?: { today: number; leftover: number; late: boolean; hour: number } | null; handoverAlert?: { count: number } | null; paidCancelAlert?: { count: number } | null; jobsAlert?: { at: string } | null; shortageSkip?: { date: string; at: string } | null; backupAlert?: { level: 'bad' | 'warn'; text: string }[] | null; children: ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [pathname]);
@@ -235,6 +235,14 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
               <span className="text-[16px]">🔴</span>
               <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">Агуулах өгсөн боловч жолооч 2 цагаас удаан хүлээн аваагүй {handoverAlert.count} падаан байна — бараа жолоочийн гарт, захиалга хүргэлтэд гараагүй.</span>
               <span className="text-[12.5px] underline">Падаан →</span>
+            </Link>
+          ) : null}
+          {paidCancelAlert ? (
+            <Link href="/bank-import?tab=paidCancelled" role="alert" data-paid-cancel-alert
+              className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] border border-warn/40 bg-warn-soft px-4 py-3 text-[13.5px] font-semibold text-warn hover:brightness-95">
+              <span className="text-[16px]">💰</span>
+              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">Төлбөр орсон боловч жолооч / асуудлаар цуцлагдсан {paidCancelAlert.count} захиалга байна — мөнгө нь захиалгадаа наалдсан чигтээ. Шалтгааныг тогтооно уу.</span>
+              <span className="text-[12.5px] underline">Жагсаалт →</span>
             </Link>
           ) : null}
           {reorderAlert ? (

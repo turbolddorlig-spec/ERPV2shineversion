@@ -24,8 +24,13 @@ const TABS: [string, string, keyof Stats | null][] = [['all', 'Бүгд', 'total
 const TONE: Record<string, 'ok' | 'bad' | 'warn' | 'info' | 'neutral' | 'accent'> = { MATCHED: 'ok', UNMATCHED: 'bad', PARTIAL_PAYMENT: 'warn', EXCESS_AMOUNT: 'info', DUPLICATE: 'neutral' };
 const ST_L: Record<string, string> = { PENDING_PAYMENT: 'Төлбөр хүлээж буй', NEW: 'Шинэ', ASSIGNED: 'Оноосон', OUT_FOR_DELIVERY: 'Хүргэлтэд', DELIVERED: 'Хүргэсэн', CANCELLED: 'Цуцлагдсан' };
 
+interface PaidCancel { id: number; number: string; phone: string; total: number; paid: number; cancelReason: string | null; cancelNote: string | null; cancelledByName: string | null; cancelledAt: string | null; driverName: string | null }
+
 export function BankImportClient() {
-  const [tab, setTab] = useState('all');
+  const [tab, setTab] = useState(() => (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tab') === 'paidCancelled' ? 'paidCancelled' : 'all'));
+  // Аудит #155: төлсөн ч жолооч / асуудлаар цуцлагдсан — зөвхөн Супер админд (403 бол таб харагдахгүй)
+  const [pc, setPc] = useState<PaidCancel[] | null>(null);
+  const [pcNote, setPcNote] = useState<{ id: number; number: string; note: string } | null>(null);
   const [q, setQ] = useState('');
   const [qd, setQd] = useState('');
   const [from, setFrom] = useState('');
@@ -41,13 +46,15 @@ export function BankImportClient() {
   const [match, setMatch] = useState<Tx | null>(null);
   const [gset, setGset] = useState(false);
   useEffect(() => { const t = setTimeout(() => { setQd(q); setPage(1); }, 300); return () => clearTimeout(t); }, [q]);
-  const qs = useCallback(() => new URLSearchParams({ ...(tab !== 'all' && tab !== 'changes' ? { tab } : {}), ...(qd ? { q: qd } : {}), ...(from ? { from } : {}), ...(to ? { to } : {}) }), [tab, qd, from, to]);
+  const qs = useCallback(() => new URLSearchParams({ ...(tab !== 'all' && tab !== 'changes' && tab !== 'paidCancelled' ? { tab } : {}), ...(qd ? { q: qd } : {}), ...(from ? { from } : {}), ...(to ? { to } : {}) }), [tab, qd, from, to]);
   const load = useCallback(async () => {
     try {
       const p = qs();
       const [s, g] = await Promise.all([api<Stats>(`/api/bank/stats?${new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}`), api<Gmail>('/api/bank/gmail')]);
       setStats(s); setGmail(g);
-      if (tab === 'changes') setChanges(await api(`/api/bank/price-changes?page=${page}`));
+      api<{ items: PaidCancel[] }>('/api/bank/paid-cancelled').then((r) => setPc(r.items)).catch(() => setPc(null));
+      if (tab === 'paidCancelled') { /* жагсаалтыг дээр уншсан */ }
+      else if (tab === 'changes') setChanges(await api(`/api/bank/price-changes?page=${page}`));
       else { p.set('page', String(page)); setData(await api(`/api/bank?${p}`)); }
       setErr(null);
     } catch (e) { setErr(msg(e)); }
@@ -95,15 +102,29 @@ export function BankImportClient() {
         </div>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex max-w-full gap-1.5 overflow-x-auto pb-1">{TABS.map(([k, l]) => <button key={k} onClick={() => { setTab(k); setPage(1); }} className={clsx('h-9 shrink-0 rounded-full border px-3 text-[13px] font-bold', tab === k ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface text-muted')}>{l}</button>)}</div>
-        {tab !== 'changes' ? <div className="ml-auto flex flex-wrap gap-2">
+        <div className="flex max-w-full gap-1.5 overflow-x-auto pb-1">{TABS.map(([k, l]) => <button key={k} onClick={() => { setTab(k); setPage(1); }} className={clsx('h-9 shrink-0 rounded-full border px-3 text-[13px] font-bold', tab === k ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface text-muted')}>{l}</button>)}
+          {pc ? <button onClick={() => { setTab('paidCancelled'); setPage(1); }} className={clsx('h-9 shrink-0 rounded-full border px-3 text-[13px] font-bold', tab === 'paidCancelled' ? 'border-ink bg-ink text-on-ink' : pc.length ? 'border-warn bg-warn-soft text-warn' : 'border-line bg-surface text-muted')}>💰 Төлсөн ч цуцлагдсан ({pc.length})</button> : null}</div>
+        {tab !== 'changes' && tab !== 'paidCancelled' ? <div className="ml-auto flex flex-wrap gap-2">
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Утга, утас, дүн" className="h-9 w-[180px] rounded-[10px] border border-line bg-surface px-2 text-[13.5px]" aria-label="Хайх" />
           <input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPage(1); }} className="h-9 rounded-[10px] border border-line bg-surface px-2 text-[13px]" aria-label="Эхлэх огноо" />
           <input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }} className="h-9 rounded-[10px] border border-line bg-surface px-2 text-[13px]" aria-label="Дуусах огноо" />
         </div> : null}
       </div>
 
-      {tab === 'changes' ? (
+      {tab === 'paidCancelled' ? (
+        <div className="overflow-hidden rounded-[16px] border border-line bg-surface shadow-card">
+          <p className="px-4 pt-3 text-[13px] text-muted">Жолооч эсвэл «Асуудлууд»-аар цуцлагдсан, мөнгө нь захиалгадаа наалдсан хэвээр захиалгууд. Шалтгааныг тогтоогоод (буцаах / өөр захиалгад тааруулах / дахин хүргэх) «Шийдсэн» гэж тэмдэглэнэ.</p>
+          <div className="overflow-x-auto"><table className="w-full min-w-[860px] text-[13px]">
+            <thead className="bg-surface2 text-[12px] text-muted"><tr><th className="px-3 py-2 text-left">Захиалга</th><th className="px-3 py-2 text-left">Утас</th><th className="px-3 py-2 text-right">Дүн</th><th className="px-3 py-2 text-right">Төлсөн</th><th className="px-3 py-2 text-left">Хэн / хэзээ</th><th className="px-3 py-2 text-left">Шалтгаан</th><th className="px-3 py-2" /></tr></thead>
+            <tbody className="divide-y divide-line">{pc?.map((c) => (
+              <tr key={c.id}><td className="px-3 py-2 font-bold">{c.number}</td><td className="px-3 py-2">{c.phone}</td><td className="px-3 py-2 text-right">{money(c.total)}</td><td className="px-3 py-2 text-right font-bold">{money(c.paid)}</td>
+                <td className="max-w-[200px] px-3 py-2 [overflow-wrap:anywhere]">{c.cancelledByName ?? '—'}{c.driverName && c.driverName !== c.cancelledByName ? ` (жолооч ${c.driverName})` : ''}<div className="text-[12px] text-muted">{c.cancelledAt ? ubDateTime(c.cancelledAt) : ''}</div></td>
+                <td className="max-w-[260px] px-3 py-2 [overflow-wrap:anywhere]">{c.cancelReason === 'ISSUE' ? 'Асуудал: ' : c.cancelReason === 'DRIVER_CANCELLED' ? 'Жолооч: ' : ''}{c.cancelNote ?? ''}</td>
+                <td className="px-3 py-2 text-right"><Button size="sm" variant="secondary" onClick={() => setPcNote({ id: c.id, number: c.number, note: '' })}>Шийдсэн</Button></td></tr>
+            ))}</tbody></table></div>
+          {pc && !pc.length ? <p className="px-4 py-10 text-center text-muted">Ийм захиалга алга</p> : null}
+        </div>
+      ) : tab === 'changes' ? (
         <div className="overflow-hidden rounded-[16px] border border-line bg-surface shadow-card">
           <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-[13px]">
             <thead className="bg-surface2 text-[12px] text-muted"><tr><th className="px-3 py-2 text-left">Захиалга</th><th className="px-3 py-2 text-left">Утас</th><th className="px-3 py-2 text-right">Одоогийн дүн</th><th className="px-3 py-2 text-right">Төлсөн</th><th className="px-3 py-2 text-right">Зөрүү</th><th className="px-3 py-2 text-left">Төлөв</th><th className="px-3 py-2 text-left">Оператор</th></tr></thead>
@@ -153,6 +174,16 @@ export function BankImportClient() {
         </div>
         </>
       )}
+      {pcNote ? (
+        <Modal open onClose={() => setPcNote(null)} title={`«Шийдсэн» · ${pcNote.number}`} subtitle="Юу болсныг товч бичнэ (түүхэнд үлдэнэ)"
+          footer={<><Button onClick={() => setPcNote(null)}>Болих</Button><Button variant="primary" loading={busy} disabled={pcNote.note.trim().length < 3} onClick={async () => {
+            setBusy(true); setErr(null);
+            try { await api('/api/bank/paid-cancelled', { method: 'POST', json: { id: pcNote.id, note: pcNote.note } }); setPcNote(null); setInfo(`№${pcNote.number} шийдсэн гэж тэмдэглэлээ`); await load(); }
+            catch (e) { setErr(msg(e)); } finally { setBusy(false); }
+          }}>Хадгалах</Button></>}>
+          <textarea value={pcNote.note} onChange={(e) => setPcNote({ ...pcNote, note: e.target.value })} rows={3} maxLength={300} className="w-full rounded-[10px] border border-line bg-surface p-2 text-[13.5px]" placeholder="Жишээ: мөнгийг буцаасан / дараагийн захиалгад тааруулсан" aria-label="Тайлбар" />
+        </Modal>
+      ) : null}
       {match ? <MatchDialog t={match} onClose={() => setMatch(null)} onDone={async (m) => { setMatch(null); setInfo(m); await load(); }} /> : null}
       {gset ? <GmailSettingsModal onClose={() => setGset(false)} onDone={() => void load()} /> : null}
     </div>

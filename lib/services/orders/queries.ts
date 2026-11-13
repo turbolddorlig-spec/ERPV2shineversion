@@ -212,7 +212,7 @@ export async function getOrder(actor: UserActor, idInput: unknown) {
     ...serializeOrder(o, pn.get(o.pageId)),
     history: history.map((h) => ({ id: h.id.toString(), at: h.at, actorName: h.actorName, action: h.action, details: h.details, tags: h.tags })),
     meta: meta ? { status: meta.status, sentAt: meta.sentAt, attempts: meta.attempts } : null,
-    can: { edit: canEditOrders(actor.roles), markPaid: canMarkPaid(actor.roles) },
+    can: { edit: canEditOrders(actor.roles), markPaid: canMarkPaid(actor.roles), saCancel: actor.roles.includes('SUPER_ADMIN') },
   };
 }
 

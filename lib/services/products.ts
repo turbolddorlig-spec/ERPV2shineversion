@@ -318,6 +318,7 @@ export async function updateProduct(actor: UserActor, id: number, input: UpdateI
   // Аудит Б12: нэр солих — тэр хувилбарууд (үлдэгдэл, захиалга) шинэ нэрээ авна, шинэ хоосон хувилбар үүсэхгүй
   const lc = (x: string) => x.toLocaleLowerCase('mn');
   const renamed = new Set<number>();
+  const colorRenames: { from: string; to: string }[] = [];
   const renameList = Array.isArray(input.renames) ? (input.renames as Record<string, unknown>[]).slice(0, 20) : [];
   for (const r of renameList) {
     const axis = r?.axis === 'size' ? 'size' : r?.axis === 'color' ? 'color' : null;
@@ -328,7 +329,7 @@ export async function updateProduct(actor: UserActor, id: number, input: UpdateI
     }
     const exact = newAxis.find((x) => lc(x) === lc(to))!;
     for (const v of p.variants) if (lc(v[axis]) === lc(from)) { v[axis] = exact; renamed.add(v.id); }
-    if (axis === 'size') p.sizes = p.sizes.map((x) => (lc(x) === lc(from) ? exact : x)); else p.colors = p.colors.map((x) => (lc(x) === lc(from) ? exact : x));
+    if (axis === 'size') p.sizes = p.sizes.map((x) => (lc(x) === lc(from) ? exact : x)); else { p.colors = p.colors.map((x) => (lc(x) === lc(from) ? exact : x)); colorRenames.push({ from, to: exact }); }
     changes[`Нэр солив (${axis === 'size' ? 'хэмжээ' : 'өнгө'})`] = { from, to: exact };
   }
 
@@ -346,6 +347,18 @@ export async function updateProduct(actor: UserActor, id: number, input: UpdateI
     }
   }
 
+  // Аудит #155: нэр солиход өмнө хасагдсан (идэвхгүй) ижил нэртэй хувилбартай давхцвал ойлгомжтой мессеж
+  {
+    const byKey = new Map<string, (typeof p.variants)[number]>();
+    for (const v of p.variants) {
+      const k = comboKey(v); const o = byKey.get(k);
+      if (o && (renamed.has(v.id) || renamed.has(o.id))) {
+        const other = renamed.has(v.id) ? o : v;
+        throw conflict(`«${variantLabel(other)}» нэртэй (өмнө хасагдсан) хувилбар аль хэдийн байгаа тул энэ нэрээр солих боломжгүй — өөр нэр сонгоно уу`, 'rename_clash');
+      }
+      byKey.set(k, v);
+    }
+  }
   // Шинэ хувилбарын төлөвлөгөө
   const wanted = new Map(combos(colors, sizes).map((c) => [comboKey(c), c] as const));
   type VPlan = { id?: number; combo: Combo; code: string; isActive: boolean; priceOverride: number | null; sortOrder: number };
@@ -364,27 +377,28 @@ export async function updateProduct(actor: UserActor, id: number, input: UpdateI
     });
     seen.add(key);
   }
-  const dropped: typeof p.variants = [];
   for (const v of p.variants) {
     if (seen.has(comboKey(v))) continue;
     // Тэнхлэгээс хасагдсан хувилбар — устгахгүй, идэвхгүй болгоно (үлдэгдлийн түүх алдагдахгүй)
     plan.push({ id: v.id, combo: v, code: variantCode(newCode, v), sortOrder: order++, isActive: false, priceOverride: v.priceOverride });
-    if (v.isActive) dropped.push(v);
   }
-  // Аудит Б12: үлдэгдэл эсвэл нээлттэй захиалгатай өнгө / хэмжээг хасахгүй (нэрийг нь солих бол «нэр солих»)
-  if (dropped.length) {
-    const ids = dropped.map((v) => v.id);
+  // Аудит Б12 + #155 (эзний шийдвэр): үлдэгдэл, нөөц эсвэл нээлттэй захиалгатай өнгө / хэмжээг хасахгүй, «идэвхтэй» чагтыг авч унтраахгүй
+  const deactivated = plan.filter((v) => v.id && !v.isActive && p.variants.find((x) => x.id === v.id)?.isActive).map((v) => p.variants.find((x) => x.id === v.id)!);
+  const busyVariants = async (c: Prisma.TransactionClient | typeof db, list: typeof deactivated) => {
+    const ids = list.map((v) => v.id);
     const [bal, res, open] = await Promise.all([
-      db.stockBalance.groupBy({ by: ['variantId'], where: { variantId: { in: ids }, qty: { gt: 0 } }, _sum: { qty: true } }),
-      db.stockReservation.groupBy({ by: ['variantId'], where: { variantId: { in: ids } }, _sum: { qty: true } }),
-      db.orderLine.groupBy({ by: ['variantId'], where: { variantId: { in: ids }, order: { status: { in: ['NEW', 'PENDING_PAYMENT', 'ASSIGNED', 'OUT_FOR_DELIVERY'] } } }, _count: true }),
+      c.stockBalance.groupBy({ by: ['variantId'], where: { variantId: { in: ids }, qty: { gt: 0 } }, _sum: { qty: true } }),
+      c.stockReservation.groupBy({ by: ['variantId'], where: { variantId: { in: ids } }, _sum: { qty: true } }),
+      c.orderLine.groupBy({ by: ['variantId'], where: { variantId: { in: ids }, order: { status: { in: ['NEW', 'PENDING_PAYMENT', 'ASSIGNED', 'OUT_FOR_DELIVERY'] } } }, _count: true }),
     ]);
+    const qty = new Map(bal.map((x) => [x.variantId, x._sum.qty ?? 0]));
     const busy = new Set([...bal.map((x) => x.variantId), ...res.map((x) => x.variantId), ...open.map((x) => x.variantId)]);
-    const blocked = dropped.filter((v) => busy.has(v.id));
+    const blocked = list.filter((v) => busy.has(v.id));
     if (blocked.length) {
-      throw conflict(`${blocked.map((v) => `«${variantLabel(v)}»`).join(', ')} — үлдэгдэл эсвэл нээлттэй захиалгатай тул хасахгүй. Нэрийг нь зассан бол «Нэр солих»-оор хадгална уу (үлдэгдэл шинэ нэр рүү шилжинэ).`, 'variant_has_stock');
+      throw conflict(`${blocked.map((v) => `«${variantLabel(v)}»${qty.get(v.id) ? ` (${qty.get(v.id)} ширхэг)` : ''}`).join(', ')} — үлдэгдэл, нөөц эсвэл нээлттэй захиалгатай тул хасах / унтраахгүй. Эхлээд зарж / зарлагадаж дуусгана уу. Нэрийг нь зассан бол «Нэр солих»-оор хадгална уу (үлдэгдэл шинэ нэр рүү шилжинэ).`, 'variant_has_stock');
     }
-  }
+  };
+  if (deactivated.length) await busyVariants(db, deactivated);
   if (!plan.some((v) => v.isActive)) throw badRequest('Дор хаяж нэг идэвхтэй хувилбар байх ёстой');
 
   const variantChanges: Record<string, Change> = {};
@@ -412,6 +426,11 @@ export async function updateProduct(actor: UserActor, id: number, input: UpdateI
       // Зэрэг засварыг хамгаална: хувилбарын дугаар таарсан үед л бичнэ
       const ok = await tx.product.updateMany({ where: { id, version }, data: { version: { increment: 1 } } });
       if (ok.count === 0) throw conflict('Энэ барааг өөр хүн дөнгөж сая засчихсан байна. Хуудсаа дахин ачаална уу.', 'stale');
+      // Аудит #155: унтрах хувилбарт зэрэг орлого / захиалга ирвэл — хувилбарын түгжээ аваад гүйлгээ дотор дахин шалгана (архивлахтай адил)
+      if (deactivated.length) {
+        for (const vid of deactivated.map((v) => v.id).sort((a, b) => a - b)) await tx.$executeRaw`SELECT pg_advisory_xact_lock(2::int4, ${vid}::int4)`;
+        await busyVariants(tx, deactivated);
+      }
       await tx.product.update({ where: { id }, data: { ...data, updatedById: actor.id } });
       // Код солигдвол түр нэрээр давхцал үүсэхээс сэргийлнэ
       if (newCode !== p.code) {
@@ -419,11 +438,15 @@ export async function updateProduct(actor: UserActor, id: number, input: UpdateI
       }
       for (const v of plan) {
         if (v.id) {
-          await tx.productVariant.update({ where: { id: v.id }, data: { code: v.code, isActive: v.isActive, priceOverride: v.priceOverride, sortOrder: v.sortOrder, ...(renamed.has(v.id) ? { color: v.combo.color, size: v.combo.size } : {}) } });
+          // Нэр солих, том / жижиг үсэг зассан (Улаан ↔ улаан) — хувилбарын нэр тэнхлэгтэйгээ яг ижил болно
+          await tx.productVariant.update({ where: { id: v.id }, data: { code: v.code, isActive: v.isActive, priceOverride: v.priceOverride, sortOrder: v.sortOrder, color: v.combo.color, size: v.combo.size } });
         } else {
           await tx.productVariant.create({ data: { productId: id, code: v.code, color: v.combo.color, size: v.combo.size, isActive: v.isActive, priceOverride: v.priceOverride, sortOrder: v.sortOrder } });
         }
       }
+      // Аудит #155: өнгө солиход / үсгийн хэлбэр засахад зургийн өнгө дагана
+      for (const r of colorRenames) await tx.productImage.updateMany({ where: { productId: id, color: { equals: r.from, mode: 'insensitive' } }, data: { color: r.to } });
+      for (const c of colors) await tx.productImage.updateMany({ where: { productId: id, color: { equals: c, mode: 'insensitive' }, NOT: { color: c } }, data: { color: c } });
       await writeAudit(actor, costOnly ? 'product.cost' : 'product.updated', 'Product', String(id), {
         reason, code: newCode, name: (data.name as string) ?? p.name, changes,
       } as unknown as Prisma.InputJsonValue, tx, [...tags]);

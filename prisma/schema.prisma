@@ -95,6 +95,7 @@ model AuditLog {
   @@index([at])
   @@index([entityType, entityId])
   @@index([actorId, at])
+  @@index([actorId, id])
   @@index([entityType, at])
 }
 
@@ -707,6 +708,9 @@ model Order {
   issueStatus         IssueStatus?
   issueFault          IssueFault?
   issueResolvedAt     DateTime?
+  /// Аудит #155: жолооч / асуудлаар цуцлагдсан урьдчилсан төлбөртэй захиалгыг Супер админ «Шийдсэн» гэж тэмдэглэсэн
+  paidCancelReviewedAt     DateTime?
+  paidCancelReviewedByName String?
   issueResolvedByName String?
   issueResolveNote    String?
   /// Давхар дарах / сүлжээ тасрахаас хамгаалах (#47)
@@ -730,6 +734,8 @@ model Order {
   @@index([driverId, cancelledAt])
   @@index([postponedByDriverId, postponedAt])
   @@index([issueStatus, issueAt])
+  @@index([cancelledAt])
+  @@index([issueResolvedAt])
 }
 
 /// Захиалгын мөр — барааны хуулбар (#28)

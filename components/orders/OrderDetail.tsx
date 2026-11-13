@@ -21,7 +21,7 @@ interface Detail extends OItem {
   paymentDeadline: string | null; confirmedAt: string | null; cancelNote: string | null; cancelledAt: string | null; cancelledByName: string | null;
   history: { id: string; at: string; actorName: string; action: string; details: Record<string, unknown> | null; tags: string[] }[];
   meta: { status: string; sentAt: string | null; attempts: number } | null;
-  can: { edit: boolean; markPaid: boolean };
+  can: { edit: boolean; markPaid: boolean; saCancel?: boolean };
 }
 const ACTION: Record<string, string> = {
   'order.created': 'Үүсгэсэн', 'order.updated': 'Засварласан', 'order.cancelled': 'Цуцалсан', 'order.paid': 'Мөнгө орсон', 'order.paid_undone': '«Мөнгө орсон» буцаасан', 'order.deadline_extended': 'Төлбөрийн хугацаа сунгасан', 'order.assigned': 'Жолоочид оноосон', 'order.picked_up': 'Жолооч өөрөө авсан', 'order.delivered': 'Хүргэсэн', 'order.redelivered': 'Хүргэсэн болгосон', 'order.delivery_undone': 'Хүргэсний дараа буцаасан', 'order.driver_cancelled': 'Жолооч цуцалсан', 'order.postponed': 'Маргааш (жолооч)', 'order.postpone_undone': '«Маргааш»-ийг буцаасан', 'order.issue_reported': 'Опп-руу явуулсан (асуудал)', 'order.issue_fixed': 'Асуудал зассан', 'order.issue_cancelled': 'Асуудлаар цуцалсан',
@@ -126,13 +126,13 @@ export function OrderDetail({ id }: { id: number }) {
           <Link href="/orders" className="mr-auto inline-flex h-11 items-center gap-1 rounded-[11px] border border-line bg-surface px-4 font-semibold"><Icon name="left" size={16} />Жагсаалт</Link>
           {o.can.markPaid && o.status === 'PENDING_PAYMENT' ? <Button loading={busy} onClick={() => act('extend', { days: 3 }, 'Хугацааг 3 хоногоор сунгалаа')}>+3 хоног</Button> : null}
           {o.can.markPaid && o.status === 'NEW' && o.prepaid ? <Button onClick={() => setUndo(true)}>«Мөнгө орсон» буцаах</Button> : null}
-          {o.can.edit && (active || o.status === 'OUT_FOR_DELIVERY') ? <Button variant="danger" onClick={() => { setReason(''); setCnote(''); setCancelOpen(true); }}>Цуцлах</Button> : null}
+          {(o.can.edit && (active || o.status === 'OUT_FOR_DELIVERY')) || (o.can.saCancel && o.status === 'DELIVERED') ? <Button variant="danger" onClick={() => { setReason(''); setCnote(''); setCancelOpen(true); }}>{o.status === 'DELIVERED' ? 'Цуцлах (СА)' : 'Цуцлах'}</Button> : null}
           {o.can.edit && active ? <Button variant="primary" onClick={() => api<{ order: EditOrder }>(`/api/orders/${o.id}`).then((r) => setEditing(r.order)).catch((e) => setError(e instanceof ApiError ? e.message : 'Алдаа'))}><Icon name="edit" size={16} />Засах</Button> : null}
         </div>
       </div>
       <Modal open={cancelOpen} onClose={() => setCancelOpen(false)} title={`№${o.number} цуцлах`}
         footer={<><Button onClick={() => setCancelOpen(false)}>Болих</Button><Button variant="danger" loading={busy} disabled={!reason || cnote.replace(/\s/g, '').length < 5}
-          onClick={async () => { if (await act('cancel', { reason, note: cnote, version: o.version }, 'Захиалга цуцлагдлаа — нөөц суллагдсан')) setCancelOpen(false); }}>Цуцлах</Button></>}>
+          onClick={async () => { if (await act(o.can.saCancel ? 'sa-cancel' : 'cancel', { reason, note: cnote, version: o.version }, o.status === 'DELIVERED' ? 'Цуцлагдлаа — бараа жолоочид буцаж, агуулахад буцаалтаар орно' : 'Захиалга цуцлагдлаа — нөөц суллагдсан')) setCancelOpen(false); }}>Цуцлах</Button></>}>
         <div className="flex flex-col gap-3">
           <Select id="creason" label="Шалтгаан" value={reason} onChange={(e) => setReason(e.target.value)}>
             <option value="">— Сонгох —</option>

@@ -126,10 +126,15 @@ describe('туршилтын оруулалт — хуучин ERP-ийн жол
     // давтан дарахад шинээр юу ч үүсэхгүй
     const again = await LI.legacyPreview(sa, { text: TEXT, driverName: 'Батаа', driverPhone: '88112233' });
     expect(again.summary.new).toBe(0);
+    // Аудит #155 (B2): дахин «орлого» хийхгүй — байхгүй бараа үүсэхгүй
+    expect(again.products.every((p) => p.receipt === 0)).toBe(true);
+    const rc = await db.stockReceipt.count(); const qty = await db.stockBalance.aggregate({ _sum: { qty: true } });
     const r2 = await LI.legacyCommit(sa, { text: TEXT, driverName: 'Батаа', driverPhone: '88112233' });
     expect(r2.day.delivered).toBe(16);
     expect(await db.order.count()).toBe(24);
     expect(await db.product.count()).toBe(19);
+    expect(await db.stockReceipt.count()).toBe(rc);
+    expect((await db.stockBalance.aggregate({ _sum: { qty: true } }))._sum.qty).toBe(qty._sum.qty);
     expect((await V.reconcile(sa, { fresh: true })).ok).toBe(true);
   });
 

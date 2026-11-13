@@ -30,7 +30,8 @@ export function isRole(v: unknown): v is Role {
  */
 const MANAGES: Partial<Record<Role, Role[]>> = {
   SUPER_ADMIN: ALL_ROLES,
-  ADMIN: ALL_ROLES.filter((r) => r !== 'SUPER_ADMIN'),
+  // Аудит #155 (эзний шийдвэр): админ данс (нууц үг, идэвх, админ болгох)-ыг зөвхөн Супер админ удирдана
+  ADMIN: ALL_ROLES.filter((r) => r !== 'SUPER_ADMIN' && r !== 'ADMIN'),
   OPERATOR_LEAD: ['OPERATOR'],
   DRIVER_LEAD: ['DRIVER'],
   MARKETING_LEAD: ['MARKETING'],

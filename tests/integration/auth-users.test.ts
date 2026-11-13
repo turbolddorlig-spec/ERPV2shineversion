@@ -105,7 +105,11 @@ describe('нэвтрэх', () => {
     for (let i = 0; i < MAX_FAILED_GLOBAL; i++) await login(u.phone, 'bad-pass', { ip: `198.51.100.${i}`, userAgent: 'x' }).catch(() => null);
     const fresh = await db.user.findUniqueOrThrow({ where: { id: u.id } });
     expect(fresh.lockedUntil && fresh.lockedUntil.getTime() > Date.now()).toBe(true);
-    await expectErr(login(u.phone, PW, meta), 423, 'locked');
+    // Аудит #155: шинэ (танихгүй) сүлжээнээс зөв нууц үгтэй ч түгжээтэй; буруу нууц үгтэйд энгийн «буруу» (түгжээ задрахгүй)
+    await expectErr(login(u.phone, PW, { ip: '192.0.2.200', userAgent: 'x' }), 423, 'locked');
+    await expectErr(login(u.phone, 'bad-pass', { ip: '192.0.2.201', userAgent: 'x' }), 401, 'invalid_credentials');
+    // …харин өмнө нь амжилттай нэвтэрсэн ажлын сүлжээнээс эзэн орж чадна (халдагч эзнийг түгжиж чадахгүй)
+    expect((await login(u.phone, PW, meta)).token).toBeTruthy();
   });
   it('аудит А3: нэг IP-аас 15 минутад 30 буруу (ямар ч дугаараар) → тэр IP түр хаагдана, бусад IP хэвийн', async () => {
     const u = await mk(['OPERATOR']);

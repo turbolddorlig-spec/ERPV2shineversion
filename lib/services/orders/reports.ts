@@ -32,7 +32,7 @@ export async function pageReport(actor: UserActor, p: { from?: string; to?: stri
       SELECT "pageId", "operatorName", 'created' AS metric, "createdAt" AS ts FROM "Order" WHERE "createdAt" >= ${r.start} AND "createdAt" < ${r.end} ${pf}
       UNION ALL SELECT "pageId", "operatorName", 'confirmed', "confirmedAt" FROM "Order" WHERE "confirmedAt" >= ${r.start} AND "confirmedAt" < ${r.end} ${pf}
       UNION ALL SELECT "pageId", "operatorName", 'cancelled', "cancelledAt" FROM "Order" WHERE "cancelledAt" >= ${r.start} AND "cancelledAt" < ${r.end} ${pf}
-      UNION ALL SELECT "pageId", "operatorName", 'delivered', "deliveredAt" FROM "Order" WHERE "deliveredAt" >= ${r.start} AND "deliveredAt" < ${r.end} ${pf})
+      UNION ALL SELECT "pageId", "operatorName", 'delivered', "deliveredAt" FROM "Order" WHERE status = 'DELIVERED' AND "deliveredAt" >= ${r.start} AND "deliveredAt" < ${r.end} ${pf})
     SELECT ${groupCol} AS k, metric, count(*)::int AS n FROM ev GROUP BY 1, 2`;
   const pages = new Map((await db.page.findMany({ select: { id: true, name: true } })).map((x) => [String(x.id), x.name]));
   const agg = new Map<string, { key: string; label: string; created: number; confirmed: number; cancelled: number; delivered: number }>();

@@ -1,4 +1,4 @@
-import type { DeliveryPayment, DriverDocKind, Prisma } from '@prisma/client';
+import { Prisma, type DeliveryPayment, type DriverDocKind } from '@prisma/client';
 import { syncShortageDebts } from '../accounting/debts';
 import { computeDay } from '../accounting/calc';
 import { db } from '../../db';
@@ -316,15 +316,20 @@ export async function driverControl(actor: UserActor, dateIn?: string) {
   const date = dateIn && isYmd(dateIn) ? dateIn : ubDay();
   const t0 = ubDayStart(date); const t1 = ubDayStart(addDays(date, 1)); const d = dateOnly(date);
   const [drivers, plan, done, post, extra, goods, last] = await Promise.all([
-    db.user.findMany({ where: { roles: { has: 'DRIVER' }, isActive: true }, orderBy: { name: 'asc' }, select: { id: true, name: true, phone: true } }),
+    // Аудит #155: идэвхгүй болгосон жолооч ч тэр өдрийн падаан / мөнгө / гартаа бараатай бол харагдана (нягтлангийн «Тооцоо»-той ижил)
+    db.$queryRaw<{ id: string }[]>`
+      SELECT "driverId" AS id FROM "Handover" WHERE date = ${d}::date
+      UNION SELECT l."userId" FROM "StockLocation" l JOIN "StockBalance" b ON b."locationId" = l.id AND b.qty > 0 WHERE l.kind = 'DRIVER' AND l."userId" IS NOT NULL`
+      .then((act) => db.user.findMany({ where: { roles: { has: 'DRIVER' }, OR: [{ isActive: true }, { id: { in: act.map((x) => x.id) } }] },
+        orderBy: { name: 'asc' }, select: { id: true, name: true, phone: true, isActive: true } })),
+    // Аудит #155: өнөөдөр бол өмнөх өдрүүдээс үлдсэн «Оноосон»-ыг ч тоолно (жолоочийн апптай ижил)
     db.$queryRaw<{ id: string; assigned: number; out: number }[]>`
-      SELECT "driverId" AS id, count(*) FILTER (WHERE status = 'ASSIGNED' AND "deliveryDate" = ${d}::date)::int AS assigned,
+      SELECT "driverId" AS id, count(*) FILTER (WHERE status = 'ASSIGNED' AND ${date === ubDay() ? Prisma.sql`"deliveryDate" <= ${d}::date` : Prisma.sql`"deliveryDate" = ${d}::date`})::int AS assigned,
         count(*) FILTER (WHERE status = 'OUT_FOR_DELIVERY')::int AS out
-      FROM "Order" WHERE "driverId" IS NOT NULL AND (status = 'OUT_FOR_DELIVERY' OR (status = 'ASSIGNED' AND "deliveryDate" = ${d}::date)) GROUP BY 1`,
+      FROM "Order" WHERE "driverId" IS NOT NULL AND (status = 'OUT_FOR_DELIVERY' OR (status = 'ASSIGNED' AND ${date === ubDay() ? Prisma.sql`"deliveryDate" <= ${d}::date` : Prisma.sql`"deliveryDate" = ${d}::date`})) GROUP BY 1`,
     // Аудит Б2 (B1, #83): хүргэсэн / цуцалсан / мөнгө — ПАДААНЫ ӨДРӨӨР, нягтлангийн «Тооцоо»-той нэг томьёо (computeDay)
     computeDay(db, date),
-    db.$queryRaw<{ id: string; postponed: number }[]>`
-      SELECT "postponedByDriverId" AS id, count(*)::int AS postponed FROM "Order" WHERE "postponedByDriverId" IS NOT NULL AND "postponedAt" >= ${t0} AND "postponedAt" < ${t1} GROUP BY 1`,
+    Promise.resolve(null), // «Маргааш» — computeDay-ээс (аудит #155)
     db.$queryRaw<{ id: string; extraSales: number }[]>`
       SELECT "driverId" AS id, COALESCE(sum(total), 0)::int AS "extraSales" FROM "DriverDoc" WHERE kind = 'EXTRA_SALE' AND status = 'DONE' AND "createdAt" >= ${t0} AND "createdAt" < ${t1} GROUP BY 1`,
     db.$queryRaw<{ id: string; balance: number; held: number }[]>`
@@ -338,15 +343,17 @@ export async function driverControl(actor: UserActor, dateIn?: string) {
     db.$queryRaw<{ id: string; at: Date }[]>`SELECT "driverId" AS id, max("createdAt") AS at FROM "DriverDoc" WHERE kind = 'RETURN' GROUP BY 1`,
   ]);
   const by = <T extends { id: string }>(rows: T[]) => new Map(rows.map((r) => [r.id, r]));
-  const P = by(plan); const C = by(post); const E = by(extra); const G = by(goods); const L = by(last);
+  const P = by(plan); const E = by(extra); const G = by(goods); const L = by(last); void post; void t1;
   const D = new Map(done.map((x) => [x.driverId, x]));
   const items = drivers.map((u) => {
     const g = G.get(u.id); const dd = D.get(u.id);
     return {
-      id: u.id, name: u.name, phone: u.phone,
+      id: u.id, name: u.isActive ? u.name : `${u.name} (идэвхгүй)`, phone: u.phone,
       assigned: P.get(u.id)?.assigned ?? 0, out: P.get(u.id)?.out ?? 0,
-      delivered: dd?.delivered ?? 0, partial: dd?.partialCount ?? 0, cancelled: (dd?.cancelled ?? 0) + (dd?.excluded ?? 0), postponed: C.get(u.id)?.postponed ?? 0,
-      goods: g?.balance ?? 0, returnable: Math.max(0, (g?.balance ?? 0) - (g?.held ?? 0)), lastReturnAt: L.get(u.id)?.at ?? null,
+      delivered: dd?.delivered ?? 0, partial: dd?.partialCount ?? 0, cancelled: (dd?.cancelled ?? 0) + (dd?.excluded ?? 0),
+      // Аудит #155: «Маргааш» — падааны өдрөөр (нягтлангийн «Тооцоо»-той нэг тоо)
+      postponed: dd?.postponed ?? 0,
+      goods: g?.balance ?? 0, returnable: Math.max(0, (g?.balance ?? 0) - Math.min(g?.held ?? 0, g?.balance ?? 0)), lastReturnAt: L.get(u.id)?.at ?? null,
       cash: dd?.cash ?? 0, bank: dd?.bank ?? 0, unpaid: dd?.unpaid ?? 0, prepaid: dd?.prepaidAmount ?? 0, deliveredSum: dd?.deliveredAmount ?? 0, extraSales: E.get(u.id)?.extraSales ?? 0,
     };
   }).filter((x) => x.assigned + x.out + x.delivered + x.cancelled + x.postponed + x.goods + x.extraSales > 0);

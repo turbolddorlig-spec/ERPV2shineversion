@@ -269,7 +269,8 @@ export async function resetPassword(actor: UserActor, id: string) {
 /** Түгжээг гараар тайлах — зөвхөн админ (шийдвэр #17) */
 export async function unlockUser(actor: UserActor, id: string) {
   if (!isAdmin(actor.roles)) throw forbidden('Түгжээг зөвхөн админ тайлна');
-  await loadManageable(actor, id);
+  // Аудит #155 (эзний шийдвэр): нэвтрэх түгжээг админ хэнийх ч (Супер админ, админыг ч) тайлна — өөр зүйл өөрчлөхгүй
+  if (!/^[0-9a-f-]{36}$/i.test(id) || !(await db.user.findUnique({ where: { id }, select: { id: true } }))) throw notFound('Хэрэглэгч олдсонгүй');
   return db.$transaction(async (tx) => {
     const u = await tx.user.update({ where: { id }, data: { failedLoginCount: 0, lockedUntil: null }, select: PUBLIC_SELECT });
     await writeAudit(actor, 'user.unlocked', 'User', id, undefined, tx);
@@ -282,7 +283,14 @@ export async function unlockUser(actor: UserActor, id: string) {
 export async function userHistory(actor: UserActor, id: string, page = 1) {
   if (id !== actor.id) await loadManageable(actor, id);
   const take = 50;
-  const where: Prisma.AuditLogWhereInput = { OR: [{ entityType: 'User', entityId: id }, { actorId: id }] };
-  const items = await db.auditLog.findMany({ where, orderBy: { id: 'desc' }, skip: (Math.max(1, page) - 1) * take, take });
-  return { items: items.map((i) => ({ ...i, id: i.id.toString() })), page };
+  // Аудит #155 (хурд): OR-ийн оронд индекстэй 2 асуулга (actorId+id, entityType+entityId) — завгүй ажилтны 100 мянган мөрийг эрэмбэлэхгүй
+  const p = Math.max(1, Math.min(200, Math.floor(Number(page) || 1)));
+  const n = p * take;
+  const [a, b] = await Promise.all([
+    db.auditLog.findMany({ where: { actorId: id }, orderBy: { id: 'desc' }, take: n }),
+    db.auditLog.findMany({ where: { entityType: 'User', entityId: id }, orderBy: { id: 'desc' }, take: n }),
+  ]);
+  const seen = new Set<bigint>();
+  const items = [...a, ...b].sort((x, y) => (y.id > x.id ? 1 : y.id < x.id ? -1 : 0)).filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true))).slice((p - 1) * take, p * take);
+  return { items: items.map((i) => ({ ...i, id: i.id.toString() })), page: p };
 }

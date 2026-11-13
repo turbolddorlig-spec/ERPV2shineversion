@@ -1,4 +1,3 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import { db } from '../../db';
 import { badRequest, forbidden } from '../../errors';
@@ -20,23 +19,9 @@ export interface GmailSettings {
 }
 const DEFAULTS: GmailSettings = { email: '', passwordEnc: null, sender: '', autoSync: true, minutes: 5, days: 3, lastSyncAt: null, lastResult: null, lastOk: null };
 
-// ───────── нууц үг шифрлэх ─────────
-const secretKey = () => createHash('sha256').update(`zahialga-gmail|${process.env.APP_SECRET || process.env.DATABASE_URL || ''}`).digest();
-export function encrypt(plain: string): string {
-  const iv = randomBytes(12);
-  const c = createCipheriv('aes-256-gcm', secretKey(), iv);
-  const enc = Buffer.concat([c.update(plain, 'utf8'), c.final()]);
-  return `v1:${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${enc.toString('base64')}`;
-}
-export function decrypt(s: string): string | null {
-  try {
-    const [v, iv, tag, data] = s.split(':');
-    if (v !== 'v1' || !iv || !tag || !data) return null;
-    const d = createDecipheriv('aes-256-gcm', secretKey(), Buffer.from(iv, 'base64'));
-    d.setAuthTag(Buffer.from(tag, 'base64'));
-    return Buffer.concat([d.update(Buffer.from(data, 'base64')), d.final()]).toString('utf8');
-  } catch { return null; }
-}
+// ───────── нууц үг шифрлэх (lib/secret.ts — Meta токенд ч ашиглана, #155) ─────────
+import { encrypt, decrypt } from '../../secret';
+export { encrypt, decrypt };
 
 export async function readGmailSettings(): Promise<GmailSettings> {
   const s = await db.appSetting.findUnique({ where: { key: KEY } });
@@ -44,6 +29,11 @@ export async function readGmailSettings(): Promise<GmailSettings> {
 }
 async function saveSettings(v: GmailSettings, by?: string | null) {
   await db.appSetting.upsert({ where: { key: KEY }, create: { key: KEY, value: v as unknown as Prisma.InputJsonValue, updatedById: by ?? null }, update: { value: v as unknown as Prisma.InputJsonValue, updatedById: by ?? null } });
+}
+/** Аудит #155: sync-ийн төлөвийг НЭГ мөрөөр нэгтгэж бичнэ — тэр мөчид админы хадгалсан тохиргоог (хаяг, нууц үг) дарахгүй */
+async function patchSyncStatus(p: Pick<GmailSettings, 'lastSyncAt' | 'lastOk' | 'lastResult'>) {
+  const n = await db.$executeRaw`UPDATE "AppSetting" SET value = value || ${JSON.stringify(p)}::jsonb, "updatedAt" = now() WHERE key = ${KEY}`;
+  if (!n) await saveSettings({ ...(await readGmailSettings()), ...p });
 }
 /** Аудит #148 (эзний шийдвэр): илгээгчийн Gmail (банкны яг хаяг) заавал — үгүй бол татахгүй */
 export const isConfigured = (s: GmailSettings) => !!(s.email && s.passwordEnc && SENDER_RE.test(s.sender));
@@ -179,10 +169,10 @@ async function gmailSyncRaw(actor: Actor, opts: { days?: number } = {}) {
     const already = txs.length - fresh.length;
     const r = fresh.length ? await importTransactions(actor, fresh, 'GMAIL') : { imported: 0, matched: 0, partial: 0, duplicates: 0, errors: [] as string[] };
     const res = { ...r, emails: mails.length, alreadyImported: already, skipped, rejected };
-    await saveSettings({ ...(await readGmailSettings()), lastSyncAt: new Date().toISOString(), lastOk: true, lastResult: `${mails.length} имэйл · ${r.imported} шинэ гүйлгээ · ${r.matched} таарсан · ${already + r.duplicates} өмнө орсон · ${skipped} зарлага/бусад${rejected ? ` · ⚠ ${rejected} баталгаажаагүй илгээгч (хүлээж аваагүй)` : ''}` });
+    await patchSyncStatus({ lastSyncAt: new Date().toISOString(), lastOk: true, lastResult: `${mails.length} имэйл · ${r.imported} шинэ гүйлгээ · ${r.matched} таарсан · ${already + r.duplicates} өмнө орсон · ${skipped} зарлага/бусад${rejected ? ` · ⚠ ${rejected} баталгаажаагүй илгээгч (хүлээж аваагүй)` : ''}` });
     return res;
   } catch (e) {
-    await saveSettings({ ...(await readGmailSettings()), lastSyncAt: new Date().toISOString(), lastOk: false, lastResult: `Алдаа: ${(e as Error).message}` });
+    await patchSyncStatus({ lastSyncAt: new Date().toISOString(), lastOk: false, lastResult: `Алдаа: ${(e as Error).message}` });
     throw e;
   }
 }

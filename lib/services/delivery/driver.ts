@@ -396,7 +396,12 @@ export async function resolveIssue(actor: UserActor, idIn: unknown, input: { act
     if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
     const o = await tx.order.findUniqueOrThrow({ where: { id } });
     assertLockedDrivers(locked, [o.driverId, o.postponedByDriverId]);
-    if (o.issueStatus !== 'PENDING') return { order: o, duplicate: true, penaltyWarning: null as string | null };
+    if (o.issueStatus !== 'PENDING') {
+      // Аудит #155: ижил шийдвэрийг давтан дарсан бол давхардалгүй; өөр хүн өөрөөр шийдсэн бол «амжилттай» гэж хуурахгүй
+      const same = (action === 'fix' && o.issueStatus === 'FIXED') || (action === 'cancel' && o.issueStatus === 'CANCELLED');
+      if (!same) throw conflict(`Энэ асуудлыг ${o.issueResolvedByName ?? 'өөр хүн'} аль хэдийн «${o.issueStatus === 'FIXED' ? 'Зассан' : o.issueStatus === 'CANCELLED' ? 'Цуцалсан' : 'шийдсэн'}» гэж шийдсэн байна`, 'already_resolved');
+      return { order: o, duplicate: true, penaltyWarning: null as string | null };
+    }
     // Аудит #150: өөрийн авсан захиалгын асуудлыг өөрөө «Цуцлах»-аар шийдэж бурууг бусдад хуваарилахгүй (Супер админаас бусад)
     if (action === 'cancel' && o.operatorId === actor.id && !actor.roles.includes('SUPER_ADMIN')) throw forbidden('Өөрийн авсан захиалгын асуудлыг өөр хүн (ахлах оператор, админ) шийднэ');
     let penaltyWarning: string | null = null;
@@ -447,13 +452,10 @@ export async function driverOrders(actor: UserActor, tabIn?: string) {
   assertDriver(actor);
   const tab = (['all', 'delivery', 'delivered', 'cancelled', 'tomorrow', 'yesterday'].includes(tabIn ?? '') ? tabIn : 'all') as DriverTab;
   const me = actor.id;
-  // Аудит #144: шөнө 00:00–06:00 хооронд өчигдрийн падаанаар ажиллаж буй жолоочид «Хүргэсэн / Цуцалсан», мөнгө — өчигдрийн падаанаар
-  // (орой оройтож ажилладаг жолооч өөрийн хүргэлтээ алдахгүй; тооцооны өдөр = падааны өдөр, #83)
-  const realToday = ubDay();
-  const hourUB = new Date(Date.now() + 8 * 3600_000).getUTCHours();
-  const yday = addDays(realToday, -1);
-  const nightShift = hourUB < 6 && (await db.handover.findUnique({ where: { driverId_date: { driverId: me, date: dateOnly(yday) } }, select: { status: true } }))?.status === 'RECEIVED';
-  const today = nightShift ? yday : realToday; const t0 = ubDayStart(today); const t1 = ubDayStart(addDays(today, 1));
+  // Аудит #155 (эзний шийдвэр, хуучин шиг): апп ЦАГИЙН өдрөөр — #144-ийн шөнийн (00:00–06:00 өчигдрийн падаан) горимыг авсан.
+  // Хүргэлтэд гарсан захиалга огноо харгалзахгүй харагдсаар (бараа жолоочид); тооцоо падааны өдрөөрөө (#83).
+  const today = ubDay(); const t0 = ubDayStart(today); const t1 = ubDayStart(addDays(today, 1));
+  const nightShift = false;
   const active: Prisma.OrderWhereInput = { driverId: me, status: { in: ['ASSIGNED', 'OUT_FOR_DELIVERY'] }, OR: [{ deliveryDate: { lte: dateOnly(today) } }, { status: 'OUT_FOR_DELIVERY' }] };
   // Аудит Б2 (B1, #83): «Хүргэсэн / Цуцалсан» ба мөнгө — ӨНӨӨДРИЙН ПАДААНЫ захиалгаар (нягтлангийн «Тооцоо»-той яг ижил).
   // Шөнө 00:00-оос хойш хүргэсэн өчигдрийн падааны захиалга өчигдрийн тооцоонд үлдэнэ.

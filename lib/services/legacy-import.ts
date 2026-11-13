@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import type { Role } from '@prisma/client';
 import { db } from '../db';
 import { badRequest, conflict, forbidden } from '../errors';
@@ -151,6 +151,9 @@ export async function legacyPreview(actor: UserActor, input: PreviewInput) {
     else driver = { id: '', name: driverName, isNew: true, roles: ['DRIVER'] };
   }
 
+  // Аудит #155 (B2): аль хэдийн оруулсан захиалгын барааг дахин «орлого» хийхгүй — хэрэгцээ зөвхөн ШИНЭ захиалгаас
+  const already = new Set((orders.length ? await db.order.findMany({ where: { idemKey: { in: orders.map((o) => `legacy-${o.number}`) } }, select: { idemKey: true } }) : []).map((e) => e.idemKey));
+  const newOrders = orders.filter((o) => !already.has(`legacy-${o.number}`));
   // Бараа (кодоор)
   const codes = [...new Set(orders.flatMap((o) => o.lines.map((l) => cleanProductCode(l.code) ?? '')).filter(Boolean))];
   const prods = codes.length ? await db.product.findMany({ where: { code: { in: codes } }, include: { variants: true } }) : [];
@@ -158,7 +161,7 @@ export async function legacyPreview(actor: UserActor, input: PreviewInput) {
   const products = codes.map((code) => {
     const p = pmap.get(code);
     const ls = orders.flatMap((o) => o.lines.filter((l) => cleanProductCode(l.code) === code));
-    const need = ls.reduce((a, l) => a + l.qty, 0);
+    const need = newOrders.flatMap((o) => o.lines.filter((l) => cleanProductCode(l.code) === code)).reduce((a, l) => a + l.qty, 0);
     const price = Math.max(...ls.map((l) => l.price));
     const v = p && p.variants.length === 1 ? p.variants[0]! : null;
     const errors: string[] = [];
@@ -318,7 +321,7 @@ export async function legacyCommit(actor: UserActor, input: CommitInput) {
     const recLines = pv.products.filter((p) => p.receipt > 0).map((p) => ({ variantId: vmap.get(p.code)!, qty: p.receipt }));
     if (recLines.length) {
       const w = await primaryWarehouse(db);
-      await D.createReceipt(actor, { warehouseId: w.warehouse.id, lines: recLines, note: `Туршилтын оруулалт: ${drv.name}`, idemKey: `legacy-rcpt-${randomUUID()}` });
+      await D.createReceipt(actor, { warehouseId: w.warehouse.id, lines: recLines, note: `Туршилтын оруулалт: ${drv.name}`, idemKey: `legacy-rcpt-${createHash('sha256').update(`${drv.id}|${pv.today}|${recLines.map((l) => `${l.variantId}:${l.qty}`).join(',')}|${pv.rows.filter((r) => !r.existing).map((r) => r.number).sort().join(',')}`).digest('hex').slice(0, 40)}` });
       steps.push(`«Орлого» ${w.warehouse.name}: ${recLines.length} бараа, ${recLines.reduce((a, l) => a + l.qty, 0)} ширхэг`);
     }
 
