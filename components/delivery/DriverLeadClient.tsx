@@ -55,24 +55,28 @@ function AssignView() {
   }, [f, page]);
   const loadDrivers = useCallback(() => api<{ items: Driver[] }>(`/api/driver-lead/drivers?date=${ubToday(1)}`).then((r) => setDrivers(r.items)).catch(() => undefined), []);
   useEffect(() => { load(); }, [load]);
+  // Аудит #145: шүүлтүүр / хуудас солиход сонголт цэвэрлэнэ (харагдахгүй захиалга санамсаргүй хуваарилагдахгүй)
+  useEffect(() => { setSel(new Set()); }, [f, page]);
   useEffect(() => { loadDrivers(); }, [loadDrivers]);
 
   async function assign(ids: number[], driverId: string) {
     setBusy(true); setError(null);
     try {
-      const r = await api<{ assigned: { number: string; date: string; movedNextDay: boolean }[]; skipped: { number: string; reason: string }[] }>('/api/driver-lead/assign', { method: 'POST', json: { ids, driverId } });
+      const r = await api<{ assigned: { number: string; date: string; movedNextDay: boolean }[]; skipped: { number: string; reason: string }[]; failed?: { count: number; message: string } | null }>('/api/driver-lead/assign', { method: 'POST', json: { ids, driverId } });
       const moved = r.assigned.filter((x) => x.movedNextDay).length;
+      if (r.failed) setError(`Хэсэгчлэн амжилттай: ${r.assigned.length} хуваарилагдсан, ${r.failed.count} нь хийгдээгүй (${r.failed.message}) — дахин сонгож оролдоно уу`);
       setFlash(`${r.assigned.length} захиалга хуваарилагдлаа${moved ? ` (${moved} нь падаан өгөгдсөн тул маргааш)` : ''}${r.skipped.length ? ` · алгассан ${r.skipped.length}: ${r.skipped.slice(0, 3).map((s) => `№${s.number} — ${s.reason}`).join('; ')}` : ''}`);
       setSel(new Set()); await Promise.all([load(), loadDrivers()]);
-    } catch (e) { setError(msg(e)); } finally { setBusy(false); }
+    } catch (e) { setError(msg(e)); setSel(new Set()); load(); loadDrivers(); } finally { setBusy(false); }
   }
   async function setDate(ids: number[], date: string) {
     setBusy(true); setError(null);
     try {
-      const r = await api<{ updated: number; skipped: { number: string; reason: string }[] }>('/api/driver-lead/assign', { method: 'POST', json: { ids, date } });
-      setFlash(`${r.updated} захиалгын огноо ${md(date)} боллоо${r.skipped.length ? ` · алгассан: ${r.skipped.slice(0, 3).map((s) => `№${s.number} — ${s.reason}`).join('; ')}` : ''}`);
+      const r = await api<{ updated: number; unassigned?: number; skipped: { number: string; reason: string }[]; failed?: { count: number; message: string } | null }>('/api/driver-lead/assign', { method: 'POST', json: { ids, date } });
+      if (r.failed) setError(`Хэсэгчлэн амжилттай: ${r.updated} солигдсон, ${r.failed.count} нь хийгдээгүй (${r.failed.message}) — дахин оролдоно уу`);
+      setFlash(`${r.updated} захиалгын огноо ${md(date)} боллоо${r.unassigned ? ` (${r.unassigned} нь он сар өдөртэй болж жолоочоос чөлөөлөгдлөө)` : ''}${r.skipped.length ? ` · алгассан: ${r.skipped.slice(0, 3).map((s) => `№${s.number} — ${s.reason}`).join('; ')}` : ''}`);
       setSel(new Set()); await Promise.all([load(), loadDrivers()]);
-    } catch (e) { setError(msg(e)); } finally { setBusy(false); }
+    } catch (e) { setError(msg(e)); setSel(new Set()); load(); loadDrivers(); } finally { setBusy(false); }
   }
 
   const items = data?.items ?? [];
@@ -105,12 +109,6 @@ function AssignView() {
 
       {kpi.leftover ? <p role="alert" data-lead-leftover className="rounded-xl border border-bad/40 bg-bad-soft px-4 py-2.5 text-[13.5px] font-semibold text-bad-ink">🔴 Хоносон, хуваарилагдаагүй {kpi.leftover} захиалга байна — яаралтай хуваарилна уу (хүргэх өдөр нь өнгөрсөн / өнөөдөр).</p>
         : kpi.unassigned ? <p data-lead-today className="rounded-xl border border-warn/40 bg-warn-soft px-4 py-2.5 text-[13.5px] font-semibold text-warn">🟠 Хуваарилагдаагүй {kpi.unassigned} «Шинэ» захиалга байна — өнөөдөртөө заавал хуваарилна уу.</p> : null}
-
-      <div className="flex gap-1 rounded-lg bg-surface2 p-1 self-start">
-        <span className="inline-flex h-8 items-center gap-1.5 rounded-md bg-surface px-3 text-[13px] font-semibold shadow-card"><Icon name="users" size={14} />Бүх захиалга</span>
-        <span title="Модуль 5 (Жолооч)-д нэмэгдэнэ" className="inline-flex h-8 cursor-not-allowed items-center gap-1.5 px-3 text-[13px] font-semibold text-subtle"><Icon name="trend" size={14} />Жолоочийн гүйцэтгэл</span>
-        <span title="Модуль 5 (Жолооч)-д нэмэгдэнэ" className="inline-flex h-8 cursor-not-allowed items-center gap-1.5 px-3 text-[13px] font-semibold text-subtle"><Icon name="chart" size={14} />График</span>
-      </div>
 
       {/* Шүүлтүүр */}
       <div className="flex flex-col gap-2.5 rounded-xl border border-line bg-surface p-3">
@@ -223,7 +221,7 @@ function AssignView() {
           <span className="text-[12.5px] text-muted">{page}-р хуудас</span>
           <div className="flex gap-2">
             <Button size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}><Icon name="left" size={15} /> Өмнөх</Button>
-            <Button size="sm" disabled={!data.hasMore} onClick={() => setPage((p) => p + 1)}>Дараах <Icon name="right" size={15} /></Button>
+            <Button size="sm" disabled={!data.hasMore || page >= 200} title={page >= 200 ? 'Хамгийн ихдээ 200 хуудас — шүүлтүүрээр нарийсгана уу' : undefined} onClick={() => setPage((p) => p + 1)}>Дараах <Icon name="right" size={15} /></Button>
           </div>
         </div>
       ) : null}
@@ -249,9 +247,17 @@ function DriverSelect({ drivers, value, onChange, disabled }: { drivers: Driver[
 /** «Жолоочдын захиалга» — жолооч бүрийн өдрийн захиалга (баруун самбар) */
 function ByDayDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [date, setDate] = useState(ubToday(1));
-  const [d, setD] = useState<{ drivers: { driverId: string; driverName: string; orders: LItem[] }[] } | null>(null);
+  const [d, setD] = useState<{ drivers: { driverId: string; driverName: string; count: number; total: number }[] } | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
-  useEffect(() => { if (open) { setD(null); api<NonNullable<typeof d>>(`/api/driver-lead/drivers?byDay=1&date=${date}`).then(setD).catch(() => undefined); } }, [open, date]);
+  // Аудит #145: эхлээд жолооч бүрийн тоо; дэлгэхэд тухайн жолоочийн захиалгыг ачаална (3000-д тасрахгүй)
+  const [orders, setOrders] = useState<Record<string, LItem[] | 'err'>>({});
+  useEffect(() => { if (open) { setD(null); setOrders({}); setOpenId(null); api<NonNullable<typeof d>>(`/api/driver-lead/drivers?byDay=1&date=${date}`).then(setD).catch(() => undefined); } }, [open, date]);
+  const toggle = (id: string) => {
+    if (openId === id) { setOpenId(null); return; }
+    setOpenId(id);
+    if (!orders[id] || orders[id] === 'err') api<{ drivers: { orders: LItem[] }[] }>(`/api/driver-lead/drivers?byDay=1&date=${date}&driverId=${id}`)
+      .then((r) => setOrders((m) => ({ ...m, [id]: r.drivers[0]?.orders ?? [] }))).catch(() => setOrders((m) => ({ ...m, [id]: 'err' })));
+  };
   return (
     <Modal open={open} onClose={onClose} size="drawer" title="📦 Жолоочдын захиалга">
       <div className="flex flex-col gap-3 text-[13px]">
@@ -261,12 +267,12 @@ function ByDayDrawer({ open, onClose }: { open: boolean; onClose: () => void }) 
         </div>
         {!d ? <p className="py-6 text-center text-muted">Ачаалж байна…</p> : !d.drivers.length ? <p className="py-6 text-center text-subtle">Энэ өдөр хуваарилсан захиалга алга</p> : d.drivers.map((g) => (
           <div key={g.driverId} className="overflow-hidden rounded-lg border border-line">
-            <button type="button" aria-expanded={openId === g.driverId} onClick={() => setOpenId(openId === g.driverId ? null : g.driverId)} className="flex w-full items-center justify-between bg-surface2/70 px-3 py-2 font-semibold">
-              <span>{g.driverName}</span><span className="flex items-center gap-2"><span className="rounded-md bg-surface px-2 text-[12px]">{g.orders.length}</span><Icon name={openId === g.driverId ? 'up' : 'down'} size={14} /></span>
+            <button type="button" aria-expanded={openId === g.driverId} onClick={() => toggle(g.driverId)} className="flex w-full items-center justify-between gap-2 bg-surface2/70 px-3 py-2 text-left font-semibold">
+              <span className="min-w-0 break-words">{g.driverName}</span><span className="flex shrink-0 items-center gap-2"><span className="whitespace-nowrap text-[12px] text-muted">{g.total.toLocaleString('en-US')}₮</span><span className="rounded-md bg-surface px-2 text-[12px]">{g.count}</span><Icon name={openId === g.driverId ? 'up' : 'down'} size={14} /></span>
             </button>
-            {openId === g.driverId ? (
+            {openId === g.driverId ? (() => { const list = orders[g.driverId]; return !list ? <p className="px-3 py-3 text-muted">Ачаалж байна…</p> : list === 'err' ? <p className="px-3 py-3 text-bad-ink">Ачаалж чадсангүй — дахин дарна уу</p> : (
               <ul className="divide-y divide-line">
-                {g.orders.map((o) => (
+                {list.map((o) => (
                   <li key={o.id} className="flex flex-col gap-0.5 px-3 py-2">
                     <span className="flex flex-wrap items-center gap-2"><b>№{o.number}</b>{o.postponeCount ? <span className="rounded bg-warn-soft px-1 text-[10.5px] font-bold text-warn">Маргааш</span> : null}<span>{o.phone}</span><StatusChip o={o} /><span className="ml-auto text-subtle">{md(o.deliveryDate)}</span></span>
                     <span className="text-[12px] text-muted">{o.lines.map((l) => `${l.name}${l.label ? ` · ${l.label}` : ''} ${l.qty}ш`).join(', ')}</span>
@@ -275,7 +281,7 @@ function ByDayDrawer({ open, onClose }: { open: boolean; onClose: () => void }) 
                   </li>
                 ))}
               </ul>
-            ) : null}
+            ); })() : null}
           </div>
         ))}
       </div>

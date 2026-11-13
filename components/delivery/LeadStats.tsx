@@ -14,7 +14,7 @@ const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа г�
 const ubToday = (add = 0) => new Date(Date.now() + 8 * 3600_000 + add * 86_400_000).toISOString().slice(0, 10);
 interface Driver { id: string; name: string }
 interface PRow { id: string; name: string; phone: string; delivered: number; cancelled: number; postponed: number; total: number; revenue: number; rate: number | null }
-interface PResp { from: string; to: string; items: PRow[]; totals: { delivered: number; cancelled: number; postponed: number; total: number; revenue: number; rate: number | null } }
+interface PResp { from: string; to: string; items: PRow[]; totals: { delivered: number; cancelled: number; excluded?: number; postponed: number; total: number; revenue: number; rate: number | null } }
 interface CResp { days: number; daily: { date: string; delivered: number; cancelled: number; postponed: number; total: number }[] }
 
 const rateTone = (r: number | null) => (r === null ? 'text-subtle' : r >= 85 ? 'text-ok-ink' : r >= 70 ? 'text-info' : r >= 55 ? 'text-warn' : 'text-bad-ink');
@@ -90,7 +90,7 @@ export function PerformanceTab({ drivers }: { drivers: Driver[] }) {
         </div>
         {data && !data.items.length ? <p className="px-4 py-10 text-center text-muted">Энэ хугацаанд мэдээлэл алга</p> : null}
       </div>
-      <p className="text-[12px] text-subtle">Хүргэсэн — хүргэсэн өдрөөр; Цуцалсан — жолооч / асуудлаар цуцалсан өдрөөр; Маргааш — хойшлуулсан өдрөөр (цуцлалтад орохгүй). Амжилт = хүргэсэн ÷ (хүргэсэн + цуцалсан).</p>
+      <p className="text-[12px] text-subtle">Цалинтай ижил: падааны өдрөөр. Цуцалсан — жолоочид тооцогдох цуцлалт (бусдын буруугаар цуцлагдсан нь тоологдохгүй{t?.excluded ? ` — энэ хугацаанд ${t.excluded}` : ''}). Амжилт = хүргэсэн ÷ (хүргэсэн + цуцалсан + маргааш). Хамгийн ихдээ 1 жил.</p>
     </div>
   );
 }

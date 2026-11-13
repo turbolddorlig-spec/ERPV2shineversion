@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   try {
     const ctx = await requireApiUser(req);
     const sp = req.nextUrl.searchParams;
-    if (sp.get('byDay') === '1') return json(await driverOrdersByDay(ctx.actor, sp.get('date') ?? undefined));
+    if (sp.get('byDay') === '1') return json(await driverOrdersByDay(ctx.actor, sp.get('date') ?? undefined, sp.get('driverId') ?? undefined));
     return json(await driversList(ctx.actor, sp.get('date') ?? undefined));
   } catch (e) { return errorResponse(e); }
 }

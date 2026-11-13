@@ -465,7 +465,7 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
 });
 
 describe('ахлах жолоочийн «Жолоочийн гүйцэтгэл», «График» (#77)', () => {
-  it('хүргэсэн/цуцалсан/маргааш тусдаа, амжилт = хүргэсэн ÷ (хүргэсэн + цуцалсан), өдрөөр зөв, эрх', async () => {
+  it('хүргэсэн/цуцалсан/маргааш тусдаа, амжилт = хүргэсэн ÷ (хүргэсэн + цуцалсан + маргааш) — цалинтай ижил (#145), өдрөөр зөв, эрх', async () => {
     const ids = await outFor(drv, 4);
     await DR.deliverOrder(drv, ids[0], { payment: 'CASH' });
     await DR.deliverOrder(drv, ids[1], { payment: 'BANK' });
@@ -473,7 +473,7 @@ describe('ахлах жолоочийн «Жолоочийн гүйцэтгэл�
     await DR.postponeOrder(drv, ids[3], {});
     const p = await L.leadPerformance(lead, {});
     const me = p.items.find((x) => x.id === drv.id)!;
-    expect([me.delivered, me.cancelled, me.postponed, me.total, me.rate, me.revenue]).toEqual([2, 1, 1, 4, 66.7, 60000]);
+    expect([me.delivered, me.cancelled, me.postponed, me.total, me.rate, me.revenue]).toEqual([2, 1, 1, 4, 50, 60000]);
     expect((await L.leadPerformance(lead, { driverId: drv2.id })).items).toEqual([]);
     const c = await L.leadChart(lead, {});
     expect(c.daily).toHaveLength(14);

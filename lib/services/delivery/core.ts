@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { db } from '../../db';
-import { badRequest } from '../../errors';
+import { badRequest, conflict } from '../../errors';
 import { dateOnly, ubDay, ymdOf } from '../../ubdate';
 
 export type Tx = Prisma.TransactionClient;
@@ -73,6 +73,7 @@ export async function driverLocationId(tx: Tx, driver: { id: string; name: strin
 export async function removeFromHandover(tx: Tx, orderId: number, reason: string) {
   const o = await tx.order.findUnique({ where: { id: orderId }, select: { handoverId: true, lines: { select: { variantId: true } } } });
   if (!o?.handoverId) return;
+  await lockHandover(tx, o.handoverId); // Аудит #145: агуулахын Check / өгөхтэй зэрэг өөрчлөгдөхгүй
   const h = await tx.handover.findUnique({ where: { id: o.handoverId }, select: { status: true } });
   if (h && isGiven(h.status)) throw badRequest('Падаан өгөгдсөн захиалга — агуулах падааныг «Буцаах»-аас өмнө өөрчлөх боломжгүй', 'handed_over');
   await tx.handoverOrder.updateMany({ where: { handoverId: o.handoverId, orderId, removedAt: null }, data: { removedAt: new Date(), removeReason: reason } });
@@ -83,6 +84,10 @@ export async function removeFromHandover(tx: Tx, orderId: number, reason: string
 
 /** Падаанд захиалга нэмэх (өгөхөөс өмнө) — «ШИНЭ» тэмдэгтэй, тухайн барааны Check арилна */
 export async function addToHandover(tx: Tx, handoverId: number, orderId: number) {
+  // Аудит #145: падааны мөрийг түгжээд дахин шалгана — агуулах яг тэр мөчид өгсөн бол нэмэхгүй
+  await lockHandover(tx, handoverId);
+  const hs = await tx.handover.findUnique({ where: { id: handoverId }, select: { status: true } });
+  if (hs && isGiven(hs.status)) throw conflict('Падаан яг одоо агуулахаас өгөгдлөө — дахин оролдоно уу', 'handed_over');
   const max = await tx.handoverOrder.aggregate({ where: { handoverId }, _max: { position: true } });
   const existing = await tx.handoverOrder.findUnique({ where: { handoverId_orderId: { handoverId, orderId } } });
   if (existing) await tx.handoverOrder.update({ where: { id: existing.id }, data: { removedAt: null, removeReason: null, addedAt: new Date() } });
