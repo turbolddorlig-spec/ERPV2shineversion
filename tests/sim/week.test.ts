@@ -344,7 +344,7 @@ describe('#157 7 хоног: өдөрт 2,000 захиалга, 30 операт�
         const d = addD(day0, i); const ym = d.slice(0, 7); const half = Number(d.slice(8)) <= 15 ? 1 : 2;
         const p = SAL.periodOf(ym, half); periods.set(`${ym}|${half}`, { ym, half, start: p.start, end: p.end });
       }
-      const all = await db.order.findMany({ where: { operatorId: { in: ops.map((o) => o.id) } }, select: { operatorId: true, status: true, prepaid: true, confirmedAt: true, deliveryDate: true, postponeCount: true } });
+      const all = await db.order.findMany({ where: { operatorId: { in: ops.map((o) => o.id) } }, select: { operatorId: true, status: true, deliveredAt: true } });
       const lines: string[] = [];
       let sysTotal = 0, myTotal = 0, delivered = 0;
       for (const op of ops) {
@@ -352,12 +352,8 @@ describe('#157 7 хоног: өдөрт 2,000 захиалга, 30 операт�
         for (const p of periods.values()) {
           const r = await SAL.prepareSalary(sa, `u:${op.id}`, p.ym, p.half);
           sys += r.auto.orderCount; sysPay += r.auto.orderSalary;
-          // Бие даасан тооллого (дүрэм: хүргэсэн эсвэл урьдчилж төлөөд замд; өдөр = «Маргааш» дарсан бол авсан өдөр, үгүй бол max(авсан өдөр, хүргэх өдөр − 1))
-          mine += all.filter((o) => o.operatorId === op.id && o.confirmedAt && (o.status === 'DELIVERED' || (o.prepaid && ['NEW', 'ASSIGNED', 'OUT_FOR_DELIVERY'].includes(o.status)))).filter((o) => {
-            const c = ymd(o.confirmedAt!); const dd = o.deliveryDate ? addD(o.deliveryDate.toISOString().slice(0, 10), -1) : c;
-            const day = o.postponeCount > 0 ? c : (c > dd ? c : dd);
-            return day >= p.start && day <= p.end;
-          }).length;
+          // Бие даасан тооллого (#157 дүрэм): зөвхөн хүргэгдсэн, хүргэсэн өдрөөр (УБ)
+          mine += all.filter((o) => o.operatorId === op.id && o.status === 'DELIVERED' && o.deliveredAt).filter((o) => { const day = ymd(o.deliveredAt!); return day >= p.start && day <= p.end; }).length;
         }
         delivered += all.filter((o) => o.operatorId === op.id && o.status === 'DELIVERED').length;
         sysTotal += sys; myTotal += mine;

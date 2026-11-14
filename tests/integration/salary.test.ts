@@ -79,7 +79,7 @@ describe('хагас сар, тогтмол цалин', () => {
     expect((await S.salaryBoard(acc, ym)).totals.transferred).toBe(700_000);
   });
 
-  it('захиалгаар (оператор): тухайн хугацаанд авсан, хүргэгдсэн / мөнгө орсон захиалга × хөлс (хуучин шиг)', async () => {
+  it('#157 захиалгаар (оператор): зөвхөн ХҮРГЭГДСЭН захиалга, ХҮРГЭСЭН өдрөөр × хөлс; урьдчилж төлсөн ч хүргээгүй бол тоологдохгүй', async () => {
     const key = `u:${op.id}`;
     await S.setConfig(acc, { staffKey: key, salaryType: 'ORDER_BASED', oppRatePerOrder: 1500, bonusSalary: 0 });
     const page = (await A.savePage(sa, { name: 'Шоп' })).id;
@@ -88,25 +88,28 @@ describe('хагас сар, тогтмол цалин', () => {
     await D.createReceipt(wh, { warehouseId: whId, lines: [{ variantId: prod.variants[0]!.id, qty: 10 }], idemKey: randomUUID() });
     const mk = async (o: Record<string, unknown> = {}) => (await O.createOrder(op, { phone: String(99400000 + ++seq), province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 1, addressDetail: 'Тест 5-р байр', pageId: page, lines: [{ variantId: prod.variants[0]!.id, qty: 1 }], idemKey: randomUUID(), ...o })).order.id;
     const a1 = await mk(); const a2 = await mk(); const a3 = await mk({ prepaidWait: true });
-    await db.order.update({ where: { id: a1 }, data: { status: 'DELIVERED' } });
-    await bankPay(a3); // мөнгө орсон (банкаар, #142)
+    await db.order.update({ where: { id: a1 }, data: { status: 'DELIVERED', deliveredAt: new Date() } });
+    await bankPay(a3); // мөнгө орсон — гэхдээ хүргэгдээгүй
     void a2; // Шинэ — тоологдохгүй
     const half = Number(U.ubDay().slice(8)) <= 15 ? 1 : 2;
-    const prep = await S.prepareSalary(acc, key, ym, half);
+    let prep = await S.prepareSalary(acc, key, ym, half);
+    expect([prep.auto.orderCount, prep.auto.orderSalary]).toEqual([1, 1500]);
+    // урьдчилж төлсөн захиалга хүргэгдмэгц тоологдоно
+    await db.order.update({ where: { id: a3 }, data: { status: 'DELIVERED', deliveredAt: new Date() } });
+    prep = await S.prepareSalary(acc, key, ym, half);
     expect([prep.auto.orderCount, prep.auto.orderSalary]).toEqual([2, 3000]);
     const r = await S.saveSalary(acc, { staffKey: key, ym, half, baseSalary: 999_999 });
     expect([r.salaryType, r.orderSalary, r.baseSalary, r.transferSalary]).toEqual(['ORDER_BASED', 3000, 0, 3000]);
-    // #124 ялгаа 3: 40 хоногийн дараа хүргэх товлосон захиалга — «Шинэ» болсон өдрөөр (хүргэхийн өмнөх өдөр), энэ хугацаанд биш
+    // хүргэлт хоцорсон (40 хоногийн дараа хүргэсэн) — тэр хүргэсэн өдрийн хагас сард, энэ хугацаанд биш
     const far = U.ubDay(new Date(), 40);
-    const a4 = await mk({ deliveryDate: far });
-    await db.order.update({ where: { id: a4 }, data: { status: 'DELIVERED' } });
-    // жолооч «Маргааш» дарснаар хүргэх өдөр нь шилжсэн энгийн захиалга — авсан өдрөөрөө
+    const a4 = await mk();
+    await db.order.update({ where: { id: a4 }, data: { status: 'DELIVERED', deliveredAt: new Date(`${far}T12:00:00+08:00`) } });
+    // хүргэсний дараа цуцлагдсан — тоологдохгүй
     const a5 = await mk();
-    await db.order.update({ where: { id: a5 }, data: { status: 'DELIVERED', postponeCount: 1, deliveryDate: U.dateOnly(far) } });
-    expect((await S.prepareSalary(acc, key, ym, half)).auto.orderCount).toBe(3);
-    const fy = U.ubDay(new Date(Date.parse(`${far}T00:00:00Z`) - 86_400_000));
-    const fhalf = Number(fy.slice(8)) <= 15 ? 1 : 2;
-    expect((await S.prepareSalary(acc, key, fy.slice(0, 7), fhalf)).auto.orderCount).toBe(1);
+    await db.order.update({ where: { id: a5 }, data: { status: 'CANCELLED', deliveredAt: new Date() } });
+    expect((await S.prepareSalary(acc, key, ym, half)).auto.orderCount).toBe(2);
+    const fhalf = Number(far.slice(8)) <= 15 ? 1 : 2;
+    expect((await S.prepareSalary(acc, key, far.slice(0, 7), fhalf)).auto.orderCount).toBe(1);
   });
 });
 
