@@ -19,7 +19,11 @@ interface Summary {
   trend: Day[];
   reasons: { key: string; label: string; n: number; pct: number }[];
   cancelledProducts: { productId: number; code: string; name: string; orders: number; qty: number }[];
+  hourly?: { h: number; n: number }[]; hourlyAvg?: boolean;
+  topSold?: { productId: number; code: string; name: string; orders: number; qty: number }[];
+  pages?: { pageId: number; name: string; total: number; delivered: number; cancelled: number; rate: number }[];
 }
+interface Eod { date: string; late: boolean; unassigned: number; notReceived: number; notSubmitted: number; notApproved: number; out: number }
 interface Attention { items: { key: string; tone: 'bad' | 'warn' | 'info'; icon: string; label: string; n: number; href: string }[] }
 
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа гарлаа');
@@ -33,6 +37,7 @@ export function DashboardClient() {
   const [date, setDate] = useState(ubToday());
   const [s, setS] = useState<Summary | null>(null);
   const [att, setAtt] = useState<Attention | null>(null);
+  const [eod, setEod] = useState<Eod | null>(null);
   // Аудит #160: хүргэсний дараа хожуу буцаасан захиалга — зөвхөн Супер админд (403 бол харагдахгүй)
   const [late, setLate] = useState<{ items: { id: number; number: string; phone: string; total: number; operatorName: string; driverName: string | null; deliveredAt: string | null; lateCancelledAt: string; lateCancelByName: string | null; lateCancelNote: string | null }[]; total: number; page: number; pages: number } | null>(null);
   const [latePage, setLatePage] = useState(1);
@@ -48,6 +53,8 @@ export function DashboardClient() {
         api<Attention>('/api/dashboard?view=attention'),
       ]);
       setS(a); setAtt(b); setErr(null); setAt(new Date());
+      // Аудит #162: өдрийн эцсийн хяналт — зөвхөн өнөөдөр
+      if (date === ubToday()) api<Eod>('/api/dashboard?view=eod').then(setEod).catch(() => setEod(null)); else setEod(null);
     } catch (e) { setErr(msg(e)); } finally { setBusy(false); }
   }, [range, date]);
   useEffect(() => { void load(); }, [load]);
@@ -99,6 +106,7 @@ export function DashboardClient() {
           </section>
         ) : att ? <p className="rounded-2xl border border-line bg-surface px-4 py-3 text-[13.5px] text-muted">✓ Анхаарах зүйл алга</p> : null}
 
+        {eod ? <EndOfDay e={eod} /> : null}
         {s ? (<>
           <section aria-label={`Захиалга · ${period}`} className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
             <Kpi label="Нийт захиалга" value={num(s.kpi.total)} sub={`${period}${s.kpi.waiting ? ` · хүлээгдэж ${num(s.kpi.waiting)}` : ''}`} />
@@ -109,6 +117,32 @@ export function DashboardClient() {
             <Kpi label="Цуцлалт" value={`${s.kpi.cancelRate}%`} tone="bad" sub={s.kpi.total ? (s.kpi.cancelRate <= 5 ? 'Маш сайн' : s.kpi.cancelRate <= 10 ? 'Хэвийн' : 'Анхаар!') : '—'} />
           </section>
           {s.trend.length > 1 ? <Trend days={s.trend} /> : null}
+          {s.hourly ? <Hourly s={s} /> : null}
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <section className="rounded-2xl border border-line bg-surface p-4" aria-label="Хамгийн их зарагдсан бараа">
+              <h2 className="mb-2 text-[15px] font-bold">Хамгийн их зарагдсан бараа</h2>
+              {s.topSold?.length ? (
+                <div className="overflow-x-auto"><table className="w-full min-w-[320px] text-[13px]">
+                  <thead><tr className="text-[12px] text-muted"><th className="py-1 text-left">Бараа</th><th className="px-2 text-right">Захиалга</th><th className="px-2 text-right">Ширхэг</th></tr></thead>
+                  <tbody>{s.topSold.map((p, i) => (
+                    <tr key={p.productId} className="border-t border-line"><td className="max-w-[260px] py-1.5"><div className="line-clamp-2 [overflow-wrap:anywhere] font-semibold" title={p.name}>{i + 1}. {p.name}</div><div className="text-[11.5px] text-muted">{p.code}</div></td><td className="px-2 text-right font-bold">{num(p.orders)}</td><td className="px-2 text-right">{num(p.qty)}</td></tr>
+                  ))}</tbody>
+                </table></div>
+              ) : <p className="text-[13px] text-muted">Захиалга алга</p>}
+            </section>
+            <section className="rounded-2xl border border-line bg-surface p-4" aria-label="Пэйжээр">
+              <h2 className="mb-2 text-[15px] font-bold">Пэйжээр</h2>
+              {s.pages?.length ? (
+                <div className="overflow-x-auto"><table className="w-full min-w-[360px] text-[13px]">
+                  <thead><tr className="text-[12px] text-muted"><th className="py-1 text-left">Пэйж</th><th className="px-2 text-right">Захиалга</th><th className="px-2 text-right">Хүргэсэн</th><th className="px-2 text-right">Цуцалсан</th><th className="px-2 text-right">Амжилт</th></tr></thead>
+                  <tbody>{s.pages.map((p) => (
+                    <tr key={p.pageId} className="border-t border-line"><td className="max-w-[220px] py-1.5 font-semibold [overflow-wrap:anywhere]">{p.name}</td><td className="px-2 text-right font-bold">{num(p.total)}</td><td className="px-2 text-right">{num(p.delivered)}</td><td className="px-2 text-right">{num(p.cancelled)}</td>
+                      <td className={clsx('px-2 text-right font-bold', p.total && p.rate < 80 ? 'text-bad-ink' : 'text-ok-ink')}>{p.total ? `${p.rate}%` : '—'}</td></tr>
+                  ))}</tbody>
+                </table></div>
+              ) : <p className="text-[13px] text-muted">Захиалга алга</p>}
+            </section>
+          </div>
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             <Reasons s={s} />
             <section className="rounded-2xl border border-line bg-surface p-4">
@@ -227,6 +261,52 @@ function Reasons({ s }: { s: Summary }) {
           ))}
         </ul>
       ) : <p className="text-[13px] text-muted">Цуцлагдсан захиалга алга</p>}
+    </section>
+  );
+}
+
+/** Аудит #162: захиалга орж ирсэн цаг (Улаанбаатар) — 24 багана */
+function Hourly({ s }: { s: Summary }) {
+  const hs = s.hourly ?? [];
+  const max = Math.max(1, ...hs.map((x) => x.n));
+  const peak = hs.reduce((a, b) => (b.n > a.n ? b : a), { h: 0, n: 0 });
+  return (
+    <section className="rounded-2xl border border-line bg-surface p-4" aria-label="Захиалга орж ирсэн цаг">
+      <h2 className="mb-1 text-[15px] font-bold">Захиалга орж ирсэн цаг {s.hourlyAvg ? <span className="text-[12.5px] font-normal text-muted">· өдрийн дундаж</span> : null}</h2>
+      <p className="mb-2 text-[12.5px] text-muted">{peak.n ? `Хамгийн их: ${peak.h}:00–${peak.h + 1}:00 (${num(peak.n)})` : 'Захиалга алга'}</p>
+      <div className="flex h-[120px] items-end gap-[2px]" role="img" aria-label="Цаг бүрийн захиалга">
+        {hs.map((x) => (
+          <div key={x.h} className="flex h-full min-w-0 flex-1 flex-col justify-end" title={`${x.h}:00 — ${num(x.n)}`}>
+            <div className="w-full rounded-t-[3px]" style={{ height: `${(x.n / max) * 100}%`, minHeight: x.n ? 2 : 0, background: x.h === peak.h && peak.n ? 'var(--chart-ok)' : 'color-mix(in srgb, var(--chart-ok) 55%, transparent)' }} />
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 flex gap-[2px] text-[10.5px] text-muted">{hs.map((x) => <span key={x.h} className="flex min-w-0 flex-1 justify-center overflow-visible whitespace-nowrap">{x.h % 3 === 0 ? x.h : ''}</span>)}</div>
+    </section>
+  );
+}
+
+/** Аудит #162: өдрийн эцсийн хяналт (өнөөдөр); 21:00-аас хойш дутуу бол тод */
+function EndOfDay({ e }: { e: Eod }) {
+  const items: [string, number, string][] = [
+    ['Оноогдоогүй захиалга (маргаашийн + үлдсэн)', e.unassigned, '/driver-lead'],
+    ['Падаан хүлээн аваагүй', e.notReceived, '/handover'],
+    ['Хүргэлтэд байгаа', e.out, '/driver-control'],
+    ['Тооцоо илгээгээгүй жолооч', e.notSubmitted, '/accounting'],
+    ['Тооцоо баталгаажаагүй', e.notApproved, '/accounting'],
+  ];
+  const open = items.some(([, n]) => n > 0);
+  return (
+    <section aria-label="Өдрийн эцсийн хяналт" className={clsx('rounded-2xl border p-4', e.late && open ? 'border-warn/50 bg-warn-soft' : 'border-line bg-surface')}>
+      <h2 className="mb-2 text-[15px] font-bold">⏰ Өдрийн эцсийн хяналт <span className="text-[12.5px] font-normal text-muted">· өнөөдөр{e.late ? ' (21:00-аас хойш)' : ''}</span></h2>
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
+        {items.map(([l, n, href]) => (
+          <Link key={l} href={href} data-eod={l} className={clsx('flex min-w-0 flex-col gap-0.5 rounded-xl border bg-surface px-3 py-2 hover:brightness-95', n > 0 && e.late ? 'border-warn/60' : 'border-line')}>
+            <span className="text-[12px] font-semibold text-muted [overflow-wrap:anywhere]">{l}</span>
+            <span className={clsx('text-[20px] font-bold', n > 0 ? (e.late ? 'text-warn' : 'text-ink') : 'text-ok-ink')}>{n > 0 ? num(n) : '✓'}</span>
+          </Link>
+        ))}
+      </div>
     </section>
   );
 }

@@ -138,10 +138,11 @@ describe('засвар — тайлбар заавал (#29)', () => {
     const mk = await actor(['MARKETING']);
     const p = await P.createProduct(adm, { code: 'E1', name: 'Бараа', price: 1000, costPrice: 400 });
     await P.updateProduct(adm, p.id, { costPrice: 450 }, { reason: 'Өртөг шинэчлэв', version: p.version });
-    expect(JSON.stringify(await P.getProduct(mk, p.id))).not.toMatch(/costPrice|450|400/);
+    // Санамсаргүй UUID-д «450» таарахаас сэргийлж утгыг яг тааруулна
+    expect(JSON.stringify(await P.getProduct(mk, p.id))).not.toMatch(/costPrice|[:\[,]4[05]0[,}\]]/);
     expect(JSON.stringify(await P.listProducts(mk, {}))).not.toMatch(/costPrice/);
     const h = JSON.stringify(await H.listProductHistory(mk, { productId: p.id }));
-    expect(h).not.toMatch(/450|"400/);
+    expect(h).not.toMatch(/[:\[,"]4[05]0[,}\]"]/);
     expect(JSON.stringify(await P.getProduct(adm, p.id))).toMatch(/"costPrice":450/);
   });
 });

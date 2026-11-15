@@ -73,6 +73,25 @@ describe('Хянах самбар (#123)', () => {
     expect((await DB.summary(adm, 'day', undefined)).kpi).toMatchObject({ delivered: 8, cancelled: 2, postponed: 0 });
   });
 
+  it('#162 цагийн график (УБ), хамгийн их зарагдсан бараа, пэйжээр; өдрийн эцсийн хяналт', async () => {
+    const t0 = U.ubDayStart(U.ubDay()).getTime();
+    for (let i = 0; i < 3; i++) await order({ status: 'DELIVERED' }, new Date(t0 + 10 * H + i * 60_000));
+    await order({ status: 'CANCELLED', cancelReason: 'NO_ANSWER' }, new Date(t0 + 10 * H));
+    await order({ status: 'NEW' }, new Date(t0 + 14 * H));
+    const s = await DB.summary(adm, 'day', undefined);
+    expect(s.hourly).toHaveLength(24);
+    expect([s.hourly[10]!.n, s.hourly[14]!.n, s.hourly[3]!.n, s.hourlyAvg]).toEqual([4, 1, 0, false]);
+    // цуцлагдсан захиалга «зарагдсан»-д орохгүй
+    expect(s.topSold[0]).toMatchObject({ name: 'Самбарын бараа', orders: 4, qty: 4 });
+    expect(s.pages[0]).toMatchObject({ name: 'greenshopy', total: 5, delivered: 3, cancelled: 1, rate: 60 });
+    // 7 хоног — цаг бүрийн өдрийн дундаж
+    const w = await DB.summary(adm, 'week', undefined);
+    expect([w.hourlyAvg, w.hourly[10]!.n]).toEqual([true, Math.round((4 / 7) * 10) / 10]);
+    const e = await DB.endOfDay(adm);
+    expect(e).toMatchObject({ date: U.ubDay(), unassigned: 1, notReceived: 0, notSubmitted: 0, notApproved: 0, out: 0 });
+    await expect(DB.endOfDay(op)).rejects.toBeInstanceOf(AppError);
+  });
+
   it('эрх: СА, Админ л; анхаарах зүйлс эрхээр (бараа татах зөвхөн СА); буруу огноо', async () => {
     await expect(DB.summary(op, 'day', undefined)).rejects.toBeInstanceOf(AppError);
     await expect(DB.summary(sa, 'day', '2026-13-40')).rejects.toBeInstanceOf(AppError);

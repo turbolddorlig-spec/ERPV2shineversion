@@ -10,6 +10,7 @@ export async function GET(req: NextRequest) {
     const ctx = await requireApiUser(req, { page: 'dashboard' });
     const sp = req.nextUrl.searchParams;
     if (sp.get('view') === 'attention') return json(await S.attention(ctx.actor));
+    if (sp.get('view') === 'eod') return json(await S.endOfDay(ctx.actor));
     if (sp.get('view') === 'late') return json(await S.lateReturnList(ctx.actor, sp.get('page')));
     return json(await S.summary(ctx.actor, sp.get('range') ?? undefined, sp.get('date') ?? undefined));
   } catch (e) { return errorResponse(e); }

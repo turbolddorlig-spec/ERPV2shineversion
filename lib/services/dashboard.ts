@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { db } from '../db';
 import { badRequest, forbidden } from '../errors';
 import { canEdit, canReviewDiscounts, canView } from '../permissions';
-import { isYmd, ubDay, ubDayStart, ymdOf } from '../ubdate';
+import { dateOnly, isYmd, ubDay, ubDayStart, ymdOf } from '../ubdate';
 import { addDays } from './delivery/core';
 import { CANCEL_LABEL } from './orders/core';
 import { unreviewedDiscounts } from './orders/queries';
@@ -46,7 +46,7 @@ export async function summary(actor: UserActor, rangeIn: unknown, dateIn: unknow
   const n = RANGE[range]!;
   const from = addDays(to, -(n - 1));
   return cached(`s:${range}:${to}`, range === 'day' ? 60_000 : 300_000, async () => {
-    const [days, reasons, products] = await Promise.all([
+    const [days, reasons, products, hours, sold, pages] = await Promise.all([
       db.$queryRaw<{ day: Date; total: number; delivered: number; cancelled: number; inDelivery: number; waiting: number; postponed: number }[]>`
         SELECT (o."confirmedAt" + interval '8 hours')::date AS day, count(*)::int AS total,
           count(*) FILTER (WHERE o.status = 'DELIVERED')::int AS delivered,
@@ -67,7 +67,26 @@ export async function summary(actor: UserActor, rangeIn: unknown, dateIn: unknow
         WHERE ${REAL} AND o."confirmedAt" >= ${ubDayStart(from)} AND o."confirmedAt" < ${ubDayStart(addDays(to, 1))}
           AND (o.status = 'CANCELLED' OR ${POSTPONED})
         GROUP BY 1, 2, 3 ORDER BY 4 DESC, 5 DESC LIMIT 10`,
+      // Аудит #162 (эзэн): захиалга орж ирсэн цаг (Улаанбаатар, баталгаажсан мөчөөр)
+      db.$queryRaw<{ h: number; n: number }[]>`
+        SELECT extract(hour from o."confirmedAt" + interval '8 hours')::int AS h, count(*)::int AS n
+        FROM "Order" o WHERE ${REAL} AND o."confirmedAt" >= ${ubDayStart(from)} AND o."confirmedAt" < ${ubDayStart(addDays(to, 1))}
+        GROUP BY 1`,
+      // Хамгийн их зарагдсан бараа (цуцлагдаагүй захиалга)
+      db.$queryRaw<{ productId: number; code: string; name: string; orders: number; qty: number }[]>`
+        SELECT l."productId", p.code, p.name, count(DISTINCT o.id)::int AS orders, sum(l.qty)::int AS qty
+        FROM "Order" o JOIN "OrderLine" l ON l."orderId" = o.id JOIN "Product" p ON p.id = l."productId"
+        WHERE ${REAL} AND o."confirmedAt" >= ${ubDayStart(from)} AND o."confirmedAt" < ${ubDayStart(addDays(to, 1))} AND o.status <> 'CANCELLED'
+        GROUP BY 1, 2, 3 ORDER BY 4 DESC, 5 DESC LIMIT 10`,
+      // Пэйж бүрийн захиалга ба хүргэлт
+      db.$queryRaw<{ pageId: number; name: string; total: number; delivered: number; cancelled: number }[]>`
+        SELECT o."pageId", pg.name, count(*)::int AS total, count(*) FILTER (WHERE o.status = 'DELIVERED')::int AS delivered,
+          count(*) FILTER (WHERE o.status = 'CANCELLED')::int AS cancelled
+        FROM "Order" o JOIN "Page" pg ON pg.id = o."pageId"
+        WHERE ${REAL} AND o."confirmedAt" >= ${ubDayStart(from)} AND o."confirmedAt" < ${ubDayStart(addDays(to, 1))}
+        GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 12`,
     ]);
+    const hm = new Map(hours.map((x) => [x.h, x.n]));
     const byDay = new Map(days.map((d) => [ymdOf(d.day), d]));
     const trend = Array.from({ length: n }, (_, i) => addDays(from, i)).map((d) => {
       const r = byDay.get(d);
@@ -82,7 +101,33 @@ export async function summary(actor: UserActor, rangeIn: unknown, dateIn: unknow
       trend,
       reasons: reasons.map((r) => ({ key: r.reason ?? 'NONE', label: label(r.reason), n: r.n, pct: rate(r.n, cancelled) })),
       cancelledProducts: products,
+      // Олон өдрийн хугацаанд — өдрийн дундаж (цаг бүрт)
+      hourly: Array.from({ length: 24 }, (_, h) => ({ h, n: n > 1 ? Math.round(((hm.get(h) ?? 0) / n) * 10) / 10 : hm.get(h) ?? 0 })),
+      hourlyAvg: n > 1,
+      topSold: sold,
+      pages: pages.map((p) => ({ ...p, rate: rate(p.delivered, p.total) })),
     };
+  });
+}
+
+/**
+ * Аудит #162 (эзэн): өдрийн эцсийн хяналт (өнөөдөр) — 21:00-аас хойш тод анхааруулна.
+ * Оноогдоогүй (маргаашийн + үлдсэн), падаан хүлээн аваагүй жолооч, тооцоо илгээгээгүй / баталгаажаагүй.
+ */
+export async function endOfDay(actor: UserActor) {
+  assertView(actor);
+  const today = ubDay();
+  return cached(`eod:${today}`, 30_000, async () => {
+    const [r] = await db.$queryRaw<{ unassigned: number; notReceived: number; notSubmitted: number; notApproved: number; out: number }[]>`
+      SELECT
+        (SELECT count(*)::int FROM "Order" WHERE status = 'NEW' AND "driverId" IS NULL AND "deliveryDate" <= ${dateOnly(addDays(today, 1))}::date) AS unassigned,
+        (SELECT count(*)::int FROM "Handover" WHERE date = ${dateOnly(today)}::date AND status <> 'RECEIVED') AS "notReceived",
+        (SELECT count(*)::int FROM "Handover" h WHERE h.date = ${dateOnly(today)}::date AND h.status = 'RECEIVED'
+           AND NOT EXISTS (SELECT 1 FROM "DriverSettlement" s WHERE s."driverId" = h."driverId" AND s.date = h.date AND s.status IN ('PENDING', 'COMPLETED'))) AS "notSubmitted",
+        (SELECT count(*)::int FROM "DriverSettlement" WHERE date = ${dateOnly(today)}::date AND status = 'PENDING') AS "notApproved",
+        (SELECT count(*)::int FROM "Order" o JOIN "Handover" h ON h.id = o."handoverId" WHERE h.date = ${dateOnly(today)}::date AND o.status = 'OUT_FOR_DELIVERY') AS out`;
+    const hour = Number(new Date(Date.now() + 8 * 3600_000).toISOString().slice(11, 13));
+    return { date: today, late: hour >= 21, ...r! };
   });
 }
 
