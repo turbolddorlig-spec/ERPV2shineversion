@@ -308,7 +308,9 @@ describe('#156 бүтэн ажлын өдөр — бүх хуудсын уялд
     const dash = await DSH.summary(sa, 'day', today);
     if (real && dash.kpi.delivered !== real.delivered) bad('7 нүүр', `нүүрийн хүргэсэн ${dash.kpi.delivered} ≠ бодит ${real.delivered}`);
     const acDay = await C.computeDay(db, today);
-    if (real && dash.kpi.delivered !== acDay.reduce((n, r) => n + r.delivered, 0)) bad('7 нүүр', `нүүрийн хүргэсэн ${dash.kpi.delivered} ≠ нягтлангийн тооцооны ${acDay.reduce((n, r) => n + r.delivered, 0)}`);
+    // #160: нягтлангийн тооцоо түгжсэн өдрийн хожуу буцаасныг «хүргэсэн» хэвээр тоолно (түүх), нүүр одоогийн төлвөөр — ялгаа = хожуу буцаалт
+    const lateN = await db.order.count({ where: { lateCancelledAt: { not: null }, confirmedAt: { gte: U.ubDayStart(today) } } });
+    if (real && dash.kpi.delivered + lateN !== acDay.reduce((n, r) => n + r.delivered, 0)) bad('7 нүүр', `нүүрийн хүргэсэн ${dash.kpi.delivered} + хожуу буцаасан ${lateN} ≠ нягтлангийн тооцооны ${acDay.reduce((n, r) => n + r.delivered, 0)}`);
     const rep = await RP.pageReport(sa, { from: today, to: today });
     const repRows = (rep as unknown as { rows: { created: number; delivered: number }[] }).rows;
     const createdAll = await db.order.count({ where: { createdAt: { gte: U.ubDayStart(today) } } });
