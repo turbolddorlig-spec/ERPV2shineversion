@@ -5,10 +5,17 @@ import { legacyCommit, legacyPreview } from '@/lib/services/legacy-import';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-/** Туршилтын оруулалт (#138) — зөвхөн Супер админ (сервис дотор шалгана). action: preview | commit */
+/**
+ * Туршилтын оруулалт (#138) — зөвхөн Супер админ (сервис дотор шалгана). action: preview | commit
+ * #165 (эзний шийдвэр): ХААЛТТАЙ. Санамсаргүй захиалга, бараа, падаан үүсгэхгүйн тулд анхдагчаар унтраасан;
+ * зөвхөн серверийн `LEGACY_IMPORT_ENABLED=1` тохиргоогоор түр нээгдэнэ. Тохиргоо хуудаснаас хэсэг нь хасагдсан.
+ */
 export async function POST(req: NextRequest) {
   try {
     const ctx = await requireApiUser(req, { page: 'settings', need: 'edit' });
+    if (process.env.LEGACY_IMPORT_ENABLED !== '1') {
+      return json({ error: 'Туршилтын оруулалт хаалттай — захиалга оруулахгүй.', code: 'legacy_import_disabled' }, 403);
+    }
     const body = await req.json().catch(() => ({}));
     if (body.action === 'commit') return json(await legacyCommit(ctx.actor, body));
     return json(await legacyPreview(ctx.actor, body));

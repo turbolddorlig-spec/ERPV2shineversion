@@ -57,6 +57,26 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
   const nodeActive = (n: { href: string; item: NavItem | null; children: NavItem[] }) => (n.item ? active(n.item.href) : false) || n.children.some((c) => active(c.href));
   const badgeEl = (b: number, small = false) => b ? <span className={clsx('rounded-full bg-[#E8590C] font-bold text-white', small ? 'min-w-[16px] px-1 text-center text-[10px] leading-[16px]' : 'min-w-[18px] px-1 text-center text-[10.5px] leading-[18px]')}>{b > 99 ? '99+' : b}</span> : null;
 
+  // Анхааруулгууд (эзний хүсэлт #165): мөр мөрөөр биш — хонхны дүрс + тоо, дарахад жагсаалт
+  const alerts: AlertItem[] = [];
+  if (jobsAlert) alerts.push({ key: 'jobs', level: 'bad', icon: '⛔', text: `Автомат ажил (захиалга цуцлах, Meta, шөнийн өр, Gmail, тулгалт) ${ubTime(jobsAlert.at)}-аас хойш ажиллаагүй байна — серверийг шалгуулна уу.` });
+  for (const [i, a] of (backupAlert ?? []).entries()) alerts.push({ key: `backup${i}`, level: a.level, icon: a.level === 'bad' ? '⛔' : '⚠️', text: a.text });
+  if (shortageSkip) alerts.push({ key: 'shortage', level: 'warn', icon: '⚠️', href: '/accounting', link: 'Тооцоо', text: `${shortageSkip.date}-ны жолоочийн дутуу барааны автомат өр хоцорсон (${ubTime(shortageSkip.at)}) тул бичигдсэнгүй — Тооцоо → Өр хэсэгт жолооч бүрээр шалгаж, шаардлагатай бол «Одоо хаах»-аар бодно уу.` });
+  if (alert) alerts.push({ key: 'stock', level: 'bad', icon: '⚠', href: '/warehouse', link: 'Агуулах', text: alert.kind === 'mismatch'
+    ? `Үлдэгдлийн тулгалтад ${alert.count} зөрүү илэрлээ (журнал ≠ үлдэгдэл)${alert.since ? ` · ${ubTime(alert.since)}-аас` : ''}. Агуулах руу орж шалгана уу.`
+    : `Цаг тутмын автомат тулгалт ${ubTime(alert.at)}-аас хойш ажиллаагүй байна. Агуулах → «Дахин шалгах».` });
+  if (boostAlert) alerts.push({ key: 'boost', level: boostAlert.red ? 'bad' : 'warn', icon: boostAlert.red ? '🔴' : '🟠', href: boostAlert.red ? '/goods-outflow?tab=red' : '/goods-outflow?tab=orange', link: 'Барааны гарц',
+    text: `${boostAlert.red ? `Алдагдалтай бүүст: ${boostAlert.red} бараа — яаралтай шалгаж унтраана уу.` : ''}${boostAlert.orange ? ` Ашиг багассан / өсөлтгүй бүүст: ${boostAlert.orange} бараа.` : ''}`.trim() });
+  if (assignAlert) alerts.push({ key: 'assign', level: 'bad', icon: '🔴', href: '/driver-lead', link: 'Хуваарилалт',
+    text: `${assignAlert.leftover ? `Хоносон, хуваарилагдаагүй ${assignAlert.leftover} захиалга байна — яаралтай хуваарилна уу.` : ''}${assignAlert.late && assignAlert.today ? ` ${String(assignAlert.hour).padStart(2, '0')}:00 болсон — өнөөдрийн ${assignAlert.today} «Шинэ» захиалга хуваарилагдаагүй байна.` : ''}`.trim() });
+  if (handoverAlert) alerts.push({ key: 'handover', level: 'bad', icon: '🔴', href: '/handover', link: 'Падаан', text: `Агуулах өгсөн боловч жолооч 2 цагаас удаан хүлээн аваагүй ${handoverAlert.count} падаан байна — бараа жолоочийн гарт, захиалга хүргэлтэд гараагүй.` });
+  if (staleGoodsAlert) alerts.push({ key: 'stale-goods', level: 'bad', icon: '📦', href: '/accounting', link: 'Нягтлан', text: `${staleGoodsAlert.drivers} жолооч ${staleGoodsAlert.days}+ хоног бараагаа агуулахад өгөөгүй — ${staleGoodsAlert.qty} ширхэг, ${staleGoodsAlert.amount.toLocaleString('en-US')}₮ (өр хүлээгдэж байна).` });
+  if (paidCancelAlert) alerts.push({ key: 'paid-cancel', level: 'warn', icon: '💰', href: '/bank-import?tab=paidCancelled', link: 'Жагсаалт', text: `Төлбөр орсон боловч жолооч / асуудлаар цуцлагдсан ${paidCancelAlert.count} захиалга байна — мөнгө нь захиалгадаа наалдсан чигтээ. Шалтгааныг тогтооно уу.` });
+  if (reorderAlert) alerts.push({ key: 'reorder', level: reorderAlert.urgent || reorderAlert.late ? 'bad' : 'warn', icon: '🚚', href: reorderHref ?? '/goods-outflow?tab=reorder', link: reorderHref === '/supplier' ? 'Миний барааны гарц' : 'Барааны гарц',
+    text: `Бараа их гарч байна, дуусах дөхлөө — бараагаа татаарай:${reorderAlert.urgent ? ` 🔴 яаралтай ${reorderAlert.urgent}` : ''}${reorderAlert.order ? ` 🟠 татах ${reorderAlert.order}` : ''}${reorderAlert.late ? ` ⏰ ирэх хугацаа хэтэрсэн ${reorderAlert.late}` : ''} бараа.` });
+  const [bellOpen, setBellOpen] = useState(false);
+  useEffect(() => setBellOpen(false), [pathname]);
+
   const tint = (key: string) => ({ ['--nav-c']: moduleColor(key) }) as CSSProperties;
 
   return (
@@ -67,8 +87,11 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
           <Link href="/" aria-label="Нүүр" className="grid h-11 w-11 place-items-center rounded-[13px] bg-[#E8590C] text-[22px] font-extrabold tracking-[-0.04em] text-white">
             z<span className="text-[#16181D]">.</span>
           </Link>
-          <button type="button" onClick={toggleSlim} aria-label={slim ? 'Цэсийг өргөн болгох' : 'Цэсийг нарийн болгох'} title={slim ? 'Өргөн цэс' : 'Нарийн цэс'}
-            className="grid h-8 w-8 place-items-center rounded-lg text-[15px] font-bold text-rail-text hover:bg-rail-active hover:text-white">{slim ? '»' : '«'}</button>
+          <div className={clsx('flex items-center gap-1', slim && 'flex-col')}>
+            <AlertBell items={alerts} open={bellOpen} setOpen={setBellOpen} dark />
+            <button type="button" onClick={toggleSlim} aria-label={slim ? 'Цэсийг өргөн болгох' : 'Цэсийг нарийн болгох'} title={slim ? 'Өргөн цэс' : 'Нарийн цэс'}
+              className="grid h-8 w-8 place-items-center rounded-lg text-[15px] font-bold text-rail-text hover:bg-rail-active hover:text-white">{slim ? '»' : '«'}</button>
+          </div>
         </div>
         {slim ? nav.map((n) => (
           <Link key={n.key} href={n.href} aria-current={active(n.href) ? 'page' : undefined} title={n.label}
@@ -124,8 +147,10 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
             <span className="truncate">{current?.label ?? ''}</span>
           </span>
         </div>
+        <AlertBell items={alerts} open={bellOpen} setOpen={setBellOpen} />
         <ThemeToggle />
       </header>
+      {bellOpen ? <AlertPanel items={alerts} onClose={() => setBellOpen(false)} /> : null}
 
       {/* Гар утасны цэс */}
       {open ? (
@@ -183,97 +208,50 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
 
       <div className={slim ? 'lg:pl-[84px]' : 'lg:pl-[204px]'}>
         <div className="mx-auto w-full max-w-[1400px] has-[.full-bleed]:max-w-none px-[max(16px,env(safe-area-inset-left))] pb-[max(24px,env(safe-area-inset-bottom))] pt-4 lg:px-7 lg:pt-6">
-          {jobsAlert ? (
-            <div role="alert" data-jobs-alert className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] border border-bad/40 bg-bad-soft px-4 py-3 text-[13.5px] font-semibold text-bad-ink">
-              <span aria-hidden>⛔</span>
-              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">Автомат ажил (захиалга цуцлах, Meta, шөнийн өр, Gmail, тулгалт) {ubTime(jobsAlert.at)}-аас хойш ажиллаагүй байна — серверийг шалгуулна уу.</span>
-            </div>
-          ) : null}
-          {backupAlert?.length ? (
-            <div role="alert" data-backup-alert className={clsx('mb-4 flex flex-col gap-1 rounded-[14px] border px-4 py-3 text-[13.5px] font-semibold',
-              backupAlert.some((a) => a.level === 'bad') ? 'border-bad/40 bg-bad-soft text-bad-ink' : 'border-warn/40 bg-warn-soft text-warn')}>
-              {backupAlert.map((a, i) => (
-                <span key={i} className="flex min-w-0 gap-2"><span aria-hidden>{a.level === 'bad' ? '⛔' : '⚠️'}</span><span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{a.text}</span></span>
-              ))}
-            </div>
-          ) : null}
-          {shortageSkip ? (
-            <Link href="/accounting" role="alert" data-shortage-skip className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] border border-warn/40 bg-warn-soft px-4 py-3 text-[13.5px] font-semibold text-warn hover:brightness-95">
-              <span aria-hidden>⚠️</span>
-              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{shortageSkip.date}-ны жолоочийн дутуу барааны автомат өр хоцорсон ({ubTime(shortageSkip.at)}) тул бичигдсэнгүй — Тооцоо → Өр хэсэгт жолооч бүрээр шалгаж, шаардлагатай бол «Одоо хаах»-аар бодно уу.</span>
-            </Link>
-          ) : null}
-          {alert ? (
-            <Link href="/warehouse" role="alert" className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] border border-bad/40 bg-bad-soft px-4 py-3 text-[13.5px] font-semibold text-bad-ink hover:brightness-95">
-              <span className="text-[16px]">⚠</span>
-              {alert.kind === 'mismatch'
-                ? <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">Үлдэгдлийн тулгалтад {alert.count} зөрүү илэрлээ (журнал ≠ үлдэгдэл){alert.since ? ` · ${ubTime(alert.since)}-аас` : ''}. Агуулах руу орж шалгана уу.</span>
-                : <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">Цаг тутмын автомат тулгалт {ubTime(alert.at)}-аас хойш ажиллаагүй байна. Агуулах → «Дахин шалгах».</span>}
-              <span className="text-[12.5px] underline">Агуулах →</span>
-            </Link>
-          ) : null}
-          {boostAlert ? (
-            <Link href={boostAlert.red ? '/goods-outflow?tab=red' : '/goods-outflow?tab=orange'} role="alert" data-boost-alert
-              className={clsx('mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] border px-4 py-3 text-[13.5px] font-semibold hover:brightness-95',
-                boostAlert.red ? 'animate-pulse border-bad/40 bg-bad-soft text-bad-ink' : 'border-warn/40 bg-warn-soft text-warn')}>
-              <span className="text-[16px]">{boostAlert.red ? '🔴' : '🟠'}</span>
-              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
-                {boostAlert.red ? `Алдагдалтай бүүст: ${boostAlert.red} бараа — яаралтай шалгаж унтраана уу.` : ''}
-                {boostAlert.orange ? ` Ашиг багассан / өсөлтгүй бүүст: ${boostAlert.orange} бараа.` : ''}
-              </span>
-              <span className="text-[12.5px] underline">Барааны гарц →</span>
-            </Link>
-          ) : null}
-          {assignAlert ? (
-            <Link href="/driver-lead" role="alert" data-assign-alert
-              className="mb-4 flex animate-pulse flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] border border-bad/40 bg-bad-soft px-4 py-3 text-[13.5px] font-semibold text-bad-ink hover:brightness-95">
-              <span className="text-[16px]">🔴</span>
-              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
-                {assignAlert.leftover ? `Хоносон, хуваарилагдаагүй ${assignAlert.leftover} захиалга байна — яаралтай хуваарилна уу.` : ''}
-                {assignAlert.late && assignAlert.today ? ` ${String(assignAlert.hour).padStart(2, '0')}:00 болсон — өнөөдрийн ${assignAlert.today} «Шинэ» захиалга хуваарилагдаагүй байна.` : ''}
-              </span>
-              <span className="text-[12.5px] underline">Хуваарилалт →</span>
-            </Link>
-          ) : null}
-          {handoverAlert ? (
-            <Link href="/handover" role="alert" data-handover-alert
-              className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] border border-bad/40 bg-bad-soft px-4 py-3 text-[13.5px] font-semibold text-bad-ink hover:brightness-95">
-              <span className="text-[16px]">🔴</span>
-              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">Агуулах өгсөн боловч жолооч 2 цагаас удаан хүлээн аваагүй {handoverAlert.count} падаан байна — бараа жолоочийн гарт, захиалга хүргэлтэд гараагүй.</span>
-              <span className="text-[12.5px] underline">Падаан →</span>
-            </Link>
-          ) : null}
-          {staleGoodsAlert ? (
-            <Link href="/accounting" role="alert" data-stale-goods-alert
-              className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] border border-bad/40 bg-bad-soft px-4 py-3 text-[13.5px] font-semibold text-bad-ink hover:brightness-95">
-              <span className="text-[16px]">📦</span>
-              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{staleGoodsAlert.drivers} жолооч {staleGoodsAlert.days}+ хоног бараагаа агуулахад өгөөгүй — {staleGoodsAlert.qty} ширхэг, {staleGoodsAlert.amount.toLocaleString('en-US')}₮ (өр хүлээгдэж байна).</span>
-              <span className="text-[12.5px] underline">Нягтлан →</span>
-            </Link>
-          ) : null}
-          {paidCancelAlert ? (
-            <Link href="/bank-import?tab=paidCancelled" role="alert" data-paid-cancel-alert
-              className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] border border-warn/40 bg-warn-soft px-4 py-3 text-[13.5px] font-semibold text-warn hover:brightness-95">
-              <span className="text-[16px]">💰</span>
-              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">Төлбөр орсон боловч жолооч / асуудлаар цуцлагдсан {paidCancelAlert.count} захиалга байна — мөнгө нь захиалгадаа наалдсан чигтээ. Шалтгааныг тогтооно уу.</span>
-              <span className="text-[12.5px] underline">Жагсаалт →</span>
-            </Link>
-          ) : null}
-          {reorderAlert ? (
-            <Link href={reorderHref ?? '/goods-outflow?tab=reorder'} role="alert" data-reorder-alert
-              className={clsx('mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] border px-4 py-3 text-[13.5px] font-semibold hover:brightness-95',
-                reorderAlert.urgent || reorderAlert.late ? 'border-bad/40 bg-bad-soft text-bad-ink' : 'border-warn/40 bg-warn-soft text-warn')}>
-              <span className="text-[16px]">🚚</span>
-              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
-                Бараа их гарч байна, дуусах дөхлөө — бараагаа татаарай:
-                {reorderAlert.urgent ? ` 🔴 яаралтай ${reorderAlert.urgent}` : ''}
-                {reorderAlert.order ? ` 🟠 татах ${reorderAlert.order}` : ''}
-                {reorderAlert.late ? ` ⏰ ирэх хугацаа хэтэрсэн ${reorderAlert.late}` : ''} бараа.
-              </span>
-              <span className="text-[12.5px] underline">{reorderHref === '/supplier' ? 'Миний барааны гарц →' : 'Барааны гарц →'}</span>
-            </Link>
-          ) : null}
           {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface AlertItem { key: string; level: 'bad' | 'warn'; icon: string; text: string; href?: string; link?: string }
+
+/** Хонхны дүрс — анхааруулгын тоо; улаан нь яаралтай (бол анивчина) */
+function AlertBell({ items, open, setOpen, dark }: { items: AlertItem[]; open: boolean; setOpen: (v: boolean) => void; dark?: boolean }) {
+  const bad = items.some((a) => a.level === 'bad');
+  return (
+    <button type="button" data-alert-bell={items.length} onClick={() => setOpen(!open)} aria-expanded={open}
+      aria-label={items.length ? `Анхааруулга ${items.length}` : 'Анхааруулга алга'} title={items.length ? `Анхааруулга ${items.length}` : 'Анхааруулга алга'}
+      className={clsx('relative grid place-items-center rounded-xl', dark ? 'h-8 w-8 text-rail-text hover:bg-rail-active hover:text-white' : 'h-11 w-11 border border-line bg-surface text-ink')}>
+      <svg aria-hidden="true" width={dark ? 18 : 20} height={dark ? 18 : 20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+        <path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+      </svg>
+      {items.length ? (
+        <span className={clsx('absolute -right-1.5 -top-1.5 min-w-[18px] rounded-full px-1 text-center text-[10.5px] font-bold leading-[18px] text-white', bad ? 'animate-pulse bg-[#DC2626]' : 'bg-[#D97706]')}>{items.length}</span>
+      ) : null}
+    </button>
+  );
+}
+
+function AlertPanel({ items, onClose }: { items: AlertItem[]; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Анхааруулга">
+      <button type="button" aria-label="Хаах" className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div data-alert-panel className="absolute left-2 right-2 top-[max(64px,calc(env(safe-area-inset-top)+56px))] flex max-h-[80vh] flex-col overflow-hidden rounded-[16px] border border-line bg-surface shadow-pop lg:left-[96px] lg:right-auto lg:top-3 lg:w-[460px]">
+        <div className="flex items-center justify-between border-b border-line px-4 py-3">
+          <b className="text-[15px]">Анхааруулга {items.length ? `(${items.length})` : ''}</b>
+          <button type="button" onClick={onClose} aria-label="Хаах" className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-surface2"><Icon name="close" size={18} /></button>
+        </div>
+        <div className="flex flex-col gap-2 overflow-y-auto p-3">
+          {items.length ? items.map((a) => {
+            const cls = clsx('flex gap-2.5 rounded-[12px] border px-3 py-2.5 text-[13.5px] font-semibold',
+              a.level === 'bad' ? 'border-bad/40 bg-bad-soft text-bad-ink' : 'border-warn/40 bg-warn-soft text-warn');
+            const body = (<><span aria-hidden className="shrink-0">{a.icon}</span><span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{a.text}{a.link ? <span className="mt-1 block text-[12.5px] underline">{a.link} →</span> : null}</span></>);
+            return a.href
+              ? <Link key={a.key} href={a.href} data-alert-item={a.key} onClick={onClose} className={clsx(cls, 'hover:brightness-95')}>{body}</Link>
+              : <div key={a.key} data-alert-item={a.key} className={cls}>{body}</div>;
+          }) : <p className="px-1 py-6 text-center text-[14px] text-muted">Анхааруулга алга ✓</p>}
         </div>
       </div>
     </div>
