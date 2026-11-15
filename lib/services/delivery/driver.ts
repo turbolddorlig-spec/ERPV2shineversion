@@ -232,6 +232,41 @@ export async function undoDelivery(actor: UserActor, idIn: unknown, input: { not
   return r;
 }
 
+/**
+ * Аудит #160 (эзний шийдвэр): түгжсэн (нягтлан баталгаажуулсан) өдрийн хүргэсэн захиалгыг үйлчлүүлэгч хожуу буцаасан — зөвхөн нягтлангийн «Төлөв солих»-оос.
+ *  • Захиалга «Цуцлагдсан» болно, гэхдээ хүргэсэн мөч, төлбөр, дүн хадгалагдана — тэр өдрийн тооцоонд «хүргэсэн» хэвээр (жолоочийн тооцоо, цалин хөдлөхгүй).
+ *  • Бараа үйлчлүүлэгчээс → тэр захиалгын жолоочид (DELIVERY_BACK), жолооч буцаалтаар агуулахад өгнө (өгөхгүй бол шөнө өр).
+ *  • Операторын цалин: тэр хагас сарын цалин цоожлогдоогүй бол автоматаар тоологдохгүй; цоожлогдсон бол дараагийн цалингаас хасагдана (salary.ts).
+ */
+export async function lateReturn(actor: UserActor, idIn: unknown, input: { note?: unknown; version?: unknown }) {
+  const id = cleanId(idIn);
+  const note = requireReason(input.note);
+  const ob: OnBehalf = { accountant: true };
+  const r = await inTx(async (tx) => {
+    const o = await loadOwn(tx, actor, id, 'driver', ob);
+    if (o.status === 'CANCELLED' && o.lateCancelledAt) return { order: o, duplicate: true };
+    if (o.status !== 'DELIVERED') throw conflict('Зөвхөн хүргэсэн захиалгыг буцаана', 'bad_status');
+    checkVersion(o, input.version);
+    const drv = driverOf(o, actor, ob);
+    const labels = new Map(o.lines.map((l) => [l.variantId, l.name]));
+    const toId = await driverLocationId(tx, drv);
+    const back = o.lines.map((l) => ({ type: 'DELIVERY_BACK' as const, variantId: l.variantId, qty: l.qty - l.refusedQty, fromId: null, toId, note: `№${o.number} хожуу буцаалт (үйлчлүүлэгч буцаасан)` })).filter((m) => m.qty > 0);
+    await applyMoves(tx, actor, { type: 'order', id }, back, labels);
+    // Төлөөгүй мөр (өрийн дэвтэр) — бараа буцсан тул хаагдана
+    await tx.driverDebt.updateMany({ where: { orderId: id, paidAt: null, cancelledAt: null }, data: { cancelledAt: new Date() } });
+    const now = new Date();
+    const u = await tx.order.update({ where: { id }, data: {
+      status: 'CANCELLED', cancelReason: 'CUSTOMER_CANCELLED', cancelNote: `Хожуу буцаалт: ${note}`, cancelledAt: now, cancelledByName: byName(actor, ob),
+      lateCancelledAt: now, lateCancelByName: actor.name, lateCancelNote: note, version: { increment: 1 },
+    } });
+    await writeAudit(actor, 'order.late_return', 'Order', String(id), { number: o.number, note, driver: drv.name, operator: o.operatorName, total: o.total, deliveredAt: o.deliveredAt }, tx, ['order', 'delivery', 'money', 'stock']);
+    return { order: u, duplicate: false };
+  });
+  bust();
+  if (!r.duplicate && r.order.prepaid) await bankRestatus(r.order.id);
+  return r;
+}
+
 // ───────────────────────── Цуцлах ─────────────────────────
 
 /** «Цуцлах» (шалтгаан 5+). Бараа жолоочид өгөгдсөн бол түүнд үлдэж буцаах жагсаалтад; өгөөгүй бол нөөц суллагдана */

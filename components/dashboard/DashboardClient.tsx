@@ -33,6 +33,10 @@ export function DashboardClient() {
   const [date, setDate] = useState(ubToday());
   const [s, setS] = useState<Summary | null>(null);
   const [att, setAtt] = useState<Attention | null>(null);
+  // Аудит #160: хүргэсний дараа хожуу буцаасан захиалга — зөвхөн Супер админд (403 бол харагдахгүй)
+  const [late, setLate] = useState<{ items: { id: number; number: string; phone: string; total: number; operatorName: string; driverName: string | null; deliveredAt: string | null; lateCancelledAt: string; lateCancelByName: string | null; lateCancelNote: string | null }[]; total: number; page: number; pages: number } | null>(null);
+  const [latePage, setLatePage] = useState(1);
+  useEffect(() => { api<NonNullable<typeof late>>(`/api/dashboard?view=late&page=${latePage}`).then(setLate).catch(() => setLate(null)); }, [latePage]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [at, setAt] = useState<Date | null>(null);
@@ -67,6 +71,20 @@ export function DashboardClient() {
         )} />
       <div className="flex flex-col gap-4">
         {err ? <Notice>{err}</Notice> : null}
+        {late && late.total ? (
+          <section id="late-returns" aria-label="Хүргэсний дараа буцаасан" className="rounded-2xl border border-line bg-surface p-4">
+            <h2 className="mb-1 text-[15px] font-bold">↩ Хүргэсний дараа буцаасан захиалга ({late.total})</h2>
+            <p className="mb-2 text-[12.5px] text-muted">Түгжсэн өдрөөс нягтлан «Цуцалсан» болгосон (захиалгаас 14 хоног хүртэл). Жолоочийн тооцоо хөдлөхгүй; операторын цалин — цоожилсон бол дараагийн цалингаас хасагдана.</p>
+            <div className="overflow-x-auto"><table className="w-full min-w-[820px] text-[13px]">
+              <thead className="bg-surface2 text-[12px] text-muted"><tr><th className="px-2 py-1.5 text-left">Захиалга</th><th className="px-2 text-left">Оператор</th><th className="px-2 text-left">Жолооч</th><th className="px-2 text-right">Дүн</th><th className="px-2 text-left">Хүргэсэн</th><th className="px-2 text-left">Буцаасан</th><th className="px-2 text-left">Шалтгаан</th></tr></thead>
+              <tbody className="divide-y divide-line">{late.items.map((x) => (
+                <tr key={x.id}><td className="px-2 py-1.5 font-bold"><Link href={`/orders/${x.id}`} className="underline">№{x.number}</Link></td><td className="max-w-[160px] px-2 [overflow-wrap:anywhere]">{x.operatorName}</td><td className="max-w-[160px] px-2 [overflow-wrap:anywhere]">{x.driverName ?? '—'}</td>
+                  <td className="px-2 text-right">{x.total.toLocaleString('en-US')}₮</td><td className="px-2">{x.deliveredAt ? new Date(x.deliveredAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Ulaanbaatar' }) : '—'}</td>
+                  <td className="px-2">{new Date(x.lateCancelledAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Ulaanbaatar' })} · {x.lateCancelByName}</td><td className="max-w-[260px] px-2 [overflow-wrap:anywhere]">{x.lateCancelNote}</td></tr>
+              ))}</tbody></table></div>
+            {late.pages > 1 ? <div className="mt-2 flex items-center justify-end gap-2 text-[13px]"><Button size="sm" disabled={latePage <= 1} onClick={() => setLatePage(latePage - 1)}>‹</Button><span>{late.page} / {late.pages}</span><Button size="sm" disabled={latePage >= late.pages} onClick={() => setLatePage(latePage + 1)}>›</Button></div> : null}
+          </section>
+        ) : null}
         {att && att.items.length ? (
           <section aria-label="Анхаарах зүйлс" className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
             {att.items.map((x) => (

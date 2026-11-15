@@ -273,8 +273,12 @@ describe('#156 бүтэн ажлын өдөр — бүх хуудсын уялд
     eq('5 тооцоо', 'баталгаажсан тооцоо', done, rows.filter((r) => r.total).length);
     const lockedOrder = await db.order.findFirst({ where: { status: 'DELIVERED', handoverId: { not: null } } });
     if (lockedOrder) {
-      const r = await act('түгжсэн өдөр төлөв солих', () => S.toggleOrderStatus(acc, lockedOrder.id, { target: 'CANCELLED', note: 'Түгжээ шалгах' }));
-      if (r) bad('5 тооцоо', 'баталгаажсан өдрийн захиалгын төлөв солигдлоо (түгжээ ажиллаагүй)');
+      // #160: түгжсэн өдрийн хүргэсэн захиалгыг хожуу буцаана — тэр өдрийн тооцоо хөдлөхгүй
+      const before = JSON.stringify((await C.computeDay(db, today)).map((r) => [r.driverId, r.delivered, r.cash, r.bank, r.salary, r.toReceive]));
+      const r = await act('хожуу буцаалт', () => S.toggleOrderStatus(acc, lockedOrder.id, { target: 'CANCELLED', note: 'Үйлчлүүлэгч буцаасан' }));
+      if (!r) bad('5 тооцоо', 'түгжсэн өдрийн хожуу буцаалт амжилтгүй');
+      if (JSON.stringify((await C.computeDay(db, today)).map((x) => [x.driverId, x.delivered, x.cash, x.bank, x.salary, x.toReceive])) !== before) bad('5 тооцоо', 'хожуу буцаалтаар түгжсэн өдрийн тооцоо өөрчлөгдсөн');
+      if (await act('хожуу буцаалт давтан солих', () => S.toggleOrderStatus(acc, lockedOrder.id, { target: 'DELIVERED', note: 'Буцааж хүргэсэн' }))) bad('5 тооцоо', 'хожуу буцаасныг дахин сольж болсон');
     }
     // Нягтлангийн самбар = computeDay
     const board = await S.accountingDay(acc, today);

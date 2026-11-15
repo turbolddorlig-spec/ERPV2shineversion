@@ -270,3 +270,18 @@ export async function pendingDebtTotals(tx: Tx | typeof db, driverIds: string[])
 }
 
 
+
+/** Аудит #160 (эзний шийдвэр): жолооч 7+ хоног агуулахад буцаагаагүй бараа (автомат өр хүлээгдэж буй) — Супер админд */
+export const STALE_GOODS_DAYS = 7;
+let staleCache: { at: number; v: { drivers: number; qty: number; amount: number; days: number; list: { driverId: string; driverName: string; qty: number; amount: number; since: Date }[] } | null } | null = null;
+export async function staleGoodsAlert(roles: string[]) {
+  if (!roles.includes('SUPER_ADMIN')) return null;
+  if (!staleCache || Date.now() - staleCache.at > (process.env.NODE_ENV === 'test' ? 0 : 60_000)) {
+    const cut = dateOnly(ubDay(new Date(), -STALE_GOODS_DAYS));
+    const rows = await db.$queryRaw<{ driverId: string; driverName: string; qty: number; amount: number; since: Date }[]>`
+      SELECT "driverId", max("driverName") AS "driverName", COALESCE(sum(qty),0)::int AS qty, COALESCE(sum(amount),0)::int AS amount, min(date) AS since
+      FROM "CompanyDebt" WHERE kind = 'GOODS_NOT_RETURNED' AND status = 'PENDING' AND date <= ${cut}::date GROUP BY 1 ORDER BY min(date), 2 LIMIT 200`;
+    staleCache = { at: Date.now(), v: rows.length ? { drivers: rows.length, qty: rows.reduce((n, r) => n + r.qty, 0), amount: rows.reduce((n, r) => n + r.amount, 0), days: STALE_GOODS_DAYS, list: rows } : null };
+  }
+  return staleCache.v;
+}

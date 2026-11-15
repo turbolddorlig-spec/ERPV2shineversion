@@ -711,6 +711,10 @@ model Order {
   /// Аудит #155: жолооч / асуудлаар цуцлагдсан урьдчилсан төлбөртэй захиалгыг Супер админ «Шийдсэн» гэж тэмдэглэсэн
   paidCancelReviewedAt     DateTime?
   paidCancelReviewedByName String?
+  /// Аудит #160: түгжсэн өдрийн хүргэсэн захиалгыг үйлчлүүлэгч хожуу буцаасан (нягтлан, захиалгаас 14 хоног хүртэл) — тэр өдрийн тооцоонд «хүргэсэн» хэвээр
+  lateCancelledAt   DateTime?
+  lateCancelByName  String?
+  lateCancelNote    String?
   issueResolvedByName String?
   issueResolveNote    String?
   /// Давхар дарах / сүлжээ тасрахаас хамгаалах (#47)
@@ -736,6 +740,8 @@ model Order {
   @@index([issueStatus, issueAt])
   @@index([cancelledAt])
   @@index([issueResolvedAt])
+  @@index([lateCancelledAt])
+  @@index([operatorId, lateCancelledAt])
 }
 
 /// Захиалгын мөр — барааны хуулбар (#28)

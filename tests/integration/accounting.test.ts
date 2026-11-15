@@ -308,7 +308,7 @@ describe('тооцоо нийлэх, түгжээ', () => {
     expect(debts.map((d) => [d.kind, d.amount, d.status])).toEqual([['SETTLEMENT_DEBT', 10000, 'PENDING']]);
     // Түгжээ
     await err(DR.undoDelivery(drv, a!, { note: 'Андуурч дарсан байна' }), 409, 'day_locked');
-    await err(S.toggleOrderStatus(acc, a!, { target: 'CANCELLED', note: 'Үйлчлүүлэгч буцаасан' }), 409, 'day_locked');
+    // #160: түгжсэн өдөр «Хүргэсэн» болгох зэрэг өөрчлөлт хориотой хэвээр (хожуу буцаалт — late-return160.test.ts)
     await err(S.setPerfOverride(acc, { driverId: drv.id, date: today, value: 50, note: 'Шалгаж үзье' }), 409, 'day_locked');
     await err(S.withdrawSettlement(drv, { date: today }), 409, 'day_locked');
     await err(H.revertHandover(wh, (await db.handover.findFirstOrThrow({ where: { driverId: drv.id } })).id), 409);

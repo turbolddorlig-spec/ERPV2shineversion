@@ -90,7 +90,7 @@ export async function summary(actor: UserActor, rangeIn: unknown, dateIn: unknow
 export async function attention(actor: UserActor) {
   assertView(actor);
   const sa = actor.roles.includes('SUPER_ADMIN');
-  const [boost, reorder, short, rec, disc, issues, edits, overpaid] = await Promise.all([
+  const [boost, reorder, short, rec, disc, issues, edits, overpaid, late, stale] = await Promise.all([
     alertBanner(actor.roles).catch(() => null),
     reorderBanner(actor.roles).catch(() => null),
     canEdit(actor.roles, 'goods-outflow') ? pageShortView(actor).then((x) => x.rows.length).catch(() => 0) : Promise.resolve(0),
@@ -99,6 +99,9 @@ export async function attention(actor: UserActor) {
     canView(actor.roles, 'issues') ? pendingIssueCount().catch(() => 0) : Promise.resolve(0),
     unreviewedCount(actor).catch(() => 0),
     cached('overpaid', 60_000, () => db.$queryRaw<{ n: number }[]>`SELECT count(*)::int AS n FROM "Order" WHERE prepaid AND "paidAmount" > total AND status <> 'CANCELLED'`.then((r) => r[0]?.n ?? 0)).catch(() => 0),
+    // Аудит #160: хүргэсний дараа хожуу буцаасан (сүүлийн 30 хоног), 7+ хоног буцаагаагүй бараатай жолооч — СА
+    sa ? cached('late30', 60_000, () => db.order.count({ where: { lateCancelledAt: { gte: new Date(Date.now() - 30 * 86_400_000) } } })).catch(() => 0) : Promise.resolve(0),
+    sa ? import('./accounting/debts').then((m) => m.staleGoodsAlert(actor.roles)).catch(() => null) : Promise.resolve(null),
   ]);
   const items: { key: string; tone: 'bad' | 'warn' | 'info'; icon: string; label: string; n: number; href: string }[] = [];
   if (rec) items.push({ key: 'reconcile', tone: 'bad', icon: '⚠', label: rec.kind === 'mismatch' ? 'Үлдэгдлийн тулгалтын зөрүү' : 'Автомат тулгалт ажиллаагүй', n: rec.status?.count ?? 1, href: '/warehouse' });
@@ -109,9 +112,27 @@ export async function attention(actor: UserActor) {
     const u = reorder.urgent + reorder.late;
     items.push({ key: 'reorder', tone: u ? 'bad' : 'warn', icon: '🚚', label: 'Бараа татах', n: reorder.urgent + reorder.order + reorder.late, href: '/goods-outflow?tab=reorder' });
   }
+  if (stale) items.push({ key: 'stale-goods', tone: 'bad', icon: '📦', label: `${stale.days}+ хоног бараагаа өгөөгүй жолооч (${stale.qty}ш)`, n: stale.drivers, href: '/accounting' });
+  if (late) items.push({ key: 'late-returns', tone: 'warn', icon: '↩', label: 'Хүргэсний дараа буцаасан (30 хоног)', n: late, href: '/dashboard#late-returns' });
   if (issues) items.push({ key: 'issues', tone: 'warn', icon: '📞', label: '«Опп-руу явуулах» асуудал', n: issues, href: '/issues' });
   if (overpaid) items.push({ key: 'overpaid', tone: 'warn', icon: '↩', label: 'Илүү төлөлттэй захиалга — буцаах', n: overpaid, href: '/orders?overpaid=1' });
   if (disc) items.push({ key: 'discounts', tone: 'info', icon: '🏷', label: 'Шалгаагүй хөнгөлөлт / хүргэлтийн өөрчлөлт', n: disc, href: '/orders/review' });
   if (edits) items.push({ key: 'edits', tone: 'info', icon: '✎', label: 'Шалгаагүй барааны засвар', n: edits, href: '/products/history' });
   return { items };
+}
+
+/**
+ * Аудит #160 (эзний шийдвэр): хүргэсний дараа (түгжсэн өдрөөс) үйлчлүүлэгч буцаасан захиалга — тусдаа, зөвхөн Супер админд.
+ * Операторын цалин: цоожилсон хугацааных бол дараагийн цалингаас автоматаар хасагдана.
+ */
+export async function lateReturnList(actor: UserActor, pageIn: unknown) {
+  if (!actor.roles.includes('SUPER_ADMIN')) throw forbidden('Зөвхөн Супер админ');
+  const page = Math.max(1, Math.min(200, Math.floor(Number(pageIn) || 1)));
+  const where = { lateCancelledAt: { not: null } } as const;
+  const [items, total] = await Promise.all([
+    db.order.findMany({ where, orderBy: { lateCancelledAt: 'desc' }, skip: (page - 1) * 30, take: 30,
+      select: { id: true, number: true, phone: true, total: true, operatorName: true, driverName: true, deliveredAt: true, lateCancelledAt: true, lateCancelByName: true, lateCancelNote: true, createdAt: true } }),
+    db.order.count({ where }),
+  ]);
+  return { items, total, page, pages: Math.max(1, Math.ceil(total / 30)) };
 }

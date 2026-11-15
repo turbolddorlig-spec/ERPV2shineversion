@@ -14,6 +14,7 @@ import { money, ubDateTime } from '@/lib/format';
  * ажлын хуваарь, ажилтны өр, гадны ажилтан, жолоочийн торгууль.
  */
 const EVAL_LABEL = 'Үнэлгээний цалин (автомат)';
+const LATE_LABEL = 'Хүргэсний дараа буцаасан';
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа гарлаа');
 const thisYm = () => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 7);
 const shiftYm = (ym: string, n: number) => { const [y, m] = ym.split('-').map(Number) as [number, number]; const d = new Date(Date.UTC(y, m - 1 + n, 1)); return d.toISOString().slice(0, 7); };
@@ -156,7 +157,7 @@ interface Prep {
   period: { start: string; end: string; label: string };
   auto: { cfg: { salaryType: string; baseSalary: number; bonusSalary: number; oppRatePerOrder: number; dailyRate: number; bankName: string; bankAccount: string }; isOpp: boolean; totalDays: number; workingDays: number; offDays: Record<string, number>; dailyRate: number; calcBase: number; orderCount: number; orderSalary: number;
     penalties: { id: number; category: string; createdAt: string; amount: number; remaining: number }[]; penaltyTotal: number;
-    loans: { id: number; issuedAt: string; pieces: number; amount: number; note: string | null }[]; debts: { id: number; description: string; totalAmount: number; remainingAmount: number }[]; evalSalary?: number };
+    loans: { id: number; issuedAt: string; pieces: number; amount: number; note: string | null }[]; debts: { id: number; description: string; totalAmount: number; remainingAmount: number }[]; evalSalary?: number; lateDeduction?: number; lateLabel?: string | null };
   record: null | { id: number; version: number; baseSalary: number; bonusSalary: number; additions: { label: string; amount: number }[]; deductions: { label: string; amount: number }[]; penaltyDeducted: number; penaltyTotal: number;
     loans: { loanId: number; label: string; amount: number }[]; debtPayments: { debtId: number; label: string; amount: number }[]; notes: string | null; bankName: string; bankAccount: string; transferSalary: number; transferred: boolean; isLocked: boolean; lockedByName: string | null; lockedAt: string | null; orderCount: number; orderSalary: number };
   dayLabels: Record<string, string>;
@@ -197,7 +198,8 @@ function RecordDialog({ ym, row, half, isSA, hasLockCode, onClose, onDone, onUnl
       const s = (n: number) => String(n);
       setF({ base: s(rec ? rec.baseSalary : a.calcBase), bonus: s(rec ? rec.bonusSalary : a.cfg.bonusSalary), penalty: s(rec ? rec.penaltyDeducted : a.penaltyTotal), notes: rec?.notes ?? '', bankName: rec?.bankName ?? a.cfg.bankName, bankAccount: rec?.bankAccount ?? a.cfg.bankAccount });
       setAdds((rec?.additions ?? []).filter((x) => x.label !== EVAL_LABEL).map((x) => ({ label: x.label, amount: s(x.amount) })));
-      setDeds((rec?.deductions ?? []).map((x) => ({ label: x.label, amount: s(x.amount) })));
+      // Аудит #160: хожуу буцаалтын суутгал автоматаар (сервер бодно) — гараар засах мөрөнд харуулахгүй
+      setDeds((rec?.deductions ?? []).filter((x) => rec?.isLocked || !x.label.startsWith(LATE_LABEL)).map((x) => ({ label: x.label, amount: s(x.amount) })));
       setLoanIds(rec ? rec.loans.map((l) => l.loanId) : a.loans.map((l) => l.id));
       setDebtPay(Object.fromEntries((rec?.debtPayments ?? []).map((x) => [x.debtId, s(x.amount)])));
     } catch (e) { setErr(msg(e)); }
@@ -213,7 +215,8 @@ function RecordDialog({ ym, row, half, isSA, hasLockCode, onClose, onDone, onUnl
   const debtTotal = Object.values(debtPay).reduce((s, v) => s + num(v), 0);
   const evalSal = a?.evalSalary ?? 0;
   const gross = (orderBased ? (a?.orderSalary ?? 0) : num(f.base)) + num(f.bonus) + sumL(adds) + evalSal;
-  const transfer = gross - sumL(deds) - num(f.penalty) - debtTotal - loanTotal;
+  const lateDed = locked ? 0 : (a?.lateDeduction ?? 0);
+  const transfer = gross - sumL(deds) - lateDed - num(f.penalty) - debtTotal - loanTotal;
   const save = async () => {
     setBusy('save'); setErr(null);
     try {
@@ -246,7 +249,8 @@ function RecordDialog({ ym, row, half, isSA, hasLockCode, onClose, onDone, onUnl
             <section className="rounded-[14px] border border-line p-3">
               <div className="mb-2 text-[13px] font-bold">{orderBased ? 'Захиалгын цалин' : 'Үндсэн цалин'}</div>
               {orderBased ? (
-                <div className="text-[14px]"><b>{a.orderCount}</b> хүргэгдсэн захиалга × {money(a.cfg.oppRatePerOrder)} = <b>{money(a.orderSalary)}</b><p className="text-[12px] text-subtle">Тухайн хугацаанд авсан, хүргэгдсэн (мөнгө орсон) захиалга</p></div>
+                <div className="text-[14px]"><b>{a.orderCount}</b> хүргэгдсэн захиалга × {money(a.cfg.oppRatePerOrder)} = <b>{money(a.orderSalary)}</b><p className="text-[12px] text-subtle">Тухайн хугацаанд хүргэгдсэн захиалга (хүргэсэн өдрөөр)</p>
+                  {!locked && a.lateLabel ? <p className="mt-1 text-[13px] font-semibold text-bad-ink [overflow-wrap:anywhere]">− {money(a.lateDeduction ?? 0)} · {a.lateLabel} (өмнөх цоожилсон цалинд тоологдсон)</p> : null}</div>
               ) : (
                 <div className="grid gap-2 sm:grid-cols-[1fr_1fr]">
                   <label className="flex flex-col gap-1 text-[12.5px] font-semibold text-muted">Үндсэн цалин (₮)<input value={f.base} disabled={locked} inputMode="numeric" onChange={(e) => setF({ ...f, base: digits(e.target.value) })} className="h-11 rounded-xl border border-line bg-surface px-3 text-[16px] font-bold text-ink" /></label>
@@ -296,7 +300,7 @@ function RecordDialog({ ym, row, half, isSA, hasLockCode, onClose, onDone, onUnl
             </section>
           </div>
           <aside className="flex h-fit flex-col gap-1 rounded-[16px] bg-surface2 p-4 lg:sticky lg:top-0">
-            {([[orderBased ? 'Захиалгын цалин' : 'Үндсэн цалин', orderBased ? a.orderSalary : num(f.base), ''], ['Урамшуулал', num(f.bonus), '+'], ['Нэмэлт орлого', sumL(adds) + evalSal, '+'], ['Суутгал', sumL(deds), '−'], ['Торгууль', num(f.penalty), '−'], ['Өрийн суутгал', debtTotal, '−'], ['Зээлсэн бараа', loanTotal, '−']] as const).map(([l, v, s]) => (
+            {([[orderBased ? 'Захиалгын цалин' : 'Үндсэн цалин', orderBased ? a.orderSalary : num(f.base), ''], ['Урамшуулал', num(f.bonus), '+'], ['Нэмэлт орлого', sumL(adds) + evalSal, '+'], ['Суутгал', sumL(deds) + lateDed, '−'], ['Торгууль', num(f.penalty), '−'], ['Өрийн суутгал', debtTotal, '−'], ['Зээлсэн бараа', loanTotal, '−']] as const).map(([l, v, s]) => (
               <div key={l} className="flex justify-between gap-2 text-[13.5px]"><span className="text-muted">{s} {l}</span><b className={clsx(s === '−' && v ? 'text-bad-ink' : '')}>{money(v)}</b></div>
             ))}
             <div className="mt-2 border-t border-line pt-2"><div className="text-[12.5px] font-semibold text-muted">Шилжүүлэх цалин</div><div className={clsx('text-[26px] font-extrabold', transfer < 0 && 'text-bad-ink')}>{money(transfer)}</div></div>

@@ -553,6 +553,8 @@ export async function approveDriverPayment(actor: UserActor, idIn: unknown, inpu
  * Хүргэлтэд → Хүргэсэн / Цуцласан, Хүргэсэн → Цуцласан, Цуцласан → Хүргэсэн. Жолоочийн нэрийн өмнөөс (бараа жолооч ↔ үйлчлүүлэгч журналаар хөдөлнө,
  * агуулахад шууд хүрэхгүй). Захиалга падааныхаа өдөрт үлдэнэ (#83); баталгаажсан өдөр түгжээтэй; хүлээгдэж буй тооцоо ноорог болно (жолооч дахин илгээнэ).
  */
+/** Аудит #160: төлөв солих хугацаа (захиалга үүссэнээс) */
+export const LATE_DAYS = 14;
 export async function toggleOrderStatus(actor: UserActor, idIn: unknown, input: { target?: unknown; note?: unknown; payment?: unknown; version?: unknown }) {
   assertAccount(actor);
   const id = Number(idIn);
@@ -562,10 +564,23 @@ export async function toggleOrderStatus(actor: UserActor, idIn: unknown, input: 
   const noteRaw = String(input.note ?? '').trim();
   if (noteRaw.length < 3) throw badRequest('Төлөв солих шалтгаанаа бичнэ үү', 'reason_required');
   const note = `Нягтлан: ${noteRaw}`.slice(0, 500);
-  const o = await db.order.findUnique({ where: { id }, select: { status: true, handoverId: true, driverId: true, prepaid: true, number: true } });
+  const o = await db.order.findUnique({ where: { id }, select: { status: true, handoverId: true, driverId: true, prepaid: true, number: true, createdAt: true, lateCancelledAt: true } });
   if (!o) throw notFound('Захиалга олдсонгүй');
   if (!o.handoverId || !o.driverId) throw conflict('Падаангүй захиалгын төлвийг энд солихгүй', 'no_handover');
-  const { deliverOrder, undoDelivery, driverCancel } = await import('../delivery/driver');
+  // Аудит #160 (эзний шийдвэр): захиалга үүссэнээс 14 хоногоос хэтэрсэн бол хэн ч (Супер админ ч) төлөв солихгүй
+  if (Date.now() - o.createdAt.getTime() > LATE_DAYS * 86_400_000) throw conflict(`Захиалга үүссэнээс ${LATE_DAYS} хоног өнгөрсөн — төлвийг солих боломжгүй`, 'too_old');
+  if (o.lateCancelledAt) throw conflict('Хожуу буцаалт хийгдсэн захиалга — төлвийг дахин солихгүй', 'late_returned');
+  const { deliverOrder, undoDelivery, driverCancel, lateReturn } = await import('../delivery/driver');
+  // Түгжсэн (баталгаажсан) өдрийн хүргэсэн захиалгыг үйлчлүүлэгч буцаасан — хожуу буцаалт (тэр өдрийн тооцоо хөдлөхгүй)
+  if (o.status === 'DELIVERED' && target === 'CANCELLED') {
+    const h = await db.handover.findUnique({ where: { id: o.handoverId }, select: { driverId: true, date: true } });
+    const st = h ? await db.driverSettlement.findUnique({ where: { driverId_date: { driverId: h.driverId, date: h.date } }, select: { status: true } }) : null;
+    if (st?.status === 'COMPLETED') {
+      const lr = await lateReturn(actor, id, { note: noteRaw, version: input.version });
+      await writeAudit(actor, 'accounting.status_toggle', 'Order', String(id), { number: o.number, from: o.status, to: target, note: noteRaw, lateReturn: true }, db, ['order', 'money', 'delivery']);
+      return lr;
+    }
+  }
   const OB = { accountant: true } as const;
   const payment = o.prepaid ? 'PREPAID' : String(input.payment ?? 'CASH');
   let r: { order: { id: number; status: string } };
