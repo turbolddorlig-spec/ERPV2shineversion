@@ -6,7 +6,7 @@
 #  - Google Drive холбогдсон бол (./setup-drive-backup.sh): daily 7, weekly 4, monthly 12 (Drive-ийн хогийн саванд хийхгүй, шууд устгана).
 #  - Барааны зураг: зөвхөн серверийн /backups/media (эзний шийдвэр — Drive-д хуулахгүй).
 #  - Төлөв /backups/.status/status.json → апп Супер админд анхааруулна (26 цаг хуулбаргүй, Drive алдаа, 80%+ дүүрсэн).
-#  BACKUP_NOW=1 — одоо нэг удаа (daily); BACKUP_NOW=update — шинэчлэлтийн өмнөх (/backups/update, 5)
+#  BACKUP_NOW=1 — одоо нэг удаа (daily); BACKUP_NOW=update — шинэчлэлтийн өмнөх (/backups/update; Drive-тэй бол серверт 1, үгүй бол 5)
 set -eu
 set -o pipefail
 B=/backups
@@ -33,7 +33,7 @@ fail() { echo "[backup] АЛДАА: $1" >&2; put lastErrorAt "$(ts)"; put lastEr
 for f in "$B"/erp-*.sql.gz; do [ -e "$f" ] && mv "$f" "$B/daily/"; done
 
 # Хамгийн шинэ N-ээс бусдыг устгана (нэрээр эрэмбэлсэн — нэрэнд огноо бий)
-prune_local() { ls -1 "$1"/erp-*.sql.gz 2>/dev/null | sort -r | tail -n +"$(($2 + 1))" | xargs -r rm -f; }
+prune_local() { { ls -1 "$1"/erp-*.sql.gz 2>/dev/null || true; } | sort -r | tail -n +"$(($2 + 1))" | xargs -r rm -f; }
 prune_remote() {
   rclone lsf $RC --files-only "$REMOTE/$1" 2>/dev/null | grep '^erp-.*\.sql\.gz$' | sort -r | tail -n +"$(($2 + 1))" | while read -r x; do
     rclone deletefile $RC "$REMOTE/$1/$x"
@@ -96,23 +96,34 @@ media() {
   echo "[backup] зураг: $(find "$B/media" -type f | wc -l) файл"
 }
 
+# Аудит #161 (эзний шийдвэр): Google Drive холбогдсон бол хуучин хуулбарууд ЗӨВХӨН Drive-д (7 өдөр, 4 долоо хоног, 12 сар) —
+# серверт сүүлийн 2 өдөр + шинэчлэлтийн өмнөх 1 л үлдэнэ (2 жилийн дараа ~1GB/хуулбар — серверийн диск дүүрэхгүй).
+# Drive холбогдоогүй бол серверт хуучнаараа (14 өдөр, 12 сар, 5 шинэчлэлт) — хуулбаргүй үлдэхгүй.
+drive_on() { [ -f "$RCLONE_CONFIG" ]; }
 run_daily() {
   f="$B/daily/erp-$(date +%Y%m%d-%H%M).sql.gz"
   dump "$f" || return 1
-  prune_local "$B/daily" 14
-  mo="$B/monthly/erp-$(date +%Y%m).sql.gz"
-  [ -e "$mo" ] || cp -p "$f" "$mo"
-  prune_local "$B/monthly" 12
   media || true
   write_status
   to_drive "$f" daily
+  if drive_on; then
+    prune_local "$B/daily" 2
+    prune_local "$B/monthly" 0
+  else
+    prune_local "$B/daily" 14
+    mo="$B/monthly/erp-$(date +%Y%m).sql.gz"
+    [ -e "$mo" ] || cp -p "$f" "$mo"
+    prune_local "$B/monthly" 12
+  fi
+  write_status
 }
 run_update() {
   f="$B/update/erp-$(date +%Y%m%d-%H%M%S)-update.sql.gz"
   dump "$f" || return 1
-  prune_local "$B/update" 5
   write_status
   to_drive "$f" update
+  if drive_on; then prune_local "$B/update" 1; else prune_local "$B/update" 5; fi
+  write_status
   echo "$f"
 }
 
