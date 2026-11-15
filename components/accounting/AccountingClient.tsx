@@ -100,9 +100,9 @@ export function AccountingClient() {
   return (
     <div className="flex flex-col gap-4">
       {/* Гарчиг ба үйлдэл */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-[24px] font-extrabold tracking-tight">Тооцоо</h1>
-        <div className="flex flex-wrap items-center gap-2">
+      <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4 flex flex-wrap items-center justify-between gap-3">
+        <div><h1 className="text-[24px] font-extrabold tracking-tight">Тооцоо</h1><p className="band-sub text-[13px]">Жолоочийн падаан өдрийн тооцоо, цалин, өр</p></div>
+        <div className="band-actions flex flex-wrap items-center gap-2">
           <Button size="sm" onClick={() => setDlg('okey')}>OKEY</Button>
           <Link href={`/handover?date=${date}`} className="inline-flex h-9 items-center rounded-[11px] border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2">Падаан</Link>
           <div className="relative">

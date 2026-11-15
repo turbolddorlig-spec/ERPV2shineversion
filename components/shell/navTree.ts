@@ -51,3 +51,23 @@ export function buildTree(nav: NavItem[]): NavNode[] {
   for (const n of nav) if (!used.has(n.key)) out.push({ id: n.key, label: n.label, icon: n.icon, href: n.href, item: n, children: [], badge: n.badge ?? 0 });
   return out;
 }
+
+/**
+ * «A» загвар (эзний сонголт 2026-11-15): хуудас бүр өөрийн өнгөтэй — цэсийн дүрс, хуудасны толгой.
+ * Өнгө нь globals.css-ийн `--m-*` токен (light/dark хоёуланд нь тодорхойлсон).
+ */
+const MODULE: Record<string, string> = {
+  dashboard: 'dash', 'goods-outflow': 'outflow',
+  orders: 'orders', 'bank-import': 'orders', reports: 'orders', issues: 'orders',
+  products: 'products', 'product-history': 'products',
+  warehouse: 'stock', loans: 'stock', handover: 'stock',
+  'driver-lead': 'assign', 'driver-control': 'driver', driver: 'driver',
+  accounting: 'finance', salary: 'finance', penalties: 'finance', 'my-penalties': 'finance',
+  supplier: 'supplier', users: 'system', settings: 'system',
+};
+const GROUP_MODULE: Record<string, string> = { 'g:Хүргэлт': 'assign', 'g:Санхүү': 'finance', 'g:Систем': 'system' };
+/** Хуудасны (эсвэл цэсийн бүлгийн) өнгө — CSS утга */
+export function moduleColor(key: string | undefined | null): string {
+  const m = key ? (MODULE[key] ?? GROUP_MODULE[key]) : undefined;
+  return `var(--m-${m ?? 'system'})`;
+}

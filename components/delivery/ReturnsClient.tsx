@@ -57,7 +57,7 @@ export function ReturnsClient() {
       <div className="flex flex-wrap items-center gap-2">
         <Link href="/handover" className="inline-flex items-center gap-1 text-[13.5px] font-semibold text-muted hover:text-ink"><Icon name="left" size={15} />Падаан руу буцах</Link>
       </div>
-      <div><h1 className="text-[24px] font-extrabold tracking-tight">Буцаалт хүлээн авах</h1><p className="text-[13.5px] text-muted">Цуцалсан, маргааш болсон, болиулсан, нэмэлт бараа — жолоочоос үндсэн агуулахад</p></div>
+      <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4"><h1 className="text-[24px] font-extrabold tracking-tight">Буцаалт хүлээн авах</h1><p className="band-sub text-[13.5px]">Цуцалсан, маргааш болсон, болиулсан, нэмэлт бараа — жолоочоос үндсэн агуулахад</p></div>
       {flash ? <div role="status" className="rounded-[12px] bg-ok-soft px-3 py-2 text-[14px] font-semibold text-ok-ink [overflow-wrap:anywhere]">{flash}</div> : null}
       {err ? <Notice>{err}</Notice> : null}
       <div className="grid gap-4 lg:grid-cols-[320px_1fr]">

@@ -27,7 +27,7 @@ export function IssuesClient() {
   useEffect(() => { void load(); }, [load]);
   return (
     <div className="flex flex-col gap-4">
-      <div><h1 className="text-[24px] font-extrabold tracking-tight">Асуудал</h1><p className="text-[13.5px] text-muted">Жолоочийн «Опп-руу явуулах» — шийдэгдэх хүртэл жолооч тухайн захиалгыг хүргэхгүй</p></div>
+      <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4"><h1 className="text-[24px] font-extrabold tracking-tight">Асуудал</h1><p className="band-sub text-[13.5px]">Жолоочийн «Опп-руу явуулах» — шийдэгдэх хүртэл жолооч тухайн захиалгыг хүргэхгүй</p></div>
       <div className="flex gap-1.5">
         {([['pending', `Шийдээгүй${data ? ` (${data.pending})` : ''}`], ['resolved', 'Шийдсэн']] as const).map(([k, l]) => (
           <button key={k} onClick={() => { setStatus(k); setPage(1); }} className={clsx('h-10 rounded-full border px-4 text-[13.5px] font-bold', status === k ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface text-muted')}>{l}</button>

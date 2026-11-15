@@ -68,12 +68,12 @@ export function HandoverClient() {
 
   return (
     <div className="full-bleed flex flex-col gap-3 text-[13px]">
-      <div className="flex flex-wrap items-start justify-between gap-2">
+      <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="flex flex-wrap items-center gap-2 text-[24px] font-extrabold tracking-tight">Жолоочид бараа өгөх {h ? <span className={clsx('rounded-md px-2 py-0.5 text-[12px] font-bold', ST_TONE[h.status])}>{h.statusLabel}</span> : null}</h1>
-          <p className="text-[12.5px] text-muted">Падаан үүсгэх, бэлтгэх, жолоочид бараа хүлээлгэн өгөх (iPad)</p>
+          <p className="band-sub text-[12.5px]">Падаан үүсгэх, бэлтгэх, жолоочид бараа хүлээлгэн өгөх (iPad)</p>
         </div>
-        <div className="flex gap-2">
+        <div className="band-actions flex flex-wrap gap-2">
           {board?.canApprove ? <button type="button" onClick={() => setApprovalsOpen(true)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2"><Icon name="calc" size={15} />Нягтлан OKEY</button> : null}
           <Link href="/handover/returns" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2"><Icon name="refresh" size={15} />Буцаалт хүлээн авах</Link>
           <Link href="/handover/history" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2"><Icon name="history" size={15} />Падааны түүх</Link>

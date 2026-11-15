@@ -59,9 +59,9 @@ export function PenaltiesClient() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0"><h1 className="text-[24px] font-extrabold tracking-tight">Алдаа удирдлага</h1><p className="text-[13.5px] text-muted">Торгуулийн бүртгэл, алдааны тооцоо</p></div>
-        {d?.canManage ? <div className="flex flex-wrap gap-2"><Button size="sm" onClick={() => setCats(true)}>Алдааны нэрс</Button><Button size="sm" variant="primary" onClick={() => setAdd(true)}>+ Торгууль нэмэх</Button></div> : null}
+      <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0"><h1 className="text-[24px] font-extrabold tracking-tight">Алдаа удирдлага</h1><p className="band-sub text-[13.5px]">Торгуулийн бүртгэл, алдааны тооцоо</p></div>
+        {d?.canManage ? <div className="band-actions flex flex-wrap gap-2"><Button size="sm" onClick={() => setCats(true)}>Алдааны нэрс</Button><Button size="sm" variant="primary" onClick={() => setAdd(true)}>+ Торгууль нэмэх</Button></div> : null}
       </div>
       <div className="flex gap-1 rounded-[14px] bg-surface2 p-1 sm:w-fit" role="tablist">
         {([['list', 'Торгууль'], ['staff', 'Ажилчдын мэдээлэл']] as const).map(([k, l]) => (

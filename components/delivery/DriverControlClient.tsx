@@ -21,9 +21,9 @@ export function DriverControlClient() {
   const th = 'px-2.5 py-2 text-right font-bold whitespace-nowrap';
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div><h1 className="text-[24px] font-extrabold tracking-tight">Жолоочийн хяналт</h1><p className="text-[13.5px] text-muted">Хүргэсэн, цуцалсан, хойшилсон — тухайн өдрөөр; гарт байгаа бараа — одоогийн</p></div>
-        <div className="flex items-center gap-2">
+      <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4 flex flex-wrap items-center justify-between gap-3">
+        <div><h1 className="text-[24px] font-extrabold tracking-tight">Жолоочийн хяналт</h1><p className="band-sub text-[13.5px]">Хүргэсэн, цуцалсан, хойшилсон — тухайн өдрөөр; гарт байгаа бараа — одоогийн</p></div>
+        <div className="band-actions flex items-center gap-2">
           {[[-1, 'Өчигдөр'], [0, 'Өнөөдөр']].map(([a, l]) => <button key={l} onClick={() => setDate(ubToday(Number(a)))} className={clsx('h-10 rounded-full border px-3.5 text-[13px] font-bold', date === ubToday(Number(a)) ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface')}>{l}</button>)}
           <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} className="h-10 rounded-[10px] border border-line bg-surface px-2 text-[14px]" aria-label="Огноо" />
         </div>

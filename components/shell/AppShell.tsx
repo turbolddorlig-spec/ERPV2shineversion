@@ -2,10 +2,10 @@
 import clsx from 'clsx';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Icon } from '../icons';
 import { ThemeToggle } from './ThemeToggle';
-import { buildTree, SUB_LABEL } from './navTree';
+import { buildTree, moduleColor, SUB_LABEL } from './navTree';
 
 export interface NavItem {
   key: string; label: string; short: string; href: string; group: string; icon: string; readOnly: boolean; badge?: number;
@@ -57,8 +57,10 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
   const nodeActive = (n: { href: string; item: NavItem | null; children: NavItem[] }) => (n.item ? active(n.item.href) : false) || n.children.some((c) => active(c.href));
   const badgeEl = (b: number, small = false) => b ? <span className={clsx('rounded-full bg-[#E8590C] font-bold text-white', small ? 'min-w-[16px] px-1 text-center text-[10px] leading-[16px]' : 'min-w-[18px] px-1 text-center text-[10.5px] leading-[18px]')}>{b > 99 ? '99+' : b}</span> : null;
 
+  const tint = (key: string) => ({ ['--nav-c']: moduleColor(key) }) as CSSProperties;
+
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen" data-module-page={current?.key ?? ''} style={{ ['--page']: moduleColor(current?.key) } as CSSProperties}>
       {/* Компьютер, том таблет: зүүн цэс — өргөн (бүтэцтэй, #130) эсвэл нарийн (хуучин rail) */}
       <nav aria-label="Үндсэн цэс" data-nav={slim ? 'slim' : 'wide'} className={clsx('fixed inset-y-0 left-0 z-30 hidden flex-col gap-0.5 overflow-y-auto bg-rail py-3.5 lg:flex', slim ? 'w-[84px] px-2' : 'w-[204px] px-2.5')}>
         <div className={clsx('mb-3 flex items-center', slim ? 'flex-col gap-2' : 'justify-between pl-1')}>
@@ -72,7 +74,7 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
           <Link key={n.key} href={n.href} aria-current={active(n.href) ? 'page' : undefined} title={n.label}
             className={clsx('relative flex min-h-[58px] flex-col items-center justify-center gap-1 rounded-xl px-0.5 py-1.5 text-center',
               active(n.href) ? 'bg-rail-active text-white' : 'text-rail-text hover:bg-rail-active/60 hover:text-white')}>
-            <Icon name={n.icon} size={21} className={active(n.href) ? 'text-[#FF8A4C]' : undefined} />
+            <Icon name={n.icon} size={21} className="nav-tint" style={tint(n.key)} />
             <span className="text-[10.5px] font-semibold leading-tight">{n.short}</span>
             {n.badge ? <span className="absolute right-1.5 top-1 min-w-[18px] rounded-full bg-[#E8590C] px-1 text-[10.5px] font-bold leading-[18px] text-white">{n.badge > 99 ? '99+' : n.badge}</span> : null}
           </Link>
@@ -81,9 +83,10 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
           return (
             <div key={n.id} className="flex flex-col">
               <Link href={n.href} aria-current={n.item && active(n.item.href) ? 'page' : undefined} data-nav-node={n.id}
+                style={on ? { boxShadow: `inset 3px 0 0 ${moduleColor(n.id)}` } : undefined}
                 className={clsx('flex min-h-[40px] items-center gap-2.5 rounded-xl px-2.5 text-[13.5px] font-semibold',
                   on ? 'bg-rail-active text-white' : 'text-rail-text hover:bg-rail-active/60 hover:text-white')}>
-                <Icon name={n.icon} size={19} className={on ? 'text-[#FF8A4C]' : undefined} />
+                <Icon name={n.icon} size={19} className="nav-tint" style={tint(n.id)} />
                 <span className="min-w-0 flex-1 truncate">{n.label}</span>
                 {n.children.length ? badgeEl(n.item?.badge ?? 0) : badgeEl(n.badge)}
               </Link>
@@ -116,7 +119,10 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
         </button>
         <div className="flex min-w-0 flex-1 flex-col leading-tight">
           <Logo small />
-          <span className="truncate text-[12.5px] font-semibold text-muted">{current?.label ?? ''}</span>
+          <span className="flex min-w-0 items-center gap-1.5 text-[12.5px] font-semibold text-muted">
+            {current ? <span aria-hidden className="h-2 w-2 shrink-0 rounded-full" style={{ background: moduleColor(current.key) }} /> : null}
+            <span className="truncate">{current?.label ?? ''}</span>
+          </span>
         </div>
         <ThemeToggle />
       </header>
@@ -138,7 +144,7 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
                   <Link href={n.href} aria-current={n.item && active(n.item.href) ? 'page' : undefined}
                     className={clsx('flex min-h-[46px] items-center gap-3 rounded-xl px-3 text-[15px] font-semibold',
                       nodeActive(n) ? 'bg-accent-soft text-accent-ink' : 'text-ink hover:bg-surface2')}>
-                    <Icon name={n.icon} size={20} />
+                    <Icon name={n.icon} size={20} style={{ color: moduleColor(n.id) }} />
                     <span className="flex-1">{n.label}</span>
                     {(n.children.length ? n.item?.badge ?? 0 : n.badge) ? <span className="rounded-full bg-accent px-2 text-[12px] font-bold leading-6 text-on-accent">{n.children.length ? n.item?.badge : n.badge}</span> : null}
                     {n.item?.readOnly ? <span className="text-[11px] font-bold text-subtle">харах</span> : null}
@@ -276,17 +282,27 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
 
 export function PageHeader({ title, subtitle, actions, back }: { title: string; subtitle?: ReactNode; actions?: ReactNode; back?: { href: string; label?: string } }) {
   return (
-    <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-      <div className="flex min-w-0 flex-col gap-1">
-        {back ? (
-          <Link href={back.href} className="-ml-1 mb-1 inline-flex h-9 w-fit items-center gap-1 rounded-[10px] px-1.5 text-[14px] font-semibold text-muted hover:bg-surface2 hover:text-ink">
-            <Icon name="left" size={18} /> {back.label ?? 'Буцах'}
-          </Link>
-        ) : null}
-        <h1 className="text-[24px] font-extrabold tracking-[-0.03em] md:text-[26px]">{title}</h1>
-        {subtitle ? <p className="text-[13.5px] text-muted">{subtitle}</p> : null}
+    <div className="mb-5 flex flex-col gap-2">
+      {back ? (
+        <Link href={back.href} className="-ml-1 inline-flex h-9 w-fit items-center gap-1 rounded-[10px] px-1.5 text-[14px] font-semibold text-muted hover:bg-surface2 hover:text-ink">
+          <Icon name="left" size={18} /> {back.label ?? 'Буцах'}
+        </Link>
+      ) : null}
+      <PageBand title={title} subtitle={subtitle} actions={actions} />
+    </div>
+  );
+}
+
+/** «A» загварын хуудасны өнгөт толгой (өнгө нь --page — AppShell тохируулна) */
+export function PageBand({ title, subtitle, actions, className, children }: { title: ReactNode; subtitle?: ReactNode; actions?: ReactNode; className?: string; children?: ReactNode }) {
+  return (
+    <div data-page-band className={clsx('page-band flex flex-wrap items-center justify-between gap-3 rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4', className)}>
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <h1 className="min-w-0 break-words text-[22px] font-extrabold tracking-[-0.03em] md:text-[24px]">{title}</h1>
+        {subtitle ? <div className="band-sub min-w-0 text-[13px] [overflow-wrap:anywhere]">{subtitle}</div> : null}
       </div>
-      {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
+      {actions ? <div className="flex min-w-0 flex-wrap items-center gap-2 text-ink">{actions}</div> : null}
+      {children}
     </div>
   );
 }

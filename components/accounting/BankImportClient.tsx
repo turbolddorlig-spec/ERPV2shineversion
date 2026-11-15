@@ -82,9 +82,9 @@ export function BankImportClient() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="min-w-0"><h1 className="text-[24px] font-extrabold tracking-tight">Банкны импорт</h1><p className="text-[13.5px] text-muted">Хаан банкны орлого → утас + дүнгээр «Төлбөр хүлээж буй» захиалга «Мөнгө орсон» (дугаар солигдохгүй)</p></div>
-        <div className="flex flex-wrap gap-2">
+      <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0"><h1 className="text-[24px] font-extrabold tracking-tight">Банкны импорт</h1><p className="band-sub text-[13.5px]">Хаан банкны орлого → утас + дүнгээр «Төлбөр хүлээж буй» захиалга «Мөнгө орсон» (дугаар солигдохгүй)</p></div>
+        <div className="band-actions flex flex-wrap gap-2">
           {canEdit ? <>
             <Button variant="primary" size="sm" loading={busy} disabled={!gmail?.configured} onClick={() => void sync()} title={gmail?.configured ? '' : 'Gmail холбогдоогүй — «Gmail тохиргоо»'}>Gmail sync</Button>
             <Button size="sm" onClick={() => setGset(true)}>Gmail тохиргоо</Button></> : null}

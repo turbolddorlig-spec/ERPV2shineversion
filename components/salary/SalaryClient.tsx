@@ -56,9 +56,9 @@ export function SalaryClient() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div><h1 className="text-[24px] font-extrabold tracking-tight">Ажилтны цалин</h1><p className="text-[13.5px] text-muted">Сард 2 удаа: 1–15, 16–сарын сүүл · жолоочийн цалин «Тооцоо»-д</p></div>
-        <div className="flex flex-wrap gap-2">
+      <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4 flex flex-wrap items-center justify-between gap-3">
+        <div><h1 className="text-[24px] font-extrabold tracking-tight">Ажилтны цалин</h1><p className="band-sub text-[13.5px]">Сард 2 удаа: 1–15, 16–сарын сүүл · жолоочийн цалин «Тооцоо»-д</p></div>
+        <div className="band-actions flex flex-wrap gap-2">
           <Button size="sm" onClick={() => setExt(true)}>+ Гадны ажилтан</Button>
           {d?.isSuperAdmin ? <Button size="sm" onClick={() => setCodeDlg(true)}>{d.hasLockCode ? 'Цоожны код солих' : 'Цоожны код тохируулах'}</Button> : null}
         </div>

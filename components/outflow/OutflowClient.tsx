@@ -89,13 +89,13 @@ export function OutflowClient() {
 
   return (
     <div className="full-bleed flex flex-col gap-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-[24px] font-extrabold tracking-tight">Барааны гарц</h1>
-          <p className="text-[13.5px] text-muted">7 хоног · захиалгын өдрөөр (төлбөр хүлээж буй, тэр өдөртөө цуцлагдсан орохгүй) · өдрийн дундаж = 7 хоног ÷ 7</p>
+          <p className="band-sub text-[13.5px]">7 хоног · захиалгын өдрөөр (төлбөр хүлээж буй, тэр өдөртөө цуцлагдсан орохгүй) · өдрийн дундаж = 7 хоног ÷ 7</p>
           {d ? <div className="mt-2 flex flex-wrap gap-2 text-[13px]"><span className="rounded-full bg-accent-soft px-3 py-1 font-bold text-accent">Өнөөдөр {d.totals.today}</span><span className="rounded-full bg-surface2 px-3 py-1 font-semibold">Өчигдөр {d.totals.yesterday}</span></div> : null}
         </div>
-        <div className="relative">
+        <div className="band-actions relative">
           <Button size="sm" onClick={() => setMenu(!menu)} aria-expanded={menu} aria-label="Бусад цэс">⋯</Button>
           {menu ? (
             <>

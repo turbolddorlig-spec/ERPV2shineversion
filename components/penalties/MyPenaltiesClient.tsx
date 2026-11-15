@@ -22,7 +22,7 @@ export function MyPenaltiesClient() {
   const s = d?.summary;
   return (
     <div className="mx-auto flex w-full max-w-[860px] flex-col gap-4">
-      <h1 className="text-[24px] font-extrabold tracking-tight">Миний торгууль</h1>
+      <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4"><h1 className="text-[24px] font-extrabold tracking-tight">Миний торгууль</h1></div>
       <div className="flex flex-wrap gap-2">
         {([['month', 'Энэ сар'], ['all', 'Бүгд']] as const).map(([k, l]) => <button key={k} onClick={() => { setRange(k); setPage(1); }} className={clsx('h-10 rounded-full px-4 text-[13.5px] font-bold', range === k ? 'bg-ink text-on-ink' : 'border border-line bg-surface text-muted')}>{l}</button>)}
         <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} className="h-10 rounded-full border border-line bg-surface px-3 text-[13.5px]" aria-label="Төлөв">

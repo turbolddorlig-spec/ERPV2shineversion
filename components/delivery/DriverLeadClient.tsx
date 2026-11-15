@@ -93,11 +93,7 @@ function AssignView() {
 
   return (
     <div className="full-bleed flex flex-col gap-3 text-[13px]">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h1 className="text-[24px] font-extrabold tracking-tight">Ахлах жолооч</h1>
-          <p className="text-[12.5px] text-muted">Жолооч хуваарилалт болон гүйцэтгэл</p>
-        </div>
+      <div className="flex flex-wrap items-center justify-end gap-2">
         <button type="button" onClick={() => setByDayOpen(true)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2"><Icon name="box" size={15} />Жолоочдын захиалга</button>
       </div>
 
@@ -296,7 +292,7 @@ export function DriverLeadClient() {
   useEffect(() => { if (tab !== 'orders' && !drivers.length) api<{ items: { id: string; name: string }[] }>('/api/driver-lead/drivers').then((r) => setDrivers(r.items)).catch(() => undefined); }, [tab, drivers.length]);
   return (
     <div className="flex flex-col gap-3">
-      {tab !== 'orders' ? <h1 className="text-[24px] font-extrabold tracking-tight">Ахлах жолооч</h1> : null}
+      <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4"><h1 className="text-[24px] font-extrabold tracking-tight">Ахлах жолооч</h1><p className="band-sub text-[12.5px]">Жолооч хуваарилалт болон гүйцэтгэл</p></div>
       <div className="flex gap-1.5 overflow-x-auto" role="tablist" data-overflow-ok>
         {([['orders', 'Бүх захиалга'], ['performance', 'Жолоочийн гүйцэтгэл'], ['chart', 'График']] as const).map(([k, l]) => (
           <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}

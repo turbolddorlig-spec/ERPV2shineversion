@@ -209,12 +209,12 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
   return (
     <div className="full-bleed flex flex-col gap-3 text-[13px]">
       {flash ? <Notice tone="ok">{flash}</Notice> : null}
-      <div className="flex flex-wrap items-start justify-between gap-2">
+      <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-[24px] font-extrabold tracking-tight">Захиалга</h1>
-          <p className="text-[12.5px] text-muted">Захиалгууд удирдах, хянах</p>
+          <p className="band-sub text-[12.5px]">Захиалгууд удирдах, хянах</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="band-actions flex items-center gap-2">
           <MoreMenu items={[
             { onClick: () => setHourlyOpen(true), label: 'Цагийн мэдээ', icon: 'history' },
             { href: '/loans?from=orders', label: 'Барааны хүсэлт', icon: 'hand' },

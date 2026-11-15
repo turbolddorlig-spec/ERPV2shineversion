@@ -44,7 +44,7 @@ export function SupplierClient({ admin }: { admin: boolean }) {
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: 'accent' | 'ok' | 'bad' }) {
   return (
-    <div className="flex min-w-0 flex-col gap-0.5 rounded-2xl border border-line bg-surface px-4 py-3">
+    <div className="flex min-w-0 flex-col gap-0.5 rounded-2xl border border-line bg-surface px-4 py-3" style={{ boxShadow: `inset 0 3px 0 ${tone === 'ok' ? 'var(--ok)' : tone === 'bad' ? 'var(--bad)' : 'var(--page)'}` }}>
       <span className="text-[12.5px] font-semibold text-muted">{label}</span>
       <b className={clsx('break-words text-[17px] font-extrabold tracking-tight sm:text-[22px]', tone === 'accent' && 'text-accent', tone === 'ok' && 'text-ok-ink', tone === 'bad' && 'text-bad-ink')}>{value}</b>
     </div>
@@ -94,9 +94,9 @@ function AdminOverview({ onOpen }: { onOpen: (id: number) => void }) {
   useEffect(() => { void load(); }, [load]);
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0"><h1 className="text-[24px] font-extrabold tracking-tight">Нийлүүлэгч</h1><p className="text-[13.5px] text-muted">Гадны дэлгүүрийн бараа · падааны өдрөөр тооцоо · борлуулалт − суутгал = шилжүүлэх дүн</p></div>
-        <div className="flex flex-wrap gap-2">
+      <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0"><h1 className="text-[24px] font-extrabold tracking-tight">Нийлүүлэгч</h1><p className="band-sub text-[13.5px]">Гадны дэлгүүрийн бараа · падааны өдрөөр тооцоо · борлуулалт − суутгал = шилжүүлэх дүн</p></div>
+        <div className="band-actions flex flex-wrap gap-2">
           {d?.isSuperAdmin ? <Button size="sm" onClick={() => setDefs(true)}>Анхдагч суутгал</Button> : null}
           <Button variant="primary" size="sm" onClick={() => setAdd(true)}>+ Дэлгүүр нэмэх</Button>
         </div>
@@ -205,14 +205,14 @@ function ShopPanel({ shopId, onBack }: { shopId: number | null; onBack?: () => v
     ['adj', `Буцаалт${d.balance.pendingAdjCount ? ` (${d.balance.pendingAdjCount})` : ''}`], ...(d.admin ? [['login', 'Нэвтрэх эрх'] as [Tab, string]] : [])];
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      {onBack ? <button type="button" onClick={onBack} className="-mb-2 self-start text-[13px] font-semibold text-accent">← Бүх дэлгүүр</button> : null}
+      <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4 flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
-          {onBack ? <button type="button" onClick={onBack} className="self-start text-[13px] font-semibold text-accent">← Бүх дэлгүүр</button> : null}
           <h1 className="min-w-0 break-words text-[24px] font-extrabold tracking-tight">{d.shop.name}</h1>
-          <p className="min-w-0 break-words text-[13.5px] text-muted">{[d.shop.contactName, d.shop.contactPhone].filter(Boolean).join(' · ') || (d.admin ? 'Холбогдох мэдээлэлгүй' : 'Тооцооны самбар')}{d.shop.isActive ? '' : ' · Идэвхгүй'}</p>
+          <p className="band-sub min-w-0 break-words text-[13.5px]">{[d.shop.contactName, d.shop.contactPhone].filter(Boolean).join(' · ') || (d.admin ? 'Холбогдох мэдээлэлгүй' : 'Тооцооны самбар')}{d.shop.isActive ? '' : ' · Идэвхгүй'}</p>
         </div>
         {d.admin ? (
-          <div className="flex flex-wrap gap-2">
+          <div className="band-actions flex flex-wrap gap-2">
             <Button size="sm" onClick={() => setEdit(true)}>Засах</Button>
             <Button size="sm" onClick={() => { if (confirm(d.shop.isActive ? 'Дэлгүүрийг идэвхгүй болгох уу? Нийлүүлэгч нэвтрэх боломжгүй болно.' : 'Идэвхжүүлэх үү?')) void post({ action: 'active', active: !d.shop.isActive }, 'Хадгаллаа'); }}>{d.shop.isActive ? 'Идэвхгүй болгох' : 'Идэвхжүүлэх'}</Button>
           </div>

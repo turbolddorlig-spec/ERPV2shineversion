@@ -62,7 +62,7 @@ export function DriverClient() {
   useVisibleInterval(pollPending, 30_000);
   return (
     <div className="mx-auto flex w-full max-w-[720px] flex-col gap-3">
-      <div className="flex items-center justify-between gap-2">
+      <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4 flex items-center justify-between gap-2">
         <h1 className="text-[22px] font-extrabold tracking-tight">Миний хүргэлт</h1>
       </div>
       <div className="grid grid-cols-3 gap-1 rounded-[14px] bg-surface2 p-1 sm:grid-cols-6" role="tablist">

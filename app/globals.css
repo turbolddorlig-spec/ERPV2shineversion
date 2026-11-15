@@ -4,8 +4,8 @@
 
 /* zahialga• дизайны токенууд (Prototype 2). Light нь үндсэн, Dark нь доор. */
 :root {
-  --bg: #F3F2EE; --bg-grad: linear-gradient(180deg, #F7F6F2 0%, #EFEEE9 100%);
-  --surface: #FFFFFF; --surface2: #F7F6F3; --lane: #ECEAE4; --line: #E1DED6;
+  --bg: #F3F1EC; --bg-grad: linear-gradient(180deg, #F6F4F0 0%, #F0EDE7 100%);
+  --surface: #FFFFFF; --surface2: #F8F6F2; --lane: #ECE9E2; --line: #E3DED5;
   --ink: #16181D; --on-ink: #FFFFFF; --muted: #4D525C; --subtle: #62676F;
   --accent: #D9480F; --on-accent: #FFFFFF; --accent-soft: #FFF1E8; --accent-ink: #B23A0A;
   --ok: #15803D; --chart-ok: #15803D; --chart-bad: #DC2626; --ok-soft: #E9F7EE; --ok-ink: #166534;
@@ -15,6 +15,10 @@
   --rail: #16181D; --rail-active: #262A33; --rail-text: #AEB3BD;
   --shadow: 0 1px 2px rgba(22,24,29,0.06);
   --shadow-lg: 0 10px 30px rgba(22,24,29,0.12);
+  /* «A» загвар: хуудас бүрийн өнгө (цагаан бичигтэй толгойд хангалттай тод) */
+  --m-dash: #1D4ED8; --m-outflow: #C2410C; --m-orders: #0E7490; --m-products: #6D28D9; --m-stock: #15803D;
+  --m-assign: #B45309; --m-driver: #BE185D; --m-finance: #7E22CE; --m-supplier: #0F766E; --m-system: #475569;
+  --page: var(--m-system);
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -30,6 +34,8 @@
     --rail: #0A0B0E; --rail-active: #20242D; --rail-text: #AEB3BD;
     --shadow: 0 1px 2px rgba(0,0,0,0.35);
     --shadow-lg: 0 10px 32px rgba(0,0,0,0.45);
+    --m-dash: #2563EB; --m-outflow: #C2410C; --m-orders: #0E7490; --m-products: #7C3AED; --m-stock: #15803D;
+    --m-assign: #B45309; --m-driver: #BE185D; --m-finance: #9333EA; --m-supplier: #0F766E; --m-system: #475569;
     color-scheme: dark;
   }
 }
@@ -45,6 +51,8 @@
   --rail: #0A0B0E; --rail-active: #20242D; --rail-text: #AEB3BD;
   --shadow: 0 1px 2px rgba(0,0,0,0.35);
   --shadow-lg: 0 10px 32px rgba(0,0,0,0.45);
+  --m-dash: #2563EB; --m-outflow: #C2410C; --m-orders: #0E7490; --m-products: #7C3AED; --m-stock: #15803D;
+  --m-assign: #B45309; --m-driver: #BE185D; --m-finance: #9333EA; --m-supplier: #0F766E; --m-system: #475569;
   color-scheme: dark;
 }
 
@@ -64,3 +72,19 @@ body {
 /* iOS дээр input дээр дарахад томруулахгүй */
 input, select, textarea { font-size: 16px; }
 @media (min-width: 768px) { input, select, textarea { font-size: 14px; } }
+
+/* «A» загвар: хуудасны өнгөт толгой. --page-г AppShell одоогийн хуудсаар тохируулна. */
+.page-band {
+  background: linear-gradient(100deg, var(--page) 0%, color-mix(in srgb, var(--page) 72%, #ffffff) 100%);
+  color: #fff;
+}
+:root[data-theme="dark"] .page-band { background: linear-gradient(100deg, var(--page) 0%, color-mix(in srgb, var(--page) 70%, #0E1014) 100%); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .page-band { background: linear-gradient(100deg, var(--page) 0%, color-mix(in srgb, var(--page) 70%, #0E1014) 100%); }
+}
+.page-band .band-sub { color: rgba(255,255,255,0.88); }
+/* Цэсийн дүрсний өнгө — бараан цэс дээр тод харагдахаар цайруулсан */
+.nav-tint { color: color-mix(in srgb, var(--nav-c) 55%, #ffffff); }
+.page-band .band-actions, .page-band .bg-surface, .page-band .bg-surface2, .page-band input, .page-band select { color: var(--ink); }
+/* Өнгөт толгой дээрх үндсэн товч — цагаан, хуудасны өнгөөр бичигтэй (улбар шар толгой дээр улбар шар товч уусахгүй) */
+.page-band .bg-accent { background: #fff; color: var(--page); }

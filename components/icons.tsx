@@ -1,3 +1,4 @@
+import type React from 'react';
 const PATHS: Record<string, string> = {
   chart: 'M4 19V9M10 19V5M16 19v-7M22 19H2',
   flow: 'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z',
@@ -46,10 +47,10 @@ const PATHS: Record<string, string> = {
   phone: 'M5 4h4l2 5-2.5 1.5a11 11 0 005 5L15 13l5 2v4a2 2 0 01-2 2A16 16 0 013 6a2 2 0 012-2',
 };
 
-export function Icon({ name, size = 18, className, strokeWidth = 1.9 }: { name: string; size?: number; className?: string; strokeWidth?: number }) {
+export function Icon({ name, size = 18, className, strokeWidth = 1.9, style }: { name: string; size?: number; className?: string; strokeWidth?: number; style?: React.CSSProperties }) {
   return (
     <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
       <path d={PATHS[name] ?? PATHS.file} />
     </svg>
   );

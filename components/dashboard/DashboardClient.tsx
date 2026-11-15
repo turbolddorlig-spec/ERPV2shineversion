@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PageHeader } from '@/components/shell/AppShell';
 import { Button } from '@/components/ui/Button';
+import { Kpi as UiKpi } from '../ui/Kpi';
 import { Notice } from '@/components/ui/Notice';
 import { api, ApiError } from '@/components/ui/api';
 
@@ -164,13 +165,7 @@ export function DashboardClient() {
 }
 
 function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'ok' | 'bad' | 'warn' }) {
-  return (
-    <div data-kpi={label} className="flex min-w-0 flex-col gap-1 rounded-2xl border border-line bg-surface p-3.5">
-      <span className="text-[12px] font-semibold text-muted">{label}</span>
-      <b className={clsx('text-[24px] font-extrabold leading-none tracking-tight', tone === 'ok' && 'text-ok-ink', tone === 'bad' && 'text-bad-ink', tone === 'warn' && 'text-warn')}>{value}</b>
-      {sub ? <span className="[overflow-wrap:anywhere] text-[11.5px] text-muted">{sub}</span> : null}
-    </div>
-  );
+  return <UiKpi data-kpi={label} label={label} value={value} sub={sub} tone={tone ?? 'page'} />;
 }
 
 /** Өдөр бүрийн хүргэсэн / цуцлагдсан (бүлэг багана). Цуцлагдсан нь судалтай — өнгөөр л ялгахгүй. */
