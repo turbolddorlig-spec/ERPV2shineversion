@@ -22,6 +22,7 @@ export function SettingsClient() {
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [metaOpen, setMetaOpen] = useState(false);
   const [fees, setFees] = useState({ feeUB: '', feeRural: '', waitDays: '', assignHour: '', extraDailyMax: '' });
   const [newPage, setNewPage] = useState('');
   const [meta, setMeta] = useState({ pixelId: '', token: '', testCode: '' });
@@ -65,10 +66,15 @@ export function SettingsClient() {
       </section>
 
       <section className={clsx(sec, 'lg:col-span-2')}>
-        <div className="flex flex-wrap items-center gap-2">
+        <button type="button" data-meta-toggle aria-expanded={metaOpen} onClick={() => setMetaOpen(!metaOpen)}
+          className="-m-1 flex flex-wrap items-center gap-2 rounded-xl p-1 text-left hover:bg-surface2">
+          <span aria-hidden className="w-4 text-[13px] text-muted">{metaOpen ? '▾' : '▸'}</span>
           <h2 className="text-[16px] font-extrabold">Meta (Facebook) Conversions API</h2>
           {d.meta.pixelId && d.meta.tokenSet ? <Badge tone="ok">Холбогдсон</Badge> : <Badge tone="neutral">Тохируулаагүй — илгээхгүй</Badge>}
-        </div>
+          {d.meta.counts.FAILED ? <Badge tone="bad">Алдаатай {d.meta.counts.FAILED}</Badge> : null}
+          <span className="ml-auto text-[13px] font-semibold text-muted">{metaOpen ? 'Хаах' : 'Нээх'}</span>
+        </button>
+        {metaOpen ? (<>
         <p className="text-[13px] text-subtle">Захиалга баталгаажихад (Шинэ болоход) Meta руу «Purchase» мэдээ нэг удаа илгээнэ. Утасны дугаарыг шифрлэж (hash) явуулна. Токен хадгалсны дараа дахин харагдахгүй.</p>
         <div className="grid gap-3 sm:grid-cols-3">
           <Field id="pixel" label="Pixel (Dataset) ID" inputMode="numeric" value={meta.pixelId} onChange={(e) => setMeta({ ...meta, pixelId: e.target.value.replace(/\D/g, '') })} />
@@ -92,6 +98,7 @@ export function SettingsClient() {
             </table>
           </div>
         ) : null}
+        </>) : null}
       </section>
     </div>
   );
