@@ -7,8 +7,10 @@ import { Field } from '@/components/ui/Field';
 import { Notice } from '@/components/ui/Notice';
 import { api, ApiError } from '@/components/ui/api';
 import { money, ubDateTime } from '@/lib/format';
+import { SmsSettings, type SmsData } from './SmsSettings';
 
 interface Resp {
+  sms: SmsData | null;
   settings: { feeUB: number; feeRural: number; waitDays: number; assignHour: number; extraDailyMax?: number };
   pages: { id: number; name: string; isActive: boolean; sortOrder: number }[];
   meta: { pixelId: string; tokenSet: boolean; tokenHint: string | null; testCode: string; counts: Record<string, number>; recent: { id: number; orderNumber?: string; total?: number; status: string; attempts: number; lastError: string | null; sentAt: string | null; createdAt: string }[] };
@@ -100,6 +102,7 @@ export function SettingsClient() {
         ) : null}
         </>) : null}
       </section>
+      {d.sms ? <SmsSettings s={d.sms} onSaved={load} /> : null}
     </div>
   );
 }

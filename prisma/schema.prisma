@@ -875,6 +875,32 @@ model MetaEvent {
   @@index([status, nextAttemptAt])
 }
 
+/// #166: «Төлбөр хүлээж буй» захиалга үүсэхэд үйлчлүүлэгчид SMS (нэг захиалгад нэг л удаа)
+model SmsMessage {
+  id            Int       @id @default(autoincrement())
+  orderId       Int       @unique
+  phone         String
+  text          String
+  status        SmsStatus @default(PENDING)
+  test          Boolean   @default(false)
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lastError     String?
+  response      String?
+  sentAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([status, nextAttemptAt])
+  @@index([createdAt])
+}
+
+enum SmsStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
 // ───────────────────────── Модуль 4: Падаан ─────────────────────────
 
 /// Хуучин ERP шиг: Ноорог → Бэлтгэсэн → Өгсөн (жолоочийн хүлээн авалт Модуль 5-д)

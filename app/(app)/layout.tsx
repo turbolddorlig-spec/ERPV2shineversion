@@ -13,6 +13,7 @@ import { supplierReorderBanner } from '@/lib/services/supplier-outflow';
 import { unassignedAlert } from '@/lib/services/delivery/assign';
 import { staleHandoverAlert } from '@/lib/services/delivery/handover';
 import { paidCancelledAlert } from '@/lib/services/accounting/bank';
+import { smsFailAlert } from '@/lib/services/orders/sms';
 import { staleGoodsAlert } from '@/lib/services/accounting/debts';
 import { jobsAlert } from '@/lib/jobs';
 import { backupAlert } from '@/lib/services/backup-status';
@@ -25,7 +26,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Шалгаагүй барааны засварын тоо — шалгах эрхтэй хүнд цэс дээр харагдана
   const actor = { id: user.id, name: user.name, roles: user.roles };
   // Агуулахын «Өнөөдрийн ажил»-ын тоо (дүүргэх, ирэх шилжүүлэг, зээлийн хүсэлт, батлах тооллого)
-  const [pending, whWork, discounts, recAlert, issues, boost, reorder, unassigned, jobs, skip, backup, staleHo, paidCancel, staleGoods] = await Promise.all([
+  const [pending, whWork, discounts, recAlert, issues, boost, reorder, unassigned, jobs, skip, backup, staleHo, paidCancel, staleGoods, smsFail] = await Promise.all([
     unreviewedCount(actor).catch(() => 0),
     warehouseBadge(actor).catch(() => 0),
     // Супер админд: шалгаагүй үнийн хөнгөлөлт / хүргэлтийн өөрчлөлт (#43 2)
@@ -51,6 +52,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     paidCancelledAlert(user.roles).catch(() => null),
     // Аудит #160: 7+ хоног бараагаа буцаагаагүй жолооч (СА)
     staleGoodsAlert(user.roles).then((x) => (x ? { drivers: x.drivers, qty: x.qty, amount: x.amount, days: x.days } : null)).catch(() => null),
+    // #166: явж чадаагүй SMS (СА)
+    user.roles.includes('SUPER_ADMIN') ? smsFailAlert().catch(() => null) : null,
   ]);
   const nav: NavItem[] = visiblePages(user.roles).map((p) => ({
     key: p.key, label: p.label, short: p.short, href: p.href, group: p.group, icon: p.icon,
@@ -59,7 +62,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }));
   return (
     <AppShell user={{ name: user.name, roleLabels: user.roles.map((r) => ROLE_LABEL[r]) }} nav={nav}
-      jobsAlert={jobs} shortageSkip={skip} backupAlert={backup} boostAlert={boost} reorderAlert={reorder} assignAlert={unassigned} handoverAlert={staleHo} paidCancelAlert={paidCancel} staleGoodsAlert={staleGoods} reorderHref={user.roles.includes('SUPPLIER') ? '/supplier' : '/goods-outflow?tab=reorder'}
+      jobsAlert={jobs} shortageSkip={skip} backupAlert={backup} boostAlert={boost} reorderAlert={reorder} assignAlert={unassigned} handoverAlert={staleHo} paidCancelAlert={paidCancel} staleGoodsAlert={staleGoods} smsAlert={smsFail} reorderHref={user.roles.includes('SUPPLIER') ? '/supplier' : '/goods-outflow?tab=reorder'}
       alert={recAlert ? { kind: recAlert.kind, count: recAlert.status?.count ?? 0, at: recAlert.status?.at ?? null, since: recAlert.status?.since ?? null } : null}>
       {children}
     </AppShell>

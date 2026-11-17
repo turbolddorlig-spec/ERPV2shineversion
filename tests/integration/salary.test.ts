@@ -153,6 +153,8 @@ describe('цоож: торгууль, зээл, өр — давхардахгү�
     await S.setConfig(acc, { staffKey: key, baseSalary: 1_000_000 });
     const p1 = await PN.createPenalty(pen, { userId: op.id, customName: 'Коммент шүүгээгүй', amount: 5000 });
     const [y, m] = U.ubDay().slice(0, 7).split('-').map(Number) as [number, number];
+    // Огнооноос үл хамаарна: торгууль сарын 1-нд (16-наас хойш ажиллуулахад 1–15-д хамаарахгүй байсан)
+    await db.penalty.update({ where: { id: p1.id }, data: { createdAt: new Date(Date.UTC(y, m - 1, 1, 4)) } });
     const prev = `${m === 1 ? y - 1 : y}-${String(m === 1 ? 12 : m - 1).padStart(2, '0')}`;
     // өмнөх сарын хоёр хагаст хоёуланд торгууль (5,000₮) — «өмнөхөөс үлдсэн»
     const r1 = await S.saveSalary(acc, { staffKey: key, ym: prev, half: 1, baseSalary: 500_000, penaltyDeducted: 0 });
@@ -175,6 +177,7 @@ describe('цоож: торгууль, зээл, өр — давхардахгү�
     // «үлдэгдэл цуцалсан»: 3,000 суутгаж түгжинэ → үлдсэн 2,000-ыг цуцална → тайлахад дахин суутгах ёстой болно (тэмдэг худал үлдэхгүй)
     if (rec.isLocked) await S.unlockSalary(sa, unl.id, {});
     const p2 = await PN.createPenalty(pen, { userId: op.id, customName: 'Чат шүүгээгүй', amount: 5000 });
+    await db.penalty.update({ where: { id: p2.id }, data: { createdAt: new Date(Date.UTC(y, m - 1, 1, 5)) } });
     await db.penalty.update({ where: { id: p1.id }, data: { status: 'CANCELLED' } });
     const c = await S.saveSalary(acc, { staffKey: key, ym, half: unl === a ? 1 : 2, baseSalary: 500_000, penaltyDeducted: 3000 });
     await S.lockSalary(adm, c.id);

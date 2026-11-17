@@ -12,7 +12,7 @@ export default async function SettingsPage() {
   await requirePage('settings');
   return (
     <>
-      <PageHeader title="Тохиргоо" subtitle="Хүргэлтийн төлбөр, пэйж, Meta, торгууль, Gmail, ажлын байрнаас нэвтрэх" />
+      <PageHeader title="Тохиргоо" subtitle="Хүргэлтийн төлбөр, пэйж, Meta, SMS, торгууль, Gmail, ажлын байрнаас нэвтрэх" />
       <SettingsClient />
       <section id="penalty" className="mt-4 flex flex-col gap-3 rounded-[18px] border border-line bg-surface p-4 shadow-card">
         <h2 className="text-[16px] font-extrabold">Торгуулийн дүн (автомат)</h2>

@@ -13,6 +13,7 @@ import {
   lockOrder, lockPhones, lockVariants, nextOrderNumber, orderSettings, paidOrderData, requireReason, staleError, uniqueViolation, type Tx, type UserActor, NO_PAGE_NAME, noPageId,
 } from './core';
 import { enqueueMeta, skipMeta } from './meta';
+import { enqueueOrderSms, kickSms } from './sms';
 import { addToHandover, assertLockedDrivers, isGiven, lockOrderDrivers, removeFromHandover } from '../delivery/core';
 import { assertDayOpen } from '../accounting/lock';
 
@@ -213,6 +214,8 @@ export async function createOrder(actor: UserActor, input: CreateInput) {
       });
       await replaceReservations(tx, o.id, lines);
       if (!pending) await enqueueMeta(tx, o.id);
+      // #166: «Төлбөр хүлээж буй» үүсэхэд үйлчлүүлэгчид SMS (асаалттай бол; нэг л удаа)
+      else await enqueueOrderSms(tx, o, lines);
       // Дуудлагын бүртгэлийг автоматаар холбоно (хуучин логик)
       await tx.callNote.updateMany({ where: { phone: { in: phones }, status: { in: ['PENDING', 'CONTACTED'] } }, data: { status: 'ORDERED', orderId: o.id, closedAt: now } });
       if (!noPage) await tx.user.update({ where: { id: actor.id }, data: { lastPageId: pageId } });
@@ -224,7 +227,7 @@ export async function createOrder(actor: UserActor, input: CreateInput) {
       return o;
     });
     // Модуль 6: тухайн утасны таараагүй банкны гүйлгээ байвал «Мөнгө орсон» (хуучин шиг)
-    if (!replay && order.status === 'PENDING_PAYMENT') await bankRematch(order.id, actor, 'захиалга үүссэн');
+    if (!replay && order.status === 'PENDING_PAYMENT') { await bankRematch(order.id, actor, 'захиалга үүссэн'); kickSms(); }
     return { order, duplicate: replay !== null };
   } catch (e) {
     if (uniqueViolation(e)) { const r = await db.order.findUnique({ where: { idemKey } }); if (r) return { order: r, duplicate: true }; }

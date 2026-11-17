@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { db } from './db';
 import { autoCancelExpired } from './services/orders/orders';
 import { processMetaQueue } from './services/orders/meta';
+import { processSmsQueue } from './services/orders/sms';
 import { autoReconcile } from './services/stock/views';
 import { closeDayShortages } from './services/accounting/debts';
 import { autoGmailSync } from './services/accounting/gmail';
@@ -57,6 +58,7 @@ export async function runJobsOnce(opts: { owner?: string } = {}): Promise<JobRes
     try {
       const cancelled = await safe('auto-cancel', autoCancelExpired);
       const meta = await safe('meta', processMetaQueue);
+      await safe('sms', () => processSmsQueue());
       const rec = await safe('reconcile', autoReconcile);
       if (rec && !rec.ok) console.error(`[jobs] ҮЛДЭГДЛИЙН ЗӨРҮҮ: ${rec.count}`);
       // Модуль 6: өдрийн эцэст жолоочид буцаагаагүй бараа → автомат өр (өдөрт нэг удаа; 06:00-оос хойш бол алгасаад анхааруулна)
