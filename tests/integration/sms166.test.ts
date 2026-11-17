@@ -175,6 +175,9 @@ describe('#166 SMS', () => {
     await err(S.setSmsSettings(sa, { body: '{"to":"{phone}"}' }), 400);
     await err(S.setSmsSettings(sa, { body: 'phone={phone}&m={message}' }), 400);
     await err(S.setSmsSettings(sa, { testPhone: '123' }), 400);
+    // Түлхүүрийн талбарт хаяг / JSON загвар андуурч бичихийг татгалзана
+    await err(S.setSmsSettings(sa, { key: 'https://api.sendsms.mn/api/user/send' }), 400);
+    await err(S.setSmsSettings(sa, { token: '{"apiKey":"{key}","message":"{message}"}' }), 400);
     // Түлхүүргүй асаах боломжгүй
     await db.appSetting.delete({ where: { key: 'smsConfig' } });
     await err(S.setSmsSettings(sa, { enabled: true }), 400);
@@ -185,6 +188,8 @@ describe('#166 SMS', () => {
   });
 
   it('Латин хөрвүүлэлт, урт', () => {
+    // Хоосон эзэмшигч — « ." үлдэхгүй
+    expect(S.renderSms('{банк} {данс} {эзэмшигч}. Utga: {утас}', { bank: 'Khan bank', account: '5100208385', holder: '' }, { number: '1', phone: '88112233', total: 1, lines: [] }).text).toBe('Khan bank 5100208385. Utga: 88112233');
     expect(S.toLatin('Хөнгөн куртка — Хар «L»')).toBe('Hungun kurtka - Har "L"');
     expect(S.toLatin('Цэцэг Ёндон Юу Ямар Шүр Чөлөө Жолооч')).toBe('Tsetseg Yondon Yuu Yamar Shur Chuluu Joloouch'.replace('Joloouch', 'Jolooch'));
     expect(S.smsLimit('abc')).toBe(160);

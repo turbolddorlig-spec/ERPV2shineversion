@@ -83,7 +83,7 @@ export function renderSms(template: string, cfg: Pick<SmsConfig, 'bank' | 'accou
     .replace(/\{данс\}/g, toLatin(cfg.account))
     .replace(/\{эзэмшигч\}/g, toLatin(cfg.holder))
     .replace(/\{бараа\}/g, goods)
-    .replace(/\s+/g, ' ').trim();
+    .replace(/\s+/g, ' ').replace(/\s+([.,:;!?)])/g, '$1').replace(/\(\s*\)/g, '').trim();
   const items = o.lines.map((l) => `${toLatin(l.name)}${l.qty > 1 ? ` x${l.qty}` : ''}`);
   let goods = items.join(', ');
   let text = fill(goods);
@@ -95,6 +95,8 @@ export function renderSms(template: string, cfg: Pick<SmsConfig, 'bank' | 'accou
     if (items.length > 1) goods = `${items[0]} +${items.length - 1} baraa`;
     if (goods.length > room) goods = goods.slice(0, Math.max(5, room - 3)).trimEnd() + '...';
     text = fill(goods);
+    // Цэг таслалын цэгцлэлтээс болж 1–2 тэмдэгт зөрвөл барааг дахин богиносгоно (текстийн төгсгөл тасрахгүй)
+    while (text.length > limit && goods.length > 8) { goods = goods.slice(0, goods.length - 4).trimEnd() + '...'; text = fill(goods); }
     cut = true;
   }
   if (text.length > limit) { text = text.slice(0, limit); cut = true; }
@@ -245,7 +247,10 @@ export async function setSmsSettings(actor: UserActor, input: Record<string, unk
     const v = input[k];
     if (v !== undefined && String(v).trim()) {
       const s = String(v).trim();
-      if (s.length < 6 || s.length > 300 || /\s/.test(s)) throw badRequest(k === 'key' ? 'API түлхүүр буруу' : 'Токен буруу');
+      // Хаяг, JSON загварыг андуурч бичихээс хамгаална (#166 засвар: түлхүүрийн талбарт хаяг бичигдсэн)
+      const name = k === 'key' ? 'API түлхүүр (apiKey)' : 'Токен (apiToken)';
+      if (/^https?:|[\/{}"'<>\s]/i.test(s)) throw badRequest(`${name} буруу — хаяг эсвэл загвар биш, SendSMS-ийн «API» цэсэнд байгаа ${k === 'key' ? 'apiKey' : 'apiToken'}-ийг хуулж бичнэ үү`);
+      if (s.length < 6 || s.length > 300) throw badRequest(`${name} буруу`);
       next[k] = encrypt(s); changed.push(k);
     }
   }
