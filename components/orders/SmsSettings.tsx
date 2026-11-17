@@ -13,6 +13,7 @@ export interface SmsData {
   keySet: boolean; keyHint: string | null; tokenSet: boolean; tokenHint: string | null;
   defaults: { url: string; body: string; template: string }; vars: string[];
   preview: { text: string; length: number; limit: number; cut: boolean };
+  problems?: string[];
   counts: Record<string, number>;
   recent: { id: number; orderNumber: string | null; phone: string; text: string; status: string; test: boolean; attempts: number; lastError: string | null; sentAt: string | null; createdAt: string }[];
 }
@@ -68,11 +69,13 @@ export function SmsSettings({ s, onSaved }: { s: SmsData; onSaved: () => Promise
         <span aria-hidden className="w-4 text-[13px] text-muted">{open ? '▾' : '▸'}</span>
         <h2 className="text-[16px] font-extrabold">SMS — «Төлбөр хүлээж буй» захиалга</h2>
         {s.enabled ? (s.testMode ? <Badge tone="warn">Туршилтын горим</Badge> : <Badge tone="ok">Асаалттай</Badge>) : <Badge tone="neutral">Унтраалттай</Badge>}
+        {s.problems?.length ? <Badge tone="bad">Түлхүүр буруу</Badge> : null}
         {s.counts.FAILED ? <Badge tone="bad">Алдаатай {s.counts.FAILED}</Badge> : null}
         <span className="ml-auto text-[13px] font-semibold text-muted">{open ? 'Хаах' : 'Нээх'}</span>
       </button>
       {open ? (<>
         <p className="text-[13px] text-subtle">Захиалга «Төлбөр хүлээж буй» болж үүсэхэд үйлчлүүлэгчийн утас руу нэг л удаа SMS явна. Дугаар, бараа, дүн, утсыг систем өөрөө бөглөнө — та зөвхөн үгээ бичнэ. Захиалгын төлөв, мөнгөнд нөлөөлөхгүй. Зөвхөн Супер админ засна; өөрчлөлт бүр түүхэнд бичигдэнэ.</p>
+        {s.problems?.length ? <div data-sms-problems className="flex flex-col gap-1">{s.problems.map((p) => <Notice key={p}>⛔ {p}</Notice>)}</div> : null}
         {err ? <Notice>{err}</Notice> : null}
         {ok ? <Notice tone="ok">{ok}</Notice> : null}
 

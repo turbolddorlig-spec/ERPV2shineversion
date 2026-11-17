@@ -39,6 +39,16 @@ async function readStored(tx: Prisma.TransactionClient | typeof db = db): Promis
   return row && typeof row.value === 'object' && row.value ? (row.value as Stored) : {};
 }
 const dec = (v?: string) => (v ? (v.startsWith('v1:') ? decrypt(v) ?? '' : v) : '');
+/** #167: хадгалсан түлхүүр/токен хаяг эсвэл загвар мэт бол (андуурч бичсэн) — илгээхгүй, Тохиргоонд улаанаар */
+export const badSecret = (v: string) => !!v && /^https?:|[\/{}"'<>\s]/i.test(v);
+/** Хадгалсан тохиргооны асуудлууд (илгээхээс өмнө) */
+export function configProblems(cfg: SmsConfig): string[] {
+  const out: string[] = [];
+  if (badSecret(cfg.key)) out.push('Хадгалсан API түлхүүр (apiKey) буруу — хаяг эсвэл загвар бичигдсэн байна. SendSMS-ийн API цэснээс apiKey-г хуулж дахин оруулна уу.');
+  if (badSecret(cfg.token)) out.push('Хадгалсан токен (apiToken) буруу — хаяг эсвэл загвар бичигдсэн байна. SendSMS-ийн API цэснээс apiToken-г хуулж дахин оруулна уу.');
+  if (!cfg.body.includes('{key}') && cfg.url === SMS_DEFAULT_URL) out.push('«Илгээх өгөгдөл»-д {key} алга — «SendSMS.mn-ийн анхны утга» товч дарж сэргээнэ үү.');
+  return out;
+}
 export async function readSmsConfig(tx: Prisma.TransactionClient | typeof db = db): Promise<SmsConfig> {
   const s = await readStored(tx);
   return {
@@ -158,7 +168,8 @@ export async function processSmsQueue(limit = 25): Promise<{ sent: number; faile
       await db.smsMessage.update({ where: { id }, data: { status: 'SKIPPED', lastError: 'Илгээхээс өмнө төлөв өөрчлөгдсөн' } });
       continue;
     }
-    const r = await deliver(cfg, m.phone, m.text);
+    const probs = configProblems(cfg);
+    const r = probs.length ? { ok: false, info: probs[0]! } : await deliver(cfg, m.phone, m.text);
     const attempts = m.attempts + 1;
     if (r.ok) {
       sent++;
@@ -198,7 +209,7 @@ export async function getSmsSettings(actor: UserActor) {
   return {
     enabled: cfg.enabled, testMode: cfg.testMode, testPhone: cfg.testPhone, template: cfg.template,
     bank: cfg.bank, account: cfg.account, holder: cfg.holder, url: cfg.url, body: cfg.body,
-    keySet: !!cfg.key, keyHint: cfg.key ? `…${cfg.key.slice(-4)}` : null, tokenSet: !!cfg.token, tokenHint: cfg.token ? `…${cfg.token.slice(-4)}` : null,
+    problems: configProblems(cfg), keySet: !!cfg.key, keyHint: cfg.key ? `…${cfg.key.slice(-4)}` : null, tokenSet: !!cfg.token, tokenHint: cfg.token ? `…${cfg.token.slice(-4)}` : null,
     defaults: { url: SMS_DEFAULT_URL, body: SMS_DEFAULT_BODY, template: SMS_DEFAULT_TEMPLATE }, vars: SMS_VARS,
     preview, counts: Object.fromEntries(counts.map((c) => [c.status, c._count])),
     recent: recent.map((r) => ({ id: r.id, orderNumber: nums.get(r.orderId) ?? null, phone: r.phone, text: r.text, status: r.status, test: r.test, attempts: r.attempts, lastError: r.lastError, sentAt: r.sentAt, createdAt: r.createdAt })),
@@ -282,6 +293,8 @@ export async function testSms(actor: UserActor) {
   const cfg = await readSmsConfig();
   if (!cfg.key) throw badRequest('API түлхүүр оруулаагүй байна');
   if (!/^\d{8}$/.test(cfg.testPhone)) throw badRequest('Туршилтын утас оруулна уу');
+  const probs = configProblems(cfg);
+  if (probs.length) throw badRequest(probs[0]!);
   const { text } = renderSms(cfg.template, cfg, SAMPLE);
   const r = await deliver(cfg, cfg.testPhone, text);
   await writeAudit(actor, 'settings.sms_test', 'AppSetting', KEY, { phone: cfg.testPhone, ok: r.ok, info: r.info }, undefined, ['settings']);

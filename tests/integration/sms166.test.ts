@@ -187,6 +187,28 @@ describe('#166 SMS', () => {
     expect(JSON.stringify(log.at(-1)!.details)).toContain('5099999999');
   });
 
+  it('#167: өмнө нь буруу хадгалагдсан түлхүүр (хаяг) — илгээхгүй, Тохиргоонд анхааруулга, туршилт татгалзана', async () => {
+    await configure(); await S.setSmsSettings(sa, { enabled: true });
+    // Хуучин хувилбараар хадгалагдсан буруу утгыг дуурайна
+    const row = await db.appSetting.findUniqueOrThrow({ where: { key: 'smsConfig' } });
+    const { encrypt } = await import('@/lib/secret');
+    await db.appSetting.update({ where: { key: 'smsConfig' }, data: { value: { ...(row.value as object), key: encrypt('https://sms.example.mn/send') } } });
+    const st = await S.getSmsSettings(sa);
+    expect(st.problems.length).toBe(1);
+    expect(st.problems[0]).toContain('apiKey');
+    await err(S.testSms(sa), 400);
+    const { order: o } = await O.createOrder(op, order());
+    await S.processSmsQueue();
+    expect(calls).toHaveLength(0);
+    const m = await db.smsMessage.findUniqueOrThrow({ where: { orderId: o.id } });
+    expect(m.status).toBe('FAILED'); expect(m.lastError).toContain('apiKey');
+    // Зөв (хуурамч) түлхүүр оруулахад асуудал арилна, дахин илгээхэд явна
+    await S.setSmsSettings(sa, { key: 'DUMMYKEY0000000000000001' });
+    expect((await S.getSmsSettings(sa)).problems).toEqual([]);
+    await S.retryFailedSms(sa);
+    expect(await S.processSmsQueue()).toEqual({ sent: 1, failed: 0 });
+  });
+
   it('Латин хөрвүүлэлт, урт', () => {
     // Хоосон эзэмшигч — « ." үлдэхгүй
     expect(S.renderSms('{банк} {данс} {эзэмшигч}. Utga: {утас}', { bank: 'Khan bank', account: '5100208385', holder: '' }, { number: '1', phone: '88112233', total: 1, lines: [] }).text).toBe('Khan bank 5100208385. Utga: 88112233');
