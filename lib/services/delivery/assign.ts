@@ -412,3 +412,36 @@ export async function unassignedAlert(roles: string[]): Promise<{ today: number;
   return v.leftover || (late && v.today) ? { ...v, late, hour: assignHour } : null;
 }
 export function bustUnassignedAlert() { alertCache = null; }
+
+/**
+ * #173 (эзний хүсэлт): жолоочид «тасархай» үлдсэн захиалга — ахлах жолоочид мэдэгдэнэ.
+ * Жишээ: амарч байгаад ирсэн жолоочид 30 захиалга оноогоод 29-ийнх нь огноог зөв сольж, 1-ийг мартвал тэр 1 нь өөр өдөрт падаангүй үлдэнэ.
+ * Жолооч бүрийн «үндсэн өдөр» = ӨНӨӨДӨР/МАРГААШ-ийн оноосон (ASSIGNED) захиалга хамгийн олон өдөр (тэнцвэл хожуу нь).
+ * Тасархай = падаанд ороогүй (handoverId = null) бөгөөд: (а) огноо нь үндсэн өдрөөс өөр, (б) өнгөрсөн өдөр, эсвэл (в) тэр өдрийн падаан аль хэдийн өгөгдсөн.
+ */
+export async function strayOrders(actor: UserActor) {
+  assertLead(actor);
+  const today = ubDay(); const tomorrow = ubDay(new Date(), 1);
+  const rows = await db.$queryRaw<{ id: number; number: string; driverId: string; driverName: string | null; deliveryDate: Date; handoverId: number | null }[]>`
+    SELECT id, number, "driverId", "driverName", "deliveryDate", "handoverId" FROM "Order"
+    WHERE status = 'ASSIGNED' AND "driverId" IS NOT NULL AND "deliveryDate" <= ${dateOnly(tomorrow)}::date
+    ORDER BY "driverId", id LIMIT 20000`;
+  if (!rows.length) return { items: [] };
+  const drivers = [...new Set(rows.map((r) => r.driverId))];
+  const given = await db.handover.findMany({ where: { driverId: { in: drivers }, date: { in: [dateOnly(today), dateOnly(tomorrow)] } }, select: { driverId: true, date: true, status: true } });
+  const givenSet = new Set(given.filter((h) => isGiven(h.status)).map((h) => `${h.driverId}|${ymdOf(h.date)}`));
+  const out: { driverId: string; driverName: string; mainDate: string; orders: { id: number; number: string; date: string; reason: string }[] }[] = [];
+  for (const d of drivers) {
+    const mine = rows.filter((r) => r.driverId === d);
+    const cnt = new Map<string, number>();
+    for (const r of mine) { const y = ymdOf(r.deliveryDate); if (y >= today) cnt.set(y, (cnt.get(y) ?? 0) + 1); }
+    const main = [...cnt.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? 1 : -1))[0]?.[0] ?? tomorrow;
+    const stray = mine.filter((r) => !r.handoverId).map((r) => {
+      const y = ymdOf(r.deliveryDate);
+      const reason = y < today ? 'өнгөрсөн өдөр' : givenSet.has(`${d}|${y}`) ? 'тэр өдрийн падаан өгөгдсөн' : y !== main ? 'бусад захиалгаас өөр өдөр' : null;
+      return reason ? { id: r.id, number: r.number, date: y, reason } : null;
+    }).filter((x): x is NonNullable<typeof x> => !!x);
+    if (stray.length) out.push({ driverId: d, driverName: mine[0]!.driverName ?? '—', mainDate: givenSet.has(`${d}|${main}`) ? addDays(main, 1) : main, orders: stray.slice(0, 50) });
+  }
+  return { items: out.sort((a, b) => b.orders.length - a.orders.length) };
+}

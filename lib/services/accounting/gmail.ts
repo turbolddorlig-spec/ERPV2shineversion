@@ -2,7 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { db } from '../../db';
 import { badRequest, forbidden } from '../../errors';
 import { writeAudit, SYSTEM_ACTOR, type Actor } from '../../audit';
-import { canBankImport, canEdit, canView } from '../../permissions';
+import { canBankImport, canBankSetup, canEdit, canView } from '../../permissions';
 import type { UserActor } from '../orders/core';
 import { importTransactions, parseKhanMessages, type TxIn } from './bank';
 
@@ -46,7 +46,8 @@ const canSet = (a: UserActor) => canEdit(a.roles, 'settings');
 export async function gmailStatus(actor: UserActor) {
   if (!canView(actor.roles, 'bank-import') && !canEdit(actor.roles, 'settings')) throw forbidden();
   const s = await readGmailSettings();
-  return { configured: isConfigured(s), settings: publicView(s), canEdit: canSet(actor) };
+  // #173: тохиргоо (имэйл г.м.) оператор, ахлах операторт харагдахгүй
+  return { configured: isConfigured(s), settings: canBankSetup(actor.roles) || canSet(actor) ? publicView(s) : null, canEdit: canSet(actor), canSetup: canBankSetup(actor.roles) };
 }
 
 /** Gmail хаяг, App Password (хоосон бол хуучнаараа), илгээгч, автомат, давтамж */

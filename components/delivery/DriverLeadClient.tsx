@@ -293,6 +293,7 @@ export function DriverLeadClient() {
   return (
     <div className="flex flex-col gap-3">
       <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4"><h1 className="text-[24px] font-extrabold tracking-tight">Ахлах жолооч</h1><p className="band-sub text-[12.5px]">Жолооч хуваарилалт болон гүйцэтгэл</p></div>
+      <StrayAlert />
       <div className="flex gap-1.5 overflow-x-auto" role="tablist" data-overflow-ok>
         {([['orders', 'Бүх захиалга'], ['performance', 'Жолоочийн гүйцэтгэл'], ['chart', 'График']] as const).map(([k, l]) => (
           <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
@@ -300,6 +301,37 @@ export function DriverLeadClient() {
         ))}
       </div>
       {tab === 'orders' ? <AssignView /> : tab === 'performance' ? <PerformanceTab drivers={drivers} /> : <ChartTab drivers={drivers} />}
+    </div>
+  );
+}
+
+/** #173: жолоочид «тасархай» үлдсэн захиалга (бусдаасаа өөр өдөрт, падаангүй) — ахлах жолоочид мэдэгдэл */
+interface Stray { driverId: string; driverName: string; mainDate: string; orders: { id: number; number: string; date: string; reason: string }[] }
+function StrayAlert() {
+  const [items, setItems] = useState<Stray[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msgText, setMsgText] = useState<string | null>(null);
+  const load = useCallback(() => api<{ items: Stray[] }>('/api/driver-lead/stats?kind=stray').then((r) => setItems(r.items)).catch(() => undefined), []);
+  useEffect(() => { void load(); const t = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 60_000); return () => clearInterval(t); }, [load]);
+  const move = async (x: Stray) => {
+    setBusy(x.driverId); setMsgText(null);
+    try {
+      const r = await api<{ updated: number; skipped: unknown[] }>('/api/driver-lead/assign', { method: 'POST', json: { ids: x.orders.map((o) => o.id), date: x.mainDate } });
+      setMsgText(`${x.driverName}: ${r.updated} захиалга ${x.mainDate.slice(5).replace('-', '/')} руу шилжлээ${r.skipped?.length ? ` · ${r.skipped.length} алгассан` : ''}`);
+      await load();
+    } catch (e) { setMsgText(e instanceof ApiError ? e.message : 'Алдаа гарлаа'); } finally { setBusy(null); }
+  };
+  if (!items.length && !msgText) return null;
+  return (
+    <div data-stray-alert className="flex flex-col gap-2 rounded-[14px] border border-warn/40 bg-warn-soft p-3 text-[13px] text-warn">
+      {items.length ? <b>⚠️ Жолоочид тасархай үлдсэн захиалга — бусад захиалгаасаа өөр өдөрт, падаанд орохгүй байна:</b> : null}
+      {items.map((x) => (
+        <div key={x.driverId} className="flex flex-wrap items-center gap-2 rounded-lg bg-surface/70 px-2.5 py-2 text-ink">
+          <span className="min-w-0 flex-1 [overflow-wrap:anywhere]"><b>{x.driverName}</b>: {x.orders.length} захиалга ({x.orders.slice(0, 6).map((o) => `№${o.number} · ${o.date.slice(5).replace('-', '/')}`).join(', ')}{x.orders.length > 6 ? '…' : ''}) — {x.orders[0]!.reason}. Үндсэн өдөр {x.mainDate.slice(5).replace('-', '/')}.</span>
+          <Button size="sm" variant="primary" loading={busy === x.driverId} onClick={() => void move(x)}>{x.mainDate.slice(5).replace('-', '/')} руу шилжүүлэх</Button>
+        </div>
+      ))}
+      {msgText ? <span className="font-semibold text-ink">{msgText}</span> : null}
     </div>
   );
 }

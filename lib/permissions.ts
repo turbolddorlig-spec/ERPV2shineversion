@@ -151,3 +151,5 @@ export const canAccount = (roles: Role[]) => canEdit(roles, 'accounting');
 export const canManagePay = (roles: Role[]) => has(roles, ['SUPER_ADMIN']);
 /** Банкны хуулга импортлох, тааруулах, «Буцаасан» тэмдэглэх */
 export const canBankImport = (roles: Role[]) => canEdit(roles, 'bank-import');
+/** #173 (эзний шийдвэр): Gmail тохиргоо, CSV (Excel) экспорт — оператор, ахлах операторт харагдахгүй (СА, Админ, нягтлан) */
+export const canBankSetup = (roles: Role[]) => has(roles, ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTING']);

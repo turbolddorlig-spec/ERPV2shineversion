@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { db } from '../../db';
 import { badRequest, conflict, forbidden, notFound } from '../../errors';
 import { writeAudit, SYSTEM_ACTOR, type Actor } from '../../audit';
-import { canBankImport, canView } from '../../permissions';
+import { canBankImport, canBankSetup, canView } from '../../permissions';
 import { ubDay, ubDayStart, isYmd } from '../../ubdate';
 import { inTx, lockOrder, orderSettings, paidOrderData, type UserActor } from '../orders/core';
 import { enqueueMeta, skipMeta } from '../orders/meta';
@@ -455,7 +455,7 @@ export async function listTransactions(actor: UserActor, f: BankFilter) {
       AND NOT EXISTS (SELECT 1 FROM "BankTransaction" t WHERE t."orderId" = o.id AND t.status = 'EXCESS_AMOUNT' AND NOT t.refunded AND NOT t."isDuplicate")
     ORDER BY o.id DESC LIMIT 200` : [];
   return {
-    page, total, pages: Math.max(1, Math.ceil(total / BANK_PAGE)), canEdit: canBankImport(actor.roles),
+    page, total, pages: Math.max(1, Math.ceil(total / BANK_PAGE)), canEdit: canBankImport(actor.roles), canSetup: canBankSetup(actor.roles),
     manualExcess: manualExcess.map((o) => ({ ...o, excess: o.paidAmount - o.total, why: excessWhy(o) })),
     items: items.map(maskFor(edit)).map((t) => ({ ...t, why: t.status === 'EXCESS_AMOUNT' && t.orderId ? excessWhy(om.get(t.orderId)) : null, statusLabel: t.refunded ? BANK_STATUS_LABEL.REFUNDED : t.isDuplicate ? BANK_STATUS_LABEL.DUPLICATE : BANK_STATUS_LABEL[t.status] ?? t.status, order: t.orderId ? om.get(t.orderId) ?? null : null,
       excess: t.status === 'EXCESS_AMOUNT' && t.orderId && !t.refunded ? Math.max(0, (pm.get(t.orderId) ?? 0) - (om.get(t.orderId)?.total ?? 0)) : 0 })),
@@ -520,6 +520,7 @@ const csvCell = (v: unknown) => { let s = v === null || v === undefined ? '' : S
 
 export async function exportCsv(actor: UserActor, f: BankFilter) {
   assertEdit(actor); // Аудит #148: татаж авахыг зөвхөн засах эрхтэй (нягтлан г.м.)
+  if (!canBankSetup(actor.roles)) throw forbidden('CSV экспорт — зөвхөн нягтлан, админ'); // #173
   return withHeavy(() => exportRaw(f), { name: 'bank-export', max: 1 });
 }
 async function exportRaw(f: BankFilter) {

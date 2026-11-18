@@ -527,8 +527,10 @@ async function main() {
     const bkList = await req('/api/bank', { cookie: op4.cookie });
     const expOp = await req('/api/bank/export', { cookie: op4.cookie });
     check('банк: файл оруулах байхгүй (404), оператор харна (татаж авахгүй 403)', bkOp.status === 404 && bkList.status === 200 && expOp.status === 403, `${bkOp.status} ${bkList.status} ${expOp.status}`);
-    const exp6 = await req('/api/bank/export', { cookie: ol6.cookie });
-    check('банк: CSV экспорт', exp6.status === 200 && exp6.text.includes('Огноо,Утга,Дүн'), String(exp6.status));
+    const exp6ol = await req('/api/bank/export', { cookie: ol6.cookie });
+    check('банк: ахлах оператор CSV экспорт татахгүй → 403 (#173)', exp6ol.status === 403, String(exp6ol.status));
+    const exp6 = await req('/api/bank/export', { cookie: acc6.cookie });
+    check('банк: CSV экспорт (нягтлан)', exp6.status === 200 && exp6.text.includes('Огноо,Утга,Дүн'), String(exp6.status));
     const rec6 = JSON.parse((await req('/api/stock/reconcile?fresh=1', { cookie: adm.cookie })).text);
     check('Модуль 6-ын дараа тулгалт: журнал = үлдэгдэл', rec6.ok === true, JSON.stringify(rec6).slice(0, 120));
     }

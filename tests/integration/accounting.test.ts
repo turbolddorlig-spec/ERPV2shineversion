@@ -624,14 +624,14 @@ describe('банкны импорт (хуучнаар нь)', () => {
       const cl = await GM.cleanupGmailImports(sa);
       expect([cl.deleted, cl.resync?.imported]).toEqual([0, 0]);
       expect(await db.bankTransaction.count({ where: { emailMessageId: 'junk1' } })).toBe(1);
-      expect((await GM.gmailStatus(sa)).settings.lastOk).toBe(true);
+      expect((await GM.gmailStatus(sa)).settings!.lastOk).toBe(true);
       GM._setMailFetcher(async () => { throw new (await import('@/lib/errors')).AppError(400, 'Gmail нэвтэрч чадсангүй', 'gmail_auth'); });
       await err(GM.gmailSync(sa), 400, 'gmail_auth');
       expect((await GM.gmailStatus(sa)).settings).toMatchObject({ lastOk: false });
       // Нууц үг хоосон үлдээвэл хуучнаараа
       await err(GM.setGmailSettings(sa, { email: 'shop@gmail.com', sender: 'khanbank' }), 400, 'sender_required');
       await GM.setGmailSettings(sa, { email: 'shop@gmail.com', sender: 'info@khanbank.com' });
-      expect((await GM.gmailStatus(sa)).settings.hasPassword).toBe(true);
+      expect((await GM.gmailStatus(sa)).settings!.hasPassword).toBe(true);
       await GM.setGmailSettings(sa, { disconnect: true });
       expect((await GM.gmailStatus(sa)).configured).toBe(false);
     } finally { GM._setMailFetcher(null); }

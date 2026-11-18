@@ -26,7 +26,7 @@ const STATUS: Record<Status, { icon: string; label: string; cls: string }> = {
   LOW: { icon: '🟠', label: 'Зорилт 80–99%', cls: 'text-warn' }, LOSS: { icon: '🔴', label: 'Зорилт хангаагүй', cls: 'text-bad-ink' },
 };
 interface Row {
-  id: number; code: string; name: string; price: number; dollar: number; zones: number; adNumber: number | null; ownerId: string | null; ownerName: string | null;
+  id: number; code: string; name: string; price: number | null; dollar: number; zones: number; adNumber: number | null; ownerId: string | null; ownerName: string | null;
   doneAt: string | null; doneByName: string | null; note: string; daily: number[]; weekTotal: number; avg: number; phones: number[]; phoneWeek: number; variantCount: number; bulk: { n: number; qty: number }[];
   stock?: { total: number; available: number; driver: number }; alert?: 'RED' | 'ORANGE' | null; profit?: { status: Status | null; perUnit: number | null; orders: number; target: number } | null;
   alertInfo?: { level: 'RED' | 'ORANGE'; reasons: string[]; pages: { name: string; n: number }[]; watchedUntil: string | null; watchedBy: string | null } | null;
@@ -68,7 +68,7 @@ export function OutflowClient() {
   const [menu, setMenu] = useState(false);
   const [open, setOpen] = useState<Set<number>>(new Set());
   const toggle = (id: number) => { const n = new Set(open); if (n.has(id)) n.delete(id); else n.add(id); setOpen(n); };
-  const [hover, setHover] = useState<{ id: number; x: number; y: number } | null>(null);
+  const [hover, setHover] = useState<{ id: number; x: number; y: number; variantId?: number; label?: string } | null>(null);
   useEffect(() => { const t = setTimeout(() => setQd(q), 300); return () => clearTimeout(t); }, [q]);
   const params = useMemo(() => new URLSearchParams({ tab, q: qd, zone, owner, dollar, status, sort, dir, page: String(page) }).toString(), [tab, qd, zone, owner, dollar, status, sort, dir, page]);
   const load = useCallback(async () => {
@@ -164,7 +164,7 @@ export function OutflowClient() {
                         {r.variantCount > 1 ? <button type="button" data-variants={r.id} aria-label={`${r.name} өнгө, хэмжээгээр`} aria-expanded={open.has(r.id)} onClick={() => toggle(r.id)} className="mt-0.5 h-5 w-5 shrink-0 rounded text-[12px] text-muted hover:bg-surface2">{open.has(r.id) ? '▾' : '▸'}</button> : null}
                         <div title={r.name} className="line-clamp-2 min-w-0 [overflow-wrap:anywhere] font-semibold">{r.name}</div>
                       </div>
-                      <div className="[overflow-wrap:anywhere] text-[11.5px] text-muted">{r.code} · {money(r.price)}{r.doneAt ? ` · ✓ ${r.doneByName ?? ''}` : ''}</div>
+                      <div className="[overflow-wrap:anywhere] text-[11.5px] text-muted">{r.code}{r.price !== null ? ` · ${money(r.price)}` : ''}{r.doneAt ? ` · ✓ ${r.doneByName ?? ''}` : ''}</div>
                     </td>
                     <BoostCell row={r} field="dollar" post={post} />
                     <BoostCell row={r} field="zones" post={post} />
@@ -180,7 +180,7 @@ export function OutflowClient() {
                     <td className="px-1 py-1"><div className="flex items-center justify-end gap-1"><button type="button" aria-label={`${r.name} засах`} title="Засах" onClick={() => setDlg({ k: 'edit', row: r })} className="h-8 w-8 rounded-lg border border-line bg-surface text-[14px] hover:bg-surface2">✎</button><AlertChip r={r} onOpen={() => setDlg({ k: 'alert', row: r })} /></div></td>
                     {d.isSA ? <td className="px-1 py-1 text-center"><ReorderChip r={r} onOpen={() => setDlg({ k: 'reorder', row: r })} /></td> : null}
                   </tr>
-                  {open.has(r.id) ? <VariantRows id={r.id} lead={d.isLead} sa={d.isSA} cover={r.reorder?.variants} onCover={() => setDlg({ k: 'reorder', row: r })} /> : null}
+                  {open.has(r.id) ? <VariantRows id={r.id} lead={d.isLead} sa={d.isSA} cover={r.reorder?.variants} onCover={() => setDlg({ k: 'reorder', row: r })} onHover={(variantId, label, e) => setHover(e ? { id: r.id, x: e.clientX, y: e.clientY, variantId, label } : null)} /> : null}
                 </Fragment>
                 ))}
               </tbody>
@@ -217,7 +217,7 @@ export function OutflowClient() {
           ) : null}
         </>
       ) : <p className="text-muted">Ачаалж байна…</p>}
-      {hover ? <HoverCard id={hover.id} x={hover.x} y={hover.y} /> : null}
+      {hover ? <HoverCard id={hover.id} x={hover.x} y={hover.y} variantId={hover.variantId} label={hover.label} /> : null}
       {dlg?.k === 'alert' ? <AlertDialog row={dlg.row} onClose={() => setDlg(null)} post={post} /> : null}
       {dlg?.k === 'pageshort' ? <PageShortDialog onClose={() => setDlg(null)} post={post} /> : null}
       {dlg?.k === 'reorder' ? <ReorderDialog row={dlg.row} onClose={() => setDlg(null)} post={post} /> : null}
@@ -241,7 +241,7 @@ function useVariants(id: number) {
   return v;
 }
 /** Өнгө / хэмжээ бүрийн догол мөр (хүснэгт) */
-function VariantRows({ id, lead, sa, cover, onCover }: { id: number; lead: boolean; sa: boolean; cover?: Reorder['variants']; onCover?: () => void }) {
+function VariantRows({ id, lead, sa, cover, onCover, onHover }: { id: number; lead: boolean; sa: boolean; cover?: Reorder['variants']; onCover?: () => void; onHover?: (variantId: number, label: string, e: React.MouseEvent | null) => void }) {
   const v = useVariants(id);
   if (!v) return <tr><td colSpan={30} className="px-8 py-1 text-[12px] text-muted">Ачаалж байна…</td></tr>;
   return (
@@ -249,7 +249,7 @@ function VariantRows({ id, lead, sa, cover, onCover }: { id: number; lead: boole
       {v.variants.map((x) => (
         <tr key={x.id} data-variant-row className="border-t border-line/60 bg-surface2/50 text-[12px]">
           {lead ? <td /> : null}
-          <td className="w-[160px] min-w-[160px] max-w-[160px] py-1 pl-7 pr-2"><div className="line-clamp-2 [overflow-wrap:anywhere] text-muted">↳ <b className="text-ink">{x.label}</b></div><div className="text-[10.5px] text-subtle">{x.code}</div></td>
+          <td className="w-[160px] min-w-[160px] max-w-[160px] py-1 pl-7 pr-2" onMouseEnter={(e) => onHover?.(x.id, x.label, e)} onMouseLeave={() => onHover?.(x.id, x.label, null)}><div className="line-clamp-2 [overflow-wrap:anywhere] text-muted">↳ <b className="text-ink">{x.label}</b></div><div className="text-[10.5px] text-subtle">{x.code}</div></td>
           <td /><td /><td />
           {x.daily.map((n, i) => <td key={i} className="px-0.5 py-1 text-center"><div className={clsx('mx-auto w-9 rounded-md py-0.5', n ? 'font-semibold text-ink' : 'text-subtle')}>{n}</div>{x.phones[i] ? <div className="text-[10px] text-warn">☎{x.phones[i]}</div> : null}</td>)}
           <td className="px-1 py-1 text-center font-bold">{x.week}</td>
@@ -257,7 +257,7 @@ function VariantRows({ id, lead, sa, cover, onCover }: { id: number; lead: boole
           <td className={clsx('px-2 py-1 text-right', x.available < x.avg && 'font-bold text-bad-ink')}>{x.available}</td>
           {sa ? <td /> : null}
           <td /><td />
-          {sa ? <td className="px-1 py-1 text-center">{(() => { const c = cover?.find((y) => y.variantId === x.id); if (!c) return <span className="text-[11px] text-subtle">—</span>; return (
+          {sa ? <td className="px-1 py-1 text-center">{(() => { const c = cover?.find((y) => y.variantId === x.id); if (!c) return <span className="inline-flex w-[76px] flex-col items-center leading-tight text-subtle" title="Сүүлийн 7 хоногт зарагдаагүй — нөөц хангалттай" data-variant-cover="none"><b className="text-[12px]">∞</b><span className="text-[10px]">зарагдаагүй</span></span>; return (
             <button type="button" data-variant-cover={c.level} onClick={onCover} className={clsx('inline-flex w-[76px] flex-col items-center rounded-lg px-1 py-0.5 leading-tight', RL[c.level].cls)}>
               <b className="text-[12px]">{c.days === null ? '—' : `${c.days} хоног`}</b><span className="text-[10px]">{c.order ? `🚚 ${md(c.order.expectedDay)}` : RL[c.level].label}</span>
             </button>); })()}</td> : null}
@@ -466,13 +466,13 @@ function BoostCell({ row, field, post }: { row: Row; field: 'dollar' | 'zones' |
   );
 }
 
-function HoverCard({ id, x, y }: { id: number; x: number; y: number }) {
+function HoverCard({ id, x, y, variantId, label }: { id: number; x: number; y: number; variantId?: number; label?: string }) {
   const [d, setD] = useState<{ days: string[]; pages: { name: string; days: number[]; total: number }[]; stock: { total: number; available: number; driver: number } } | null>(null);
-  useEffect(() => { let on = true; const t = setTimeout(() => { void api<NonNullable<typeof d>>(`/api/goods-outflow?view=pages&id=${id}`).then((r) => { if (on) setD(r); }).catch(() => null); }, 250); return () => { on = false; clearTimeout(t); }; }, [id]);
+  useEffect(() => { let on = true; const t = setTimeout(() => { void api<NonNullable<typeof d>>(`/api/goods-outflow?view=pages&id=${id}${variantId ? `&variantId=${variantId}` : ''}`).then((r) => { if (on) setD(r); }).catch(() => null); }, 250); return () => { on = false; clearTimeout(t); }; }, [id, variantId]);
   if (!d) return null;
   return (
     <div className="pointer-events-none fixed z-50 w-[300px] max-w-[90vw] rounded-xl border border-line bg-surface p-3 text-[12.5px] shadow-lg" style={{ left: Math.min(x + 16, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 320), top: y + 12 }}>
-      <b>Пэйжээр (3 хоног: {d.days.map(md).join(' · ')})</b>
+      <b>{label ? <>{label} · </> : null}Пэйжээр (3 хоног: {d.days.map(md).join(' · ')})</b>
       {d.pages.slice(0, 10).map((p) => <div key={p.name} className="flex justify-between gap-2"><span className="min-w-0 [overflow-wrap:anywhere]">{p.name}</span><span className="shrink-0 font-semibold">{p.days.join(' · ')}</span></div>)}
       {d.pages.length > 10 ? <div className="text-muted">+{d.pages.length - 10} илүү</div> : null}
       {d.pages.length === 0 ? <div className="text-muted">Захиалга алга</div> : null}
@@ -649,7 +649,7 @@ function WorkDialog({ onClose }: { onClose: () => void }) {
       <div className="flex flex-col gap-1.5">
         {d?.rows.map((r) => (
           <div key={r.id} className="flex min-w-0 flex-wrap items-center gap-2 border-b border-line py-2">
-            <div className="min-w-0 flex-1"><b className="[overflow-wrap:anywhere]">{r.name}</b>{r.doneAt ? ' ✓' : ''}<div className="[overflow-wrap:anywhere] text-[12px] text-muted">{r.code} · {money(r.price)} · боломжтой {r.available}{r.note ? ` · ${r.note}` : ''}</div></div>
+            <div className="min-w-0 flex-1"><b className="[overflow-wrap:anywhere]">{r.name}</b>{r.doneAt ? ' ✓' : ''}<div className="[overflow-wrap:anywhere] text-[12px] text-muted">{r.code}{r.price !== null && r.price !== undefined ? ` · ${money(r.price)}` : ''} · боломжтой {r.available}{r.note ? ` · ${r.note}` : ''}</div></div>
             {r.claim ? <Badge tone={r.claim.mine ? 'accent' : 'neutral'}>{r.claim.userName} · {r.claim.progress}/{d.target}</Badge> : <Button size="sm" variant="primary" onClick={() => void act({ action: 'claim', productId: r.id })}>Сонгох</Button>}
           </div>
         ))}
@@ -717,7 +717,7 @@ function EvalDialog({ onClose }: { onClose: () => void }) {
 }
 interface EvalRow { userId: string; name: string; pages: number; boostCount: number; orderCount: number; excellent: number; good: number; poor: number; canScore: boolean;
   items: { productId: number; code: string; name: string; dollar: number | null; zones: number; expected: number; orders: number; cls: string }[];
-  score: { score: number | null; salaryAmount: number; note: string; scoredByName: string; updatedAt: string } | null }
+  score: { score: number | null; salaryAmount: number | null; note: string; scoredByName: string; updatedAt: string } | null }
 function EvalTab({ date }: { date: string }) {
   const [d, setD] = useState<{ rows: EvalRow[] } | null>(null); const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
   const load = useCallback(async () => { try { setD(await api(`/api/goods-outflow?view=eval&date=${date}`)); setErr(null); } catch (e) { setErr(msg(e)); } }, [date]);
@@ -749,7 +749,7 @@ function EvalCard({ r, date, onSaved, onErr }: { r: EvalRow; date: string; onSav
           <label className="flex min-w-[160px] flex-1 flex-col gap-1 text-[12px] text-muted">Тэмдэглэл<input value={note} onChange={(e) => setNote(e.target.value)} className={inputCls} /></label>
           <Button size="sm" variant="primary" onClick={() => void save()}>Хадгалах</Button>
         </div>
-      ) : r.score ? <p className="text-[12.5px] text-muted">Оноо {r.score.score ?? '—'} · цалин {money(r.score.salaryAmount)} · {r.score.scoredByName}</p> : null}
+      ) : r.score ? <p className="text-[12.5px] text-muted">Оноо {r.score.score ?? '—'} · {r.score.salaryAmount !== null ? `цалин ${money(r.score.salaryAmount)} · ` : ''}{r.score.scoredByName}</p> : null}
     </div>
   );
 }
@@ -772,14 +772,14 @@ function DailyTab({ date }: { date: string }) {
 }
 function HistoryTab() {
   const t = ubToday(); const [from, setFrom] = useState(`${t.slice(0, 7)}-01`); const [to, setTo] = useState(t);
-  const [d, setD] = useState<{ rows: { userId: string; name: string; days: number; salary: number; boostCount: number; orderCount: number; avgScore: number | null }[] } | null>(null);
+  const [d, setD] = useState<{ rows: { userId: string; name: string; days: number; salary: number | null; boostCount: number; orderCount: number; avgScore: number | null }[] } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => { api<NonNullable<typeof d>>(`/api/goods-outflow?view=history&from=${from}&to=${to}`).then(setD).catch((e) => setErr(msg(e))); }, [from, to]);
   return (
     <div className="flex flex-col gap-2">
       {err ? <Notice>{err}</Notice> : null}
       <div className="flex flex-wrap items-center gap-2"><input type="date" value={from} onChange={(e) => e.target.value && setFrom(e.target.value)} className={inputCls} aria-label="Эхлэх" /><span>—</span><input type="date" value={to} max={t} onChange={(e) => e.target.value && setTo(e.target.value)} className={inputCls} aria-label="Дуусах" /></div>
-      {d?.rows.map((r) => <div key={r.userId} className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-line p-2.5"><b className="min-w-0 [overflow-wrap:anywhere]">{r.name}</b><span className="text-[13px] text-muted">{r.days} өдөр · оноо ⌀{r.avgScore ?? '—'} · {r.boostCount} бүүст · {r.orderCount} захиалга · <b className="text-ink">{money(r.salary)}</b></span></div>)}
+      {d?.rows.map((r) => <div key={r.userId} className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-line p-2.5"><b className="min-w-0 [overflow-wrap:anywhere]">{r.name}</b><span className="text-[13px] text-muted">{r.days} өдөр · оноо ⌀{r.avgScore ?? '—'} · {r.boostCount} бүүст · {r.orderCount} захиалга{r.salary !== null ? <> · <b className="text-ink">{money(r.salary)}</b></> : null}</span></div>)}
       {d && d.rows.length === 0 ? <p className="p-4 text-center text-muted">Үнэлгээ алга</p> : null}
     </div>
   );

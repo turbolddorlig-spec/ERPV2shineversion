@@ -502,7 +502,9 @@ describe('пэйж, статистик, үнэлгээ, цалин (#104-3, 6)',
     await err(OF.saveScore(mk, { userId: mk2.id, date: yest, score: 9, salaryAmount: 1000 }), 403);
     await err(OF.saveScore(lead, { userId: mk.id, date: yest, score: 9 }), 403); // #152: зөвхөн Супер админ
     await OF.saveScore(sa, { userId: mk.id, date: yest, score: 8, salaryAmount: 25000, note: 'Сайн' });
-    expect((await OF.scoreHistory(lead, yest, yest)).rows[0]).toMatchObject({ salary: 25000, avgScore: 8 });
+    // #173: мөнгөн дүн (цалин) зөвхөн Супер админд
+    expect((await OF.scoreHistory(lead, yest, yest)).rows[0]).toMatchObject({ salary: null, avgScore: 8 });
+    expect((await OF.scoreHistory(sa, yest, yest)).rows[0]).toMatchObject({ salary: 25000, avgScore: 8 });
     // «Ажилтны цалин»: нэмэлт орлогод автоматаар, хоёр удаа хадгалахад давхардахгүй
     const p = S.periodOf(yest.slice(0, 7), Number(yest.slice(8)) <= 15 ? 1 : 2);
     const prep = await S.prepareSalary(acc, `u:${mk.id}`, p.ym, p.half);

@@ -320,7 +320,7 @@ async function computeAlertsNow(gen: number): Promise<BoostAlert[]> {
   return list;
 }
 
-async function pagesFor(productIds: number[], days: string[]) {
+async function pagesFor(productIds: number[], days: string[], variantId?: number) {
   const out = new Map<string, { name: string; n: number }[]>();
   if (!productIds.length || !days.length) return out;
   const from = [...days].sort()[0]!, to = [...days].sort().at(-1)!;
@@ -328,6 +328,7 @@ async function pagesFor(productIds: number[], days: string[]) {
     SELECT l."productId", (o."confirmedAt" + interval '8 hours')::date AS day, p.name, sum(l.qty)::int AS n
     FROM "Order" o JOIN "OrderLine" l ON l."orderId" = o.id JOIN "Page" p ON p.id = o."pageId"
     WHERE o."confirmedAt" >= ${ubDayStart(from)} AND o."confirmedAt" < ${ubDayStart(addDays(to, 1))} AND ${COUNTED} AND l."productId" IN (${Prisma.join(productIds)})
+      ${variantId ? Prisma.sql`AND l."variantId" = ${variantId}` : Prisma.empty}
     GROUP BY 1, 2, 3 ORDER BY 4 DESC`;
   for (const r of rows) { const k = `${r.productId}|${ymdOf(r.day)}`; const a = out.get(k) ?? []; a.push({ name: r.name, n: r.n }); out.set(k, a); }
   return out;
@@ -538,7 +539,8 @@ export async function outflowTable(actor: UserActor, p: TableParams) {
   };
   const days = Array.from({ length: 7 }, (_, i) => addDays(ubDay(), -i));
   return {
-    rows: slice, total, page, pages: Math.max(1, Math.ceil(total / PAGE)), days, counts,
+    // #173 (эзний шийдвэр): мөнгөн дүн (барааны үнэ г.м.) зөвхөн Супер админд
+    rows: sa ? slice : slice.map((r) => ({ ...r, price: null })), total, page, pages: Math.max(1, Math.ceil(total / PAGE)), days, counts,
     totals: { today: all.reduce((s, r) => s + r.daily[0]!, 0), yesterday: all.reduce((s, r) => s + r.daily[1]!, 0) },
     dollars: [...new Set(all.filter((r) => r.zones > 0).map((r) => r.dollar))].sort((a, b) => a - b),
     owners: await marketers(),
@@ -617,11 +619,13 @@ export async function productVariants(actor: UserActor, productIdIn: unknown) {
 }
 
 /** Нэр дээр: пэйж бүрийн сүүлийн 3 хоногийн гарц + үлдэгдэл */
-export async function productPages(actor: UserActor, productIdIn: unknown) {
+export async function productPages(actor: UserActor, productIdIn: unknown, variantIdIn?: unknown) {
   assertView(actor);
   const id = Number(productIdIn);
+  // #173: өнгө (хувилбар) бүрээр ч — хувилбарын мөр дээр хулгана аваачихад
+  const vid = variantIdIn !== undefined && variantIdIn !== null && variantIdIn !== '' ? Number(variantIdIn) : undefined;
   const days = [0, 1, 2].map((i) => addDays(ubDay(), -i));
-  const pg = await pagesFor([id], days);
+  const pg = await pagesFor([id], days, Number.isInteger(vid) && vid! > 0 ? vid : undefined);
   const names = new Set<string>();
   for (const d of days) for (const x of pg.get(`${id}|${d}`) ?? []) names.add(x.name);
   const pages = [...names].map((name) => ({ name, days: days.map((d) => pg.get(`${id}|${d}`)?.find((x) => x.name === name)?.n ?? 0) }))
@@ -840,7 +844,7 @@ export async function workWindow(actor: UserActor, p: { tab?: string; q?: string
     expiresAt: new Date(c.claimedAt.getTime() + cfg.claimExpireDays * 86_400_000) });
   return {
     tab: p.tab === 'all' ? 'all' : 'idle', total, page, pages: Math.max(1, Math.ceil(total / per)), target: cfg.claimTarget, expireDays: cfg.claimExpireDays,
-    rows: slice.map((x) => { const c = cm.get(x.id); const s = stock.get(x.id); return { ...x, available: s?.available ?? 0, note: nm.get(x.id)?.note ?? '', doneAt: nm.get(x.id)?.doneAt ?? null,
+    rows: slice.map((x) => { const c = cm.get(x.id); const s = stock.get(x.id); return { ...x, price: isSA(actor) ? x.price : null, available: s?.available ?? 0, note: nm.get(x.id)?.note ?? '', doneAt: nm.get(x.id)?.doneAt ?? null,
       claim: c ? { id: c.id, userId: c.userId, userName: c.userName, progress: c.progress, mine: c.userId === actor.id } : null }; }),
     mine: mine.map(claimView), all: allActive.map(claimView), canManageAll: isLead(actor), me: actor.id,
   };
@@ -976,7 +980,7 @@ export async function evaluation(actor: UserActor, dateIn: unknown) {
       userId: u.id, name: u.name, pages: pc.get(u.id) ?? 0, items,
       boostCount: items.reduce((x, i) => x + i.zones, 0), orderCount: items.reduce((x, i) => x + i.orders, 0),
       excellent: items.filter((i) => i.cls === 'EXCELLENT').length, good: items.filter((i) => i.cls === 'GOOD').length, poor: items.filter((i) => i.cls === 'POOR').length,
-      score: s ? { score: s.score, salaryAmount: s.salaryAmount, note: s.note, scoredByName: s.scoredByName, updatedAt: s.updatedAt } : null,
+      score: s ? { score: s.score, salaryAmount: isSA(actor) ? s.salaryAmount : null, note: s.note, scoredByName: s.scoredByName, updatedAt: s.updatedAt } : null,
       canScore: isSA(actor) && u.id !== actor.id,
     };
   }).sort((a, b) => b.orderCount - a.orderCount);
@@ -1048,7 +1052,7 @@ export async function scoreHistory(actor: UserActor, fromIn: unknown, toIn: unkn
   if (from > to) throw badRequest('Огноо буруу');
   const rows = await db.marketingScore.groupBy({ by: ['userId', 'userName'], where: { date: { gte: dateOnly(from), lte: dateOnly(to) }, ...(isLead(actor) ? {} : { userId: actor.id }) },
     _sum: { salaryAmount: true, boostCount: true, orderCount: true }, _avg: { score: true }, _count: true });
-  return { from, to, rows: rows.map((r) => ({ userId: r.userId, name: r.userName, days: r._count, salary: r._sum.salaryAmount ?? 0, boostCount: r._sum.boostCount ?? 0, orderCount: r._sum.orderCount ?? 0,
+  return { from, to, rows: rows.map((r) => ({ userId: r.userId, name: r.userName, days: r._count, salary: isSA(actor) ? r._sum.salaryAmount ?? 0 : null, boostCount: r._sum.boostCount ?? 0, orderCount: r._sum.orderCount ?? 0,
     avgScore: r._avg.score === null ? null : Math.round(r._avg.score * 10) / 10 })).sort((a, b) => b.orderCount - a.orderCount) };
 }
 

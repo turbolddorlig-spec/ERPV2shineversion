@@ -319,7 +319,7 @@ describe('#157 7 хоног: өдөрт 2,000 захиалга, 30 операт�
     OF.bustTable(); OF.bustOutflowCache();
     const tab = await OF.outflowTable(sa, {});
     const all7 = await OF.unitsByDay(addD(to, -6), to);
-    const tabWeek = (await Promise.all(Array.from({ length: Math.ceil(tab.total / 50) }, (_, i) => OF.outflowTable(sa, { page: i + 1 })))).flatMap((t) => t.rows).reduce((n, r) => n + r.weekTotal, 0);
+    const tabWeek = (await Promise.all(Array.from({ length: Math.ceil(tab.total / 50) }, (_, i) => OF.outflowTable(sa, { page: i + 1 })))).flatMap((t) => t.rows as { weekTotal: number }[]).reduce((n, r) => n + r.weekTotal, 0);
     eq('7 хоног гарц', '7 хоногийн нийт ширхэг (хүснэгт ↔ тоолол)', tabWeek, all7.reduce((n, a) => n + a.qty, 0));
     // Нийлүүлэгч: 7 хоногийн нийлбэр = өдөр бүрийн нийлбэр = хүргэсэн захиалга
     const rs = await SP.rangeSummary(sa, shop, from, to);

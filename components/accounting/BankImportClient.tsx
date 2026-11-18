@@ -15,10 +15,10 @@ import { GmailSettings } from './GmailSettings';
  */
 interface ManualEx { id: number; number: string; phone: string; total: number; paidAmount: number; excess: number; why: string }
 interface Tx { why?: string | null; id: number; txDate: string; description: string; amount: number; phone: string | null; status: string; statusLabel: string; isDuplicate: boolean; refunded: boolean; excess?: number; excessRefunded: number; excessRefundedByName: string | null; source: string; matchedByName: string | null; importedByName: string; order: { id: number; number: string; total: number; status: string; prepaid: boolean } | null }
-interface ListResp { page: number; total: number; pages: number; canEdit: boolean; items: Tx[]; manualExcess?: ManualEx[] }
+interface ListResp { page: number; total: number; pages: number; canEdit: boolean; canSetup?: boolean; items: Tx[]; manualExcess?: ManualEx[] }
 type Agg = { count: number; amount: number };
 interface Stats { total: Agg; matched: Agg; unmatched: Agg; partial: Agg; excess: Agg; duplicate: Agg; refunded: Agg }
-interface Gmail { configured: boolean; canEdit: boolean; settings: { email: string; sender: string; autoSync: boolean; minutes: number; days: number; lastSyncAt: string | null; lastResult: string | null; lastOk: boolean | null } }
+interface Gmail { configured: boolean; canEdit: boolean; canSetup?: boolean; settings: null | { email: string; sender: string; autoSync: boolean; minutes: number; days: number; lastSyncAt: string | null; lastResult: string | null; lastOk: boolean | null } }
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа гарлаа');
 const TABS: [string, string, keyof Stats | null][] = [['all', 'Бүгд', 'total'], ['MATCHED', 'Таарсан', 'matched'], ['UNMATCHED', 'Таараагүй', 'unmatched'], ['PARTIAL_PAYMENT', 'Хэсэгчлэн', 'partial'], ['EXCESS_AMOUNT', 'Илүү', 'excess'], ['DUPLICATE', 'Давхардсан', 'duplicate'], ['REFUNDED', 'Буцаасан', 'refunded'], ['changes', 'Дүн өөрчлөгдсөн', null]];
 const TONE: Record<string, 'ok' | 'bad' | 'warn' | 'info' | 'neutral' | 'accent'> = { MATCHED: 'ok', UNMATCHED: 'bad', PARTIAL_PAYMENT: 'warn', EXCESS_AMOUNT: 'info', DUPLICATE: 'neutral' };
@@ -79,6 +79,8 @@ export function BankImportClient() {
     try { await api(`/api/bank/${t.id}/refund`, { method: 'POST', json: { refunded: true } }); await load(); } catch (e) { setErr(msg(e)); }
   };
   const canEdit = !!data?.canEdit || !!gmail?.canEdit;
+  // #173: Gmail тохиргоо, CSV экспорт — оператор, ахлах операторт харагдахгүй
+  const canSetup = !!data?.canSetup || !!gmail?.canSetup || !!gmail?.canEdit;
 
   return (
     <div className="flex flex-col gap-4">
@@ -87,11 +89,11 @@ export function BankImportClient() {
         <div className="band-actions flex flex-wrap gap-2">
           {canEdit ? <>
             <Button variant="primary" size="sm" loading={busy} disabled={!gmail?.configured} onClick={() => void sync()} title={gmail?.configured ? '' : 'Gmail холбогдоогүй — «Gmail тохиргоо»'}>Gmail sync</Button>
-            <Button size="sm" onClick={() => setGset(true)}>Gmail тохиргоо</Button></> : null}
-          {canEdit ? <a href={`/api/bank/export?${qs()}`} className="inline-flex h-9 items-center rounded-[11px] border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2">CSV экспорт</a> : null}
+            {canSetup ? <Button size="sm" onClick={() => setGset(true)}>Gmail тохиргоо</Button> : null}</> : null}
+          {canSetup ? <a href={`/api/bank/export?${qs()}`} className="inline-flex h-9 items-center rounded-[11px] border border-line bg-surface px-3 text-[13px] font-semibold hover:bg-surface2">CSV экспорт</a> : null}
         </div>
       </div>
-      {gmail ? <p className="text-[12.5px] text-subtle">{gmail.configured ? `Gmail ${gmail.settings.email}${gmail.settings.autoSync ? ` · автомат ${gmail.settings.minutes} мин тутам` : ' · автомат унтраалттай'}${gmail.settings.lastSyncAt ? ` · сүүлд ${ubDateTime(gmail.settings.lastSyncAt)}: ${gmail.settings.lastResult ?? ''}` : ''}` : 'Gmail холбогдоогүй — «Gmail тохиргоо» дээр хаяг, 16 оронтой App Password, илгээгчийн Gmail бичээд холбоно'}</p> : null}
+      {gmail?.settings ? <p className="text-[12.5px] text-subtle">{gmail.configured ? `Gmail ${gmail.settings.email}${gmail.settings.autoSync ? ` · автомат ${gmail.settings.minutes} мин тутам` : ' · автомат унтраалттай'}${gmail.settings.lastSyncAt ? ` · сүүлд ${ubDateTime(gmail.settings.lastSyncAt)}: ${gmail.settings.lastResult ?? ''}` : ''}` : 'Gmail холбогдоогүй — «Gmail тохиргоо» дээр хаяг, 16 оронтой App Password, илгээгчийн Gmail бичээд холбоно'}</p> : null}
       {err ? <Notice>{err}</Notice> : null}
       {info ? <Notice tone="ok">{info}</Notice> : null}
       {stats ? (
