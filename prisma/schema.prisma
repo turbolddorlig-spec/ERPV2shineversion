@@ -25,6 +25,7 @@ enum Role {
   MARKETING
   PENALTY_OFFICER
   SUPPLIER
+  PURCHASER
 }
 
 enum Theme {

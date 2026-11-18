@@ -2,7 +2,7 @@ import type { Role } from '@prisma/client';
 
 export const ALL_ROLES: Role[] = [
   'SUPER_ADMIN', 'ADMIN', 'OPERATOR_LEAD', 'OPERATOR', 'DRIVER_LEAD', 'DRIVER',
-  'ACCOUNTING', 'WAREHOUSE', 'MARKETING_LEAD', 'MARKETING', 'PENALTY_OFFICER', 'SUPPLIER',
+  'ACCOUNTING', 'WAREHOUSE', 'MARKETING_LEAD', 'MARKETING', 'PENALTY_OFFICER', 'SUPPLIER', 'PURCHASER',
 ];
 
 export const ROLE_LABEL: Record<Role, string> = {
@@ -18,6 +18,8 @@ export const ROLE_LABEL: Record<Role, string> = {
   MARKETING: 'Маркетинг',
   PENALTY_OFFICER: 'Торгуулийн ажилтан',
   SUPPLIER: 'Нийлүүлэгч',
+  // #174: бараа татах жагсаалт харж «Захиалсан» тэмдэглэнэ, үлдэгдэл харна; мөнгөн дүн харахгүй
+  PURCHASER: 'Бараа захиалгын ажилтан',
 };
 
 export function isRole(v: unknown): v is Role {

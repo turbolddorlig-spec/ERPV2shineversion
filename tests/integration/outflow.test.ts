@@ -116,6 +116,26 @@ describe('бараа татах — нөөц хоног (#119, зөвхөн СА
     const { order: o } = await O.createOrder(op, { phone: String(99400000 + ++ph), province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 13, addressDetail: 'Тест', pageId: page1, lines: [{ variantId: v, qty: n }], idemKey: randomUUID(), deliveryDate: U.ubDay(new Date(), 1) });
     await db.order.update({ where: { id: o.id }, data: { confirmedAt: new Date(Date.now() - 400 * 86_400_000) } });
   }
+  it('#174 бараа захиалгын ажилтан: сануулга, «Бараа татах» (мөнгөгүй), «Захиалсан»; бусад хандахгүй', async () => {
+    for (let d = 1; d <= 3; d++) for (let i = 0; i < 10; i++) await order({ daysAgo: d });
+    await reserve(350); // 500 − 30 − 350 = 120 → 12 хоног → 🟠
+    await OF.computeReorder(true);
+    // #174 бараа захиалгын ажилтан: сануулга, «Бараа татах» жагсаалт (мөнгөн дүнгүй), «Захиалсан» тэмдэглэх; бусад эрх хандахгүй
+    expect(await OF.reorderBanner(['PURCHASER'])).toEqual({ urgent: 0, order: 1, late: 0 });
+    const pur = await actor(['PURCHASER']);
+    const bd = await OF.reorderBoard(pur, { tab: 'need' });
+    expect(bd.rows.map((r) => r.id)).toContain(prod);
+    expect(JSON.stringify(bd)).not.toMatch(/"price"|"costPrice"|"profit"|"revenue"/);
+    await expect(OF.reorderBoard(mk, {})).rejects.toThrow();
+    await expect(OF.reorderBoard(adm, {})).rejects.toThrow();
+    await OF.markReordered(pur, { productId: prod, qty: 100 });
+    expect((await OF.reorderBoard(pur, { tab: 'ordered' })).rows.map((r) => r.id)).toContain(prod);
+    const det = await OF.reorderDetail(pur, prod);
+    const oid = (det as { info: { order: { id: number } | null } }).info.order!.id;
+    await OF.cancelReorder(pur, oid);
+    await expect(OF.markReordered(mk, { productId: prod, qty: 1 })).rejects.toThrow();
+  });
+
   it('нөөц = боломжтой ÷ хурд; ≤15 → 🟠, ≤7 → 🔴; «Захиалсан» → 🚚 (сануулгагүй); хугацаа хэтэрвэл ⏰; орлого ормогц дахин эхэлнэ', async () => {
     for (let d = 1; d <= 3; d++) for (let i = 0; i < 10; i++) await order({ daysAgo: d }); // өдөрт 10 (шинэ бараа — 3 өдөр)
     await order({ daysAgo: 2, qty: 40 }); // бөөний — хурдад орохгүй

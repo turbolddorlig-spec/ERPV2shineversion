@@ -27,6 +27,8 @@ const isSA = (a: UserActor) => a.roles.includes('SUPER_ADMIN');
 const assertView = (a: UserActor) => { if (!canEdit(a.roles, 'goods-outflow')) throw forbidden(); };
 const assertLead = (a: UserActor) => { if (!isLead(a)) throw forbidden('Ахлах маркетинг, Админ, Супер админ хийнэ'); };
 const assertSA = (a: UserActor) => { if (!isSA(a)) throw forbidden('Зөвхөн Супер админ'); };
+/** #174: «Бараа татах» — Супер админ ба бараа захиалгын ажилтан */
+const assertReorder = (a: UserActor) => { if (!isSA(a) && !a.roles.includes('PURCHASER')) throw forbidden('Зөвхөн Супер админ, бараа захиалгын ажилтан'); };
 const cleanInt = (v: unknown, label: string, min = 0, max = 1_000_000) => {
   const n = v === '' || v === null || v === undefined ? 0 : Number(v);
   if (!Number.isInteger(n) || n < min || n > max) throw badRequest(`${label} буруу`);
@@ -1267,7 +1269,7 @@ async function computeReorderNow(gen: number): Promise<Map<number, ReorderInfo>>
 
 /** Бүх хуудасны дээрх сануулга — зөвхөн Супер админд */
 export async function reorderBanner(roles: Role[]): Promise<{ urgent: number; order: number; late: number } | null> {
-  if (!roles.includes('SUPER_ADMIN')) return null;
+  if (!roles.includes('SUPER_ADMIN') && !roles.includes('PURCHASER')) return null; // #174: бараа захиалгын ажилтанд ч
   const m = await ownerReorder();
   let urgent = 0, order = 0, late = 0;
   for (const x of m.values()) { if (x.level === 'URGENT') urgent++; else if (x.level === 'ORDER') order++; else if (x.level === 'LATE') late++; }
@@ -1276,7 +1278,7 @@ export async function reorderBanner(roles: Role[]): Promise<{ urgent: number; or
 
 /** «Захиалсан» — хэдэн ширхэг, хэзээ ирэх (анх: өнөөдөр + ирэх хоног) */
 export async function markReordered(actor: UserActor, b: { productId?: unknown; variantId?: unknown; qty?: unknown; expectedDay?: unknown; note?: unknown }) {
-  assertSA(actor);
+  assertReorder(actor);
   return createReorder(actor, b);
 }
 /** Эрх шалгасны дараа (СА эсвэл тухайн барааны нийлүүлэгч) */
@@ -1315,7 +1317,7 @@ export async function createReorder(actor: UserActor, b: { productId?: unknown; 
 
 /** «Захиалсан»-ыг цуцлах (андуурсан) — сануулга дахин гарна */
 export async function cancelReorder(actor: UserActor, idIn: unknown) {
-  assertSA(actor);
+  assertReorder(actor);
   return cancelReorderOf(actor, idIn);
 }
 export async function cancelReorderOf(actor: UserActor, idIn: unknown, productIds?: Set<number>, scope: ReorderScope = 'OWNER', shopId: number | null = null) {
@@ -1336,7 +1338,7 @@ export async function cancelReorderOf(actor: UserActor, idIn: unknown, productId
 
 /** Нэг барааны нөөцийн дэлгэрэнгүй + өмнөх захиалгууд */
 export async function reorderDetail(actor: UserActor, productIdIn: unknown) {
-  assertSA(actor);
+  assertReorder(actor);
   return reorderDetailOf(productIdIn);
 }
 export async function reorderDetailOf(productIdIn: unknown, scope: ReorderScope = 'OWNER', shopId: number | null = null) {
@@ -1409,4 +1411,37 @@ async function pageShortfallNow(gen: number): Promise<PageShortRow[]> {
 export async function pageShortView(actor: UserActor) {
   assertView(actor);
   return { rows: await pageShortfall(), boostDays: SHORT_BOOST_DAYS };
+}
+
+/**
+ * #174 «Бараа татах» хуудас (бараа захиалгын ажилтан, Супер админ) — МӨНГӨН ДҮНГҮЙ:
+ * нэр, код, зураг, боломжтой ширхэг, өдрийн хурд, нөөц хоног, өнгө бүрээр, «Захиалсан» тэмдэг.
+ * tab: need (🔴 яаралтай / 🟠 татах / ⏰ хоцорсон) | ordered (🚚 захиалсан) | all
+ */
+export async function reorderBoard(actor: UserActor, p: { tab?: string; q?: string; page?: number }) {
+  assertReorder(actor);
+  const m = await ownerReorder();
+  const tab = p.tab === 'ordered' || p.tab === 'all' ? p.tab : 'need';
+  const RANK: Record<ReorderLevel, number> = { URGENT: 5, LATE: 4, ORDER: 3, ORDERED: 2, OK: 1 };
+  let list = [...m.values()].filter((x) => tab === 'need' ? NEEDS.includes(x.level) : tab === 'ordered' ? x.level === 'ORDERED' || x.level === 'LATE' || !!x.order : x.level !== 'OK' || !!x.order);
+  const ids = list.map((x) => x.productId);
+  const products = ids.length ? await db.product.findMany({ where: { id: { in: ids } }, select: { id: true, code: true, name: true, images: { where: { isMain: true }, take: 1, select: { fileKey: true } } } }) : [];
+  const pm = new Map(products.map((x) => [x.id, x]));
+  const q = String(p.q ?? '').trim().toLowerCase();
+  if (q) list = list.filter((x) => { const pr = pm.get(x.productId); return !!pr && (pr.name.toLowerCase().includes(q) || pr.code.toLowerCase().includes(q)); });
+  list.sort((a, b) => RANK[b.level] - RANK[a.level] || (a.days ?? 1e9) - (b.days ?? 1e9));
+  const page = Math.max(1, Math.floor(Number(p.page) || 1)); const size = 50;
+  const counts = { need: [...m.values()].filter((x) => NEEDS.includes(x.level)).length, ordered: [...m.values()].filter((x) => x.level === 'ORDERED' || x.level === 'LATE' || !!x.order).length };
+  const { mediaUrl } = await import('../storage');
+  return {
+    tab, page, total: list.length, pages: Math.max(1, Math.ceil(list.length / size)), counts,
+    rows: list.slice((page - 1) * size, page * size).map((x) => {
+      const pr = pm.get(x.productId);
+      return {
+        id: x.productId, code: pr?.code ?? '', name: pr?.name ?? `#${x.productId}`, thumb: pr?.images[0] ? mediaUrl(pr.images[0].fileKey, 'sm') : null,
+        level: x.level, available: x.available, pace: x.pace, days: x.days, runOutDay: x.runOutDay, worstLabel: x.worstLabel, order: x.order,
+        variants: x.variants.map((v) => ({ variantId: v.variantId, label: v.label, available: v.available, pace: v.pace, days: v.days, level: v.level, order: v.order })),
+      };
+    }),
+  };
 }

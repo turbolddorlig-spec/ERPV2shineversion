@@ -4,32 +4,34 @@ import { accessTo, homeFor, PAGES, visiblePages, type PageKey } from '@/lib/perm
 import { ALL_ROLES, manageableRoles } from '@/lib/roles';
 
 // Эзний баталсан хүснэгт (MODULE0_PLAN.html). E = ажиллана, V = зөвхөн харна, - = хандахгүй
-// Багана: SA A OL OP DL DR ACC WH ML MK PEN SUP
+// Багана: SA A OL OP DL DR ACC WH ML MK PEN SUP PUR
 const MATRIX: Record<PageKey, string> = {
-  dashboard:      'E E - - - - - - - - - -',
-  orders:         'E E E E - - - - - - V -',
-  'bank-import':  'E E E V - - E - - - - -', // #82 5: хуучин шиг + нягтлан; оператор харна
-  products:       'E E - - - - - E E E V -',
-  'goods-outflow':'E E - - - - - - E E - -',
-  warehouse:      'E E - - - - V E - - - -',
-  loans:          'E E E E E - E E E E - -', // #149: ахлах жолооч зээлнэ
-  reports:        'E - - - - - - - E E - -',
-  handover:       'E E - - - - V E - - - -',
-  'driver-lead':  'E E - - E - - - - - - -',
-  driver:         '- - - - - E - - - - - -',
+  dashboard:      'E E - - - - - - - - - - -',
+  orders:         'E E E E - - - - - - V - -',
+  'bank-import':  'E E E V - - E - - - - - -', // #82 5: хуучин шиг + нягтлан; оператор харна
+  products:       'E E - - - - - E E E V - -',
+  'goods-outflow':'E E - - - - - - E E - - -',
+  warehouse:      'E E - - - - V E - - - - V',
+  loans:          'E E E E E - E E E E - - -', // #149: ахлах жолооч зээлнэ
+  reports:        'E - - - - - - - E E - - -',
+  handover:       'E E - - - - V E - - - - -',
+  'driver-lead':  'E E - - E - - - - - - - -',
+  driver:         '- - - - - E - - - - - - -',
   // Модуль 5 (#74): Жолоочийн хяналт — SA, A, ахлах жолооч; нягтлан, агуулах харна
-  'driver-control': 'E E - - E - V V - - - -',
-  issues:         'E E E E - - - - - - V -',
-  accounting:     'E E - - - - E - - - - -',
-  penalties:      'E E E - - - E - - - E -',
-  salary:         'E E - - - - E - - - - -',
-  'my-penalties': 'E E E E E E E E E E E -',
-  supplier:       'E E - - - - - - - - - V', // #96: хуучин шиг Супер админ, Админ
-  users:          'E E E - E - - - E - - -',
-  settings:       'E E - - - - - - - - - -',
-  'product-history': 'E E - - - - - V E V V -',
+  'driver-control': 'E E - - E - V V - - - - -',
+  issues:         'E E E E - - - - - - V - -',
+  accounting:     'E E - - - - E - - - - - -',
+  penalties:      'E E E - - - E - - - E - -',
+  salary:         'E E - - - - E - - - - - -',
+  'my-penalties': 'E E E E E E E E E E E - E',
+  supplier:       'E E - - - - - - - - - V -', // #96: хуучин шиг Супер админ, Админ
+  users:          'E E E - E - - - E - - - -',
+  settings:       'E E - - - - - - - - - - -',
+  'product-history': 'E E - - - - - V E V V - -',
+  // #174: бараа захиалгын ажилтан — «Бараа татах» (СА ба өөрөө), агуулах харна
+  reorder:        'E - - - - - - - - - - - E',
 };
-const COLS: Role[] = ['SUPER_ADMIN', 'ADMIN', 'OPERATOR_LEAD', 'OPERATOR', 'DRIVER_LEAD', 'DRIVER', 'ACCOUNTING', 'WAREHOUSE', 'MARKETING_LEAD', 'MARKETING', 'PENALTY_OFFICER', 'SUPPLIER'];
+const COLS: Role[] = ['SUPER_ADMIN', 'ADMIN', 'OPERATOR_LEAD', 'OPERATOR', 'DRIVER_LEAD', 'DRIVER', 'ACCOUNTING', 'WAREHOUSE', 'MARKETING_LEAD', 'MARKETING', 'PENALTY_OFFICER', 'SUPPLIER', 'PURCHASER'];
 const SYM = { E: 'edit', V: 'view', '-': 'none' } as const;
 
 describe('эрхийн хүснэгт', () => {

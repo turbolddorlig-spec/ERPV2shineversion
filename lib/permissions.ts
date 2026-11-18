@@ -4,7 +4,7 @@ export type PageKey =
   | 'dashboard' | 'orders' | 'bank-import' | 'products' | 'goods-outflow'
   | 'warehouse' | 'handover' | 'driver-lead' | 'driver' | 'driver-control' | 'issues'
   | 'accounting' | 'penalties' | 'salary' | 'my-penalties' | 'supplier'
-  | 'users' | 'settings' | 'product-history' | 'loans' | 'reports';
+  | 'users' | 'settings' | 'product-history' | 'loans' | 'reports' | 'reorder';
 
 export type Group = 'Үндсэн' | 'Агуулах' | 'Хүргэлт' | 'Санхүү' | 'Систем';
 
@@ -39,7 +39,9 @@ export const PAGES: PageDef[] = [
   { key: 'product-history', label: 'Барааны засвар', short: 'Засвар', href: '/products/history', group: 'Үндсэн', icon: 'history', module: 1,
     edit: [...SA_A, 'MARKETING_LEAD'], view: ['MARKETING', 'WAREHOUSE', 'PENALTY_OFFICER'] },
   { key: 'goods-outflow', label: 'Барааны гарц', short: 'Гарц', href: '/goods-outflow', group: 'Үндсэн', icon: 'trend', module: 7, edit: [...SA_A, 'MARKETING_LEAD', 'MARKETING'] },
-  { key: 'warehouse', label: 'Агуулах', short: 'Агуулах', href: '/warehouse', group: 'Агуулах', icon: 'warehouse', module: 2, edit: [...SA_A, 'WAREHOUSE'], view: ['ACCOUNTING'] },
+  { key: 'warehouse', label: 'Агуулах', short: 'Агуулах', href: '/warehouse', group: 'Агуулах', icon: 'warehouse', module: 2, edit: [...SA_A, 'WAREHOUSE'], view: ['ACCOUNTING', 'PURCHASER'] },
+  // #174: «Бараа татах» — бараа захиалгын ажилтан (мөнгөн дүнгүй)
+  { key: 'reorder', label: 'Бараа татах', short: 'Татах', href: '/reorder', group: 'Агуулах', icon: 'truck', module: 7, edit: ['SUPER_ADMIN', 'PURCHASER'] },
   { key: 'loans', label: 'Бараа зээл', short: 'Зээл', href: '/loans', group: 'Агуулах', icon: 'hand', module: 2,
     edit: [...SA_A, 'WAREHOUSE', 'ACCOUNTING', 'OPERATOR_LEAD', 'OPERATOR', 'MARKETING_LEAD', 'MARKETING', 'DRIVER_LEAD'] },
   { key: 'handover', label: 'Жолоочид бараа өгөх', short: 'Падаан', href: '/handover', group: 'Агуулах', icon: 'swap', module: 4, edit: [...SA_A, 'WAREHOUSE'], view: ['ACCOUNTING'] },
@@ -52,7 +54,7 @@ export const PAGES: PageDef[] = [
   { key: 'salary', label: 'Ажилтны цалин', short: 'Цалин', href: '/salary', group: 'Санхүү', icon: 'wallet', module: 7, edit: [...SA_A, 'ACCOUNTING'] },
   { key: 'supplier', label: 'Нийлүүлэгч', short: 'Нийлүүл.', href: '/supplier', group: 'Санхүү', icon: 'store', module: 7, edit: SA_A, view: ['SUPPLIER'] },
   { key: 'my-penalties', label: 'Миний торгууль', short: 'Торгууль', href: '/my-penalties', group: 'Систем', icon: 'file', module: 7,
-    edit: ['SUPER_ADMIN', 'ADMIN', 'OPERATOR_LEAD', 'OPERATOR', 'DRIVER_LEAD', 'DRIVER', 'ACCOUNTING', 'WAREHOUSE', 'MARKETING_LEAD', 'MARKETING', 'PENALTY_OFFICER'] },
+    edit: ['SUPER_ADMIN', 'ADMIN', 'OPERATOR_LEAD', 'OPERATOR', 'DRIVER_LEAD', 'DRIVER', 'ACCOUNTING', 'WAREHOUSE', 'MARKETING_LEAD', 'MARKETING', 'PENALTY_OFFICER', 'PURCHASER'] },
   { key: 'users', label: 'Хэрэглэгч', short: 'Хэрэглэгч', href: '/users', group: 'Систем', icon: 'user', module: 0, edit: [...SA_A, 'OPERATOR_LEAD', 'DRIVER_LEAD', 'MARKETING_LEAD'] },
   { key: 'settings', label: 'Тохиргоо', short: 'Тохиргоо', href: '/settings', group: 'Систем', icon: 'sliders', module: 3, edit: SA_A },
 ];
@@ -86,7 +88,7 @@ export function visiblePages(roles: Role[]): PageDef[] {
 
 /** Нэвтэрсний дараа хаашаа орох вэ */
 export function homeFor(roles: Role[]): string {
-  const order: PageKey[] = ['dashboard', 'orders', 'driver', 'handover', 'warehouse', 'accounting', 'driver-lead', 'products', 'goods-outflow', 'penalties', 'supplier', 'users'];
+  const order: PageKey[] = ['dashboard', 'orders', 'driver', 'handover', 'reorder', 'warehouse', 'accounting', 'driver-lead', 'products', 'goods-outflow', 'penalties', 'supplier', 'users'];
   for (const k of order) if (canView(roles, k)) return pageByKey(k)!.href;
   return '/me';
 }

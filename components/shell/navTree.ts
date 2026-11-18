@@ -10,14 +10,14 @@ const TREE: TreeDef[] = [
   { key: 'goods-outflow' },
   { key: 'orders', children: ['bank-import', 'reports', 'issues'] },
   { key: 'products', children: ['product-history'] },
-  { key: 'warehouse', children: ['loans', 'handover'] },
+  { key: 'warehouse', children: ['loans', 'handover', 'reorder'] },
   { group: 'Хүргэлт', icon: 'truck', children: ['driver-lead', 'driver-control', 'driver'] },
   { group: 'Санхүү', icon: 'wallet', children: ['accounting', 'salary', 'penalties', 'supplier'] },
   { group: 'Систем', icon: 'sliders', children: ['users', 'settings', 'my-penalties'] },
 ];
 /** Догол мөрийн богино нэр */
 export const SUB_LABEL: Record<string, string> = {
-  'bank-import': 'Банк', reports: 'Тайлан', issues: 'Асуудал', 'product-history': 'Барааны засвар', loans: 'Бараа зээл', handover: 'Падаан',
+  'bank-import': 'Банк', reports: 'Тайлан', issues: 'Асуудал', 'product-history': 'Барааны засвар', loans: 'Бараа зээл', handover: 'Падаан', reorder: 'Бараа татах',
   'driver-lead': 'Хуваарилалт', 'driver-control': 'Жолоочийн хяналт', driver: 'Миний хүргэлт', accounting: 'Тооцоо', salary: 'Цалин',
   penalties: 'Алдаа', supplier: 'Нийлүүлэгч', users: 'Хэрэглэгч', settings: 'Тохиргоо', 'my-penalties': 'Миний торгууль',
 };
@@ -60,7 +60,7 @@ const MODULE: Record<string, string> = {
   dashboard: 'dash', 'goods-outflow': 'outflow',
   orders: 'orders', 'bank-import': 'orders', reports: 'orders', issues: 'orders',
   products: 'products', 'product-history': 'products',
-  warehouse: 'stock', loans: 'stock', handover: 'stock',
+  warehouse: 'stock', loans: 'stock', handover: 'stock', reorder: 'stock',
   'driver-lead': 'assign', 'driver-control': 'driver', driver: 'driver',
   accounting: 'finance', salary: 'finance', penalties: 'finance', 'my-penalties': 'finance',
   supplier: 'supplier', users: 'system', settings: 'system',

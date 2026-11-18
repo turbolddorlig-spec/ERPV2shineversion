@@ -62,7 +62,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }));
   return (
     <AppShell user={{ name: user.name, roleLabels: user.roles.map((r) => ROLE_LABEL[r]) }} nav={nav}
-      jobsAlert={jobs} shortageSkip={skip} backupAlert={backup} boostAlert={boost} reorderAlert={reorder} assignAlert={unassigned} handoverAlert={staleHo} paidCancelAlert={paidCancel} staleGoodsAlert={staleGoods} smsAlert={smsFail} reorderHref={user.roles.includes('SUPPLIER') ? '/supplier' : '/goods-outflow?tab=reorder'}
+      jobsAlert={jobs} shortageSkip={skip} backupAlert={backup} boostAlert={boost} reorderAlert={reorder} assignAlert={unassigned} handoverAlert={staleHo} paidCancelAlert={paidCancel} staleGoodsAlert={staleGoods} smsAlert={smsFail} reorderHref={user.roles.includes('SUPPLIER') ? '/supplier' : user.roles.includes('PURCHASER') && !user.roles.includes('SUPER_ADMIN') ? '/reorder' : '/goods-outflow?tab=reorder'}
       alert={recAlert ? { kind: recAlert.kind, count: recAlert.status?.count ?? 0, at: recAlert.status?.at ?? null, since: recAlert.status?.since ?? null } : null}>
       {children}
     </AppShell>
