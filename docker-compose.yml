@@ -24,14 +24,15 @@ services:
       timeout: 5s
       retries: 10
 
-  # Зургийн хавтасны эрхийг апп-ын хэрэглэгч (UID 1001)-д олгоно. Аль контейнер түрүүлж асахаас үл хамааран.
+  # Зургийн хавтас ба Drive тохиргооны хавтасны эрхийг апп-ын хэрэглэгч (UID 1001)-д олгоно. Аль контейнер түрүүлж асахаас үл хамааран.
   uploads-init:
     logging: *logging
     image: postgres:16-alpine
     restart: "no"
-    entrypoint: ["sh", "-c", "chown -R 1001:1001 /data && echo uploads-ok"]
+    entrypoint: ["sh", "-c", "chown -R 1001:1001 /data /drive && chmod 700 /drive && echo uploads-ok"]
     volumes:
       - uploads:/data
+      - drive_conf:/drive
 
   app:
     logging: *logging
@@ -49,6 +50,8 @@ services:
       - uploads:/app/data/uploads
       # Нөөц хуулбарын төлөв (зөвхөн унших) — Супер админд анхааруулга (#132)
       - ./backups/.status:/app/data/backup-status:ro
+      # #171: Google Drive холболт (Тохиргооноос) — rclone.conf-ийг апп бичнэ, backup уншина
+      - drive_conf:/app/data/drive
     depends_on:
       db:
         condition: service_healthy
@@ -73,7 +76,7 @@ services:
     depends_on:
       - app
 
-  # Нөөц хуулбар (#132): өдөр бүр 03:00, шалгалттай; Google Drive холбосон бол тийш ч хуулна (./setup-drive-backup.sh)
+  # Нөөц хуулбар (#132): өдөр бүр 03:00, шалгалттай; Google Drive холбосон бол тийш ч хуулна (Тохиргоо → Нөөц хуулбар, эсвэл хуучин ./setup-drive-backup.sh)
   backup:
     logging: *logging
     build:
@@ -91,6 +94,7 @@ services:
       - ./backups:/backups
       - ./docker/backup.sh:/backup.sh:ro
       - uploads:/uploads:ro
+      - drive_conf:/drive:ro
     entrypoint: ["sh", "/backup.sh"]
     depends_on:
       db:
@@ -99,5 +103,6 @@ services:
 volumes:
   db_data:
   uploads:
+  drive_conf:
   caddy_data:
   caddy_config:

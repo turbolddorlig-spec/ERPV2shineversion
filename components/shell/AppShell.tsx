@@ -60,7 +60,7 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
   // Анхааруулгууд (эзний хүсэлт #165): мөр мөрөөр биш — хонхны дүрс + тоо, дарахад жагсаалт
   const alerts: AlertItem[] = [];
   if (jobsAlert) alerts.push({ key: 'jobs', level: 'bad', icon: '⛔', text: `Автомат ажил (захиалга цуцлах, Meta, шөнийн өр, Gmail, тулгалт) ${ubTime(jobsAlert.at)}-аас хойш ажиллаагүй байна — серверийг шалгуулна уу.` });
-  for (const [i, a] of (backupAlert ?? []).entries()) alerts.push({ key: `backup${i}`, level: a.level, icon: a.level === 'bad' ? '⛔' : '⚠️', text: a.text });
+  for (const [i, a] of (backupAlert ?? []).entries()) alerts.push({ key: `backup${i}`, level: a.level, icon: a.level === 'bad' ? '⛔' : '⚠️', text: a.text, ...(a.text.includes('Drive') ? { href: '/settings#drive', link: 'Нөөц хуулбарын тохиргоо' } : {}) });
   if (shortageSkip) alerts.push({ key: 'shortage', level: 'warn', icon: '⚠️', href: '/accounting', link: 'Тооцоо', text: `${shortageSkip.date}-ны жолоочийн дутуу барааны автомат өр хоцорсон (${ubTime(shortageSkip.at)}) тул бичигдсэнгүй — Тооцоо → Өр хэсэгт жолооч бүрээр шалгаж, шаардлагатай бол «Одоо хаах»-аар бодно уу.` });
   if (alert) alerts.push({ key: 'stock', level: 'bad', icon: '⚠', href: '/warehouse', link: 'Агуулах', text: alert.kind === 'mismatch'
     ? `Үлдэгдлийн тулгалтад ${alert.count} зөрүү илэрлээ (журнал ≠ үлдэгдэл)${alert.since ? ` · ${ubTime(alert.since)}-аас` : ''}. Агуулах руу орж шалгана уу.`

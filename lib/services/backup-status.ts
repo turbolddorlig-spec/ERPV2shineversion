@@ -27,7 +27,7 @@ export function backupAlertOf(s: BackupStatus | null, now = Date.now()): BackupA
     if (now - t(s.checkedAt) > BACKUP_STALE_MS) out.push({ level: 'bad', text: 'Нөөц хуулбар нэг ч удаа амжилттай авагдаагүй байна.' });
   } else if (now - ok > BACKUP_STALE_MS) out.push({ level: 'bad', text: `Нөөц хуулбар ${fmt(s.lastOk)}-аас хойш авагдаагүй байна.` });
   if (s.warning) out.push({ level: 'warn', text: s.warning });
-  if (!s.driveConfigured) out.push({ level: 'warn', text: 'Google Drive холбогдоогүй — хуулбар зөвхөн сервер дээр байна (серверт ./setup-drive-backup.sh).' });
+  if (!s.driveConfigured) out.push({ level: 'warn', text: 'Google Drive холбогдоогүй — хуулбар зөвхөн сервер дээр байна. Тохиргоо → «Нөөц хуулбар — Google Drive» хэсгээс холбоно уу.' });
   else {
     if (t(s.driveErrorAt) > t(s.driveOkAt)) out.push({ level: 'warn', text: `Google Drive руу хуулж чадсангүй (${fmt(s.driveErrorAt)}): ${s.driveError || 'алдаа'}` });
     else if (ok && t(s.driveOkAt) && ok - t(s.driveOkAt) > 3600_000) out.push({ level: 'warn', text: `Google Drive-д сүүлд ${fmt(s.driveOkAt)}-нд хуулсан.` });

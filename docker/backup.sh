@@ -12,7 +12,15 @@ set -o pipefail
 B=/backups
 S=$B/.status
 mkdir -p "$B/daily" "$B/monthly" "$B/update" "$B/media" "$S"
-export RCLONE_CONFIG="$B/.rclone/rclone.conf"
+# #171: Тохиргооноос холбосон Drive (/drive/rclone.conf, апп бичнэ) давуу; эс бол хуучин ./setup-drive-backup.sh-ийнх.
+# /drive зөвхөн уншигдах тул rclone-ийн токен шинэчлэлийг бичих боломжтой түр хуулбараар ажиллана.
+choose_conf() {
+  if [ -f /drive/rclone.conf ]; then
+    cp /drive/rclone.conf /tmp/rclone-app.conf 2>/dev/null && chmod 600 /tmp/rclone-app.conf && export RCLONE_CONFIG=/tmp/rclone-app.conf && return 0
+  fi
+  export RCLONE_CONFIG="$B/.rclone/rclone.conf"
+}
+choose_conf
 REMOTE="${DRIVE_REMOTE:-gdrive:zahialga-backup}"
 RC="--drive-use-trash=false --retries 3 --low-level-retries 5"
 
@@ -101,6 +109,7 @@ media() {
 # Drive холбогдоогүй бол серверт хуучнаараа (14 өдөр, 12 сар, 5 шинэчлэлт) — хуулбаргүй үлдэхгүй.
 drive_on() { [ -f "$RCLONE_CONFIG" ]; }
 run_daily() {
+  choose_conf
   f="$B/daily/erp-$(date +%Y%m%d-%H%M).sql.gz"
   dump "$f" || return 1
   media || true
@@ -118,6 +127,7 @@ run_daily() {
   write_status
 }
 run_update() {
+  choose_conf
   f="$B/update/erp-$(date +%Y%m%d-%H%M%S)-update.sql.gz"
   dump "$f" || return 1
   write_status
@@ -134,5 +144,14 @@ esac
 write_status
 while true; do
   if [ "$(date +%H%M)" = "0300" ]; then run_daily || true; sleep 61; fi
+  # #171: Тохиргооны «Одоо хуулбар авах» (апп /drive/backup-now-д цаг бичнэ) — шинэ хүсэлт бүрт нэг удаа
+  if [ -f /drive/backup-now ]; then
+    req=$(cat /drive/backup-now 2>/dev/null || true)
+    if [ -n "$req" ] && [ "$req" != "$(get nowDone)" ]; then put nowDone "$req"; echo "[backup] Тохиргооноос «Одоо хуулбар авах»"; run_daily || true; fi
+  fi
+  # Холбох / салгахад «Drive холбогдсон эсэх» төлөв шууд шинэчлэгдэнэ (зөвхөн өөрчлөгдвөл — checkedAt-ийг дэмий шинэчлэхгүй)
+  choose_conf
+  now_drive=false; [ -f "$RCLONE_CONFIG" ] && now_drive=true
+  if [ "$now_drive" != "${last_drive:-}" ]; then [ -n "${last_drive:-}" ] && write_status; last_drive=$now_drive; fi
   sleep 30
 done

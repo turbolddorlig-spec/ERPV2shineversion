@@ -4,15 +4,16 @@ import { SettingsClient } from '@/components/orders/SettingsClient';
 import { GmailSettings } from '@/components/accounting/GmailSettings';
 import { OfficeAccess } from '@/components/orders/OfficeAccess';
 import { PenaltyAutoSettings } from '@/components/penalties/PenaltyAutoSettings';
+import { DriveSettings } from '@/components/orders/DriveSettings';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Тохиргоо · zahialga•' };
 
 export default async function SettingsPage() {
-  await requirePage('settings');
+  const { user } = await requirePage('settings');
   return (
     <>
-      <PageHeader title="Тохиргоо" subtitle="Хүргэлтийн төлбөр, пэйж, Meta, SMS, торгууль, Gmail, ажлын байрнаас нэвтрэх" />
+      <PageHeader title="Тохиргоо" subtitle="Хүргэлтийн төлбөр, пэйж, Meta, SMS, торгууль, Gmail, нөөц хуулбар, ажлын байрнаас нэвтрэх" />
       <SettingsClient />
       <section id="penalty" className="mt-4 flex flex-col gap-3 rounded-[18px] border border-line bg-surface p-4 shadow-card">
         <h2 className="text-[16px] font-extrabold">Торгуулийн дүн (автомат)</h2>
@@ -29,6 +30,7 @@ export default async function SettingsPage() {
         <p className="text-[13px] text-subtle">Gmail хаяг, 16 оронтой App Password-оо бичээд «Хадгалаад Sync» дарна. Холбогдсоны дараа банкны орлого автоматаар «Банкны импорт»-д орж, утас + дүнгээр захиалга «Мөнгө орсон» болно.</p>
         <GmailSettings />
       </section>
+      {user.roles.includes('SUPER_ADMIN') ? <DriveSettings /> : null}
     </>
   );
 }
