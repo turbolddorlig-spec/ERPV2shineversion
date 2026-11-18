@@ -122,7 +122,7 @@ async function driverDetail(driverId: string, date: string) {
     where: { driverId, deliveryDate: dateOnly(date), status: { in: ['ASSIGNED', 'OUT_FOR_DELIVERY', 'DELIVERED'] }, ...(sheetIds.length ? { id: { notIn: sheetIds } } : {}) },
     select: { id: true, number: true, total: true, status: true }, orderBy: { id: 'asc' }, take: 200,
   });
-  const lines = orders.length ? await db.orderLine.findMany({ where: { orderId: { in: orders.map((o) => o.id) } }, orderBy: { id: 'asc' }, select: { orderId: true, name: true, label: true, qty: true, refusedQty: true, unitPrice: true } }) : [];
+  const lines = orders.length ? await db.orderLine.findMany({ where: { orderId: { in: orders.map((o) => o.id) } }, orderBy: { id: 'asc' }, select: { id: true, orderId: true, name: true, label: true, qty: true, refusedQty: true, unitPrice: true } }) : [];
   const lm = new Map<number, typeof lines>();
   for (const l of lines) { const a = lm.get(l.orderId) ?? []; a.push(l); lm.set(l.orderId, a); }
   const [extras, debts, payments] = await Promise.all([
@@ -592,5 +592,21 @@ export async function toggleOrderStatus(actor: UserActor, idIn: unknown, input: 
   const h = await db.handover.findUnique({ where: { id: o.handoverId }, select: { driverId: true, date: true } });
   if (h) await inTx((tx) => reopenPending(tx, h.driverId, ymdOf(h.date), actor.name, `№${o.number} төлөв солигдсон`));
   await writeAudit(actor, 'accounting.status_toggle', 'Order', String(id), { number: o.number, from: o.status, to: target, note: noteRaw }, db, ['order', 'money', 'delivery']);
+  return r;
+}
+
+/** #172-1: нягтлан хүргэсэн захиалгаас бараа хасах (тооцоо түгжихээс өмнө) → жолоочид өр; агуулахад өгөхөд хаагдана */
+export async function returnOrderLines(actor: UserActor, idIn: unknown, input: { lines?: unknown; note?: unknown; version?: unknown }) {
+  assertAccount(actor);
+  const id = Number(idIn);
+  if (!Number.isInteger(id) || id <= 0) throw notFound('Захиалга олдсонгүй');
+  const o = await db.order.findUnique({ where: { id }, select: { handoverId: true, driverId: true, createdAt: true, number: true } });
+  if (!o) throw notFound('Захиалга олдсонгүй');
+  if (!o.handoverId || !o.driverId) throw conflict('Падаангүй захиалга', 'no_handover');
+  if (Date.now() - o.createdAt.getTime() > LATE_DAYS * 86_400_000) throw conflict(`Захиалга үүссэнээс ${LATE_DAYS} хоног өнгөрсөн — өөрчлөх боломжгүй`, 'too_old');
+  const { returnDeliveredLines } = await import('../delivery/driver');
+  const r = await returnDeliveredLines(actor, id, input);
+  const h = await db.handover.findUnique({ where: { id: o.handoverId }, select: { driverId: true, date: true } });
+  if (h) await inTx((tx) => reopenPending(tx, h.driverId, ymdOf(h.date), actor.name, `№${o.number} бараа хасагдсан`));
   return r;
 }

@@ -7,7 +7,7 @@ import { fullAddress, PROVINCES, UB_DISTRICTS } from '../../geo';
 import { mediaUrl } from '../../storage';
 import { normalizePhone, isValidPhone } from '../../phone';
 import { ubDay, ubDayStart, dateOnly, ymdOf, isYmd } from '../../ubdate';
-import { CANCEL_LABEL, STATUS_LABEL, displayStatus, type UserActor } from './core';
+import { CANCEL_LABEL, STATUS_LABEL, cleanAddress, displayStatus, type UserActor } from './core';
 
 export const ORDER_PAGE_SIZE = 50;
 const assertView = (a: UserActor) => { if (!canView(a.roles, 'orders')) throw forbidden(); };
@@ -125,7 +125,8 @@ export async function listOrders(actor: UserActor, p: ListParams) {
     if (or.length) and.push({ OR: or });
   }
   switch (tab) {
-    case 'today': and.push({ createdAt: { gte: ubDayStart(today) } }); break;
+    // #172-5 (эзний шийдвэр): «Өнөөдөр» = өнөөдөр баталгаажсан (мөнгө нь шөнө орж «Шинэ» болсон ч) + өнөөдөр үүссэн, баталгаажаагүй
+    case 'today': and.push({ OR: [{ confirmedAt: { gte: ubDayStart(today) } }, { confirmedAt: null, createdAt: { gte: ubDayStart(today) } }] }); break;
     case 'SCHEDULED': and.push({ status: 'NEW', deliveryDate: { gt: dateOnly(tomorrow) } }); break;
     case 'NEW': and.push({ status: 'NEW', deliveryDate: { lte: dateOnly(tomorrow) } }); break;
     case 'all': break;
@@ -183,7 +184,8 @@ export async function tabCounts(): Promise<Record<string, number>> {
   if (countsCache && Date.now() - countsCache.at < 5000) return countsCache.data;
   const today = ubDay(); const tomorrow = ubDay(new Date(), 1);
   const rows = await db.$queryRaw<{ k: string; n: number }[]>`
-    SELECT 'today' AS k, count(*)::int AS n FROM "Order" WHERE "createdAt" >= ${ubDayStart(today)}
+    SELECT 'today' AS k, ((SELECT count(*) FROM "Order" WHERE "confirmedAt" >= ${ubDayStart(today)})
+      + (SELECT count(*) FROM "Order" WHERE "confirmedAt" IS NULL AND "createdAt" >= ${ubDayStart(today)}))::int AS n
     UNION ALL SELECT 'PENDING_PAYMENT', count(*)::int FROM "Order" WHERE status = 'PENDING_PAYMENT'
     UNION ALL SELECT 'NEW', count(*)::int FROM "Order" WHERE status = 'NEW' AND "deliveryDate" <= ${dateOnly(tomorrow)}
     UNION ALL SELECT 'SCHEDULED', count(*)::int FROM "Order" WHERE status = 'NEW' AND "deliveryDate" > ${dateOnly(tomorrow)}
@@ -340,4 +342,26 @@ export async function reviewDiscounts(actor: UserActor, ids: unknown) {
   const r = await db.auditReview.createMany({ data: target.map((id) => ({ auditLogId: id, reviewedById: actor.id, reviewedByName: actor.name })), skipDuplicates: true });
   discCache = null;
   return { reviewed: r.count };
+}
+
+/**
+ * #172-2 (эзний шийдвэр): захиалга үүсгэхэд яг адилхан хаяг ӨӨР утасны ИДЭВХТЭЙ захиалгад байвал анхааруулна
+ * (оператор утас буруу бичих, өөр хүний хаягийг хуулж буулгахаас сэргийлнэ). Зөвхөн анхааруулга — хаасан биш.
+ * Харьцуулалт: аймаг, дүүрэг, хороо ижил + дэлгэрэнгүй хаяг (зай, том жижиг үсэг харгалзахгүй) яг ижил.
+ */
+export async function addressMatches(actor: UserActor, input: { province?: unknown; district?: unknown; khoroo?: unknown; addressDetail?: unknown; phones?: unknown[] }) {
+  if (!canView(actor.roles, 'orders')) throw forbidden();
+  let a: ReturnType<typeof cleanAddress>;
+  try { a = cleanAddress(input); } catch { return { items: [] }; }
+  const norm = a.addressDetail.toLowerCase();
+  if (norm.length < 5) return { items: [] };
+  const phones = (input.phones ?? []).map((p) => String(p).replace(/\D/g, '')).filter((p) => p.length === 8);
+  const rows = await db.$queryRaw<{ id: number; number: string; phone: string; status: OrderStatus; operatorName: string }[]>`
+    SELECT id, number, phone, status, "operatorName" FROM "Order"
+    WHERE status IN ('PENDING_PAYMENT','NEW','ASSIGNED','OUT_FOR_DELIVERY')
+      AND province = ${a.province} AND coalesce(district, '') = ${a.district ?? ''} AND coalesce(khoroo, -1) = ${a.khoroo ?? -1}
+      AND lower(regexp_replace(btrim("addressDetail"), '\\s+', ' ', 'g')) = ${norm}
+      AND NOT (phone = ANY(${phones}::text[])) AND NOT (coalesce("extraPhone", '') = ANY(${phones}::text[]))
+    ORDER BY id DESC LIMIT 5`;
+  return { items: rows.map((r) => ({ id: r.id, number: r.number, phone: r.phone, statusLabel: STATUS_LABEL[r.status], operatorName: r.operatorName })) };
 }

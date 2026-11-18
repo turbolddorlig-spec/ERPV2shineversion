@@ -6,6 +6,7 @@ import { canEditOrders, canSuperviseOperators, canView } from '../../permissions
 import { normalizePhone, isValidPhone } from '../../phone';
 import { mediaUrl } from '../../storage';
 import { availableFor, type UserActor } from './core';
+import { isYmd, ubDay, ubDayStart } from '../../ubdate';
 
 /**
  * Дуудлагын бүртгэл (хуучин логик, #43 13): Хүлээгдэж буй → Холбогдсон → Захиалсан / Цуцалсан / Шилжүүлсэн.
@@ -43,7 +44,7 @@ export async function createCallNotes(actor: UserActor, input: { phones?: unknow
   return { created: r.count };
 }
 
-export async function listCallNotes(actor: UserActor, p: { status?: string; ownerId?: string; q?: string; page?: number; scope?: string }) {
+export async function listCallNotes(actor: UserActor, p: { status?: string; ownerId?: string; q?: string; page?: number; scope?: string; from?: string; to?: string }) {
   if (!canView(actor.roles, 'orders')) throw forbidden();
   const sup = canSuperviseOperators(actor.roles);
   // Хуучин шиг: анхдагч «Зөвхөн минийх»; ахлах «Бүх оператор» сонгож болно
@@ -51,6 +52,11 @@ export async function listCallNotes(actor: UserActor, p: { status?: string; owne
   const base: Prisma.CallNoteWhereInput[] = [];
   if (!all) base.push({ ownerId: actor.id });
   else if (p.ownerId) base.push({ ownerId: p.ownerId });
+  // #172-6 (хуучин систем шиг): «Бүх оператор» үед бүртгэсэн огноогоор (эхлэх–дуусах, Улаанбаатар) шүүнэ
+  if (all) {
+    const from = p.from && isYmd(p.from) ? p.from : null; const to = p.to && isYmd(p.to) ? p.to : null;
+    if (from || to) base.push({ createdAt: { ...(from ? { gte: ubDayStart(from) } : {}), ...(to ? { lt: ubDayStart(ubDay(new Date(ubDayStart(to).getTime() + 36 * 3600_000))) } : {}) } });
+  }
   const q = (p.q ?? '').replace(/\D/g, '');
   if (q) base.push({ phone: { contains: q } });
   const and = [...base];

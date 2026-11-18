@@ -408,7 +408,7 @@ interface DOrder {
   id: number; number: string; status: string; phone: string; total: number; originalTotal: number | null; prepaid: boolean; deliveryPayment: string | null;
   cancelReason: string | null; cancelNote: string | null; issueFault: string | null; postponed: boolean; deliveredAt: string | null; cancelledAt: string | null;
   province: string; district: string | null; addressDetail: string; deliveredByName: string | null; cancelledByName: string | null; refused: number; version: number;
-  lines: { name: string; label: string; qty: number; refusedQty: number; unitPrice: number }[];
+  lines: { id: number; name: string; label: string; qty: number; refusedQty: number; unitPrice: number }[];
 }
 export interface Detail {
   day: Day; rulesText: RulesText[]; modeLabel: string; orders: DOrder[];
@@ -537,6 +537,7 @@ function DriverDrawer({ driverId, date, onClose, onChanged, onPerf, onApprove }:
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [toggle, setToggle] = useState<DOrder | null>(null);
+  const [retLines, setRetLines] = useState<DOrder | null>(null);
   const [force, setForce] = useState(false);
   const load = useCallback(async () => { try { setD(await api(`/api/accounting/driver?driverId=${driverId}&date=${date}`)); setErr(null); } catch (e) { setErr(msg(e)); } }, [driverId, date]);
   useEffect(() => { void load(); }, [load]);
@@ -577,6 +578,7 @@ function DriverDrawer({ driverId, date, onClose, onChanged, onPerf, onApprove }:
                   <div className="flex items-start justify-between gap-3 sm:flex-col sm:items-end">
                     <div className="text-right"><b className="whitespace-nowrap">{money(o.total)}</b>{o.originalTotal !== null && o.originalTotal !== o.total ? <span className="block text-[11px] text-subtle line-through">{money(o.originalTotal)}</span> : null}</div>
                     {canToggle ? <Button size="sm" variant="ghost" onClick={() => setToggle(o)}>Төлөв солих</Button> : null}
+                    {canToggle && o.status === 'DELIVERED' && o.lines.reduce((a, l) => a + l.qty - l.refusedQty, 0) > 1 ? <Button size="sm" variant="ghost" data-return-lines onClick={() => setRetLines(o)}>Бараа хасах</Button> : null}
                   </div>
                 </li>
               );
@@ -586,6 +588,53 @@ function DriverDrawer({ driverId, date, onClose, onChanged, onPerf, onApprove }:
         </div>
       ) : null}
       {toggle ? <ToggleDialog o={toggle} onClose={() => setToggle(null)} onDone={async () => { setToggle(null); await load(); onChanged(); }} /> : null}
+      {retLines ? <ReturnLinesDialog o={retLines} onClose={() => setRetLines(null)} onDone={async () => { setRetLines(null); await load(); onChanged(); }} /> : null}
+    </Modal>
+  );
+}
+
+/** #172-1: хүргэсэн захиалгаас бараа хасах — үйлчлүүлэгч дараа нь авахгүй гэсэн; жолооч авчирна (тэр дороо өр, агуулахад өгөхөд хаагдана) */
+function ReturnLinesDialog({ o, onClose, onDone }: { o: DOrder; onClose: () => void; onDone: () => void }) {
+  const [q, setQ] = useState<Record<number, number>>({});
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const removedSum = o.lines.reduce((a, l) => a + (q[l.id] ?? 0) * l.unitPrice, 0);
+  const any = Object.values(q).some((x) => x > 0);
+  const go = async () => {
+    setBusy(true); setErr(null);
+    try {
+      await api(`/api/accounting/orders/${o.id}/return-lines`, { method: 'POST', json: { lines: Object.entries(q).filter(([, v]) => v > 0).map(([lineId, qty]) => ({ lineId: Number(lineId), qty })), note, version: o.version } });
+      onDone();
+    } catch (e) { setErr(msg(e)); } finally { setBusy(false); }
+  };
+  return (
+    <Modal open onClose={onClose} title={`№${o.number} — бараа хасах`} subtitle="Үйлчлүүлэгч хүргэсний дараа авахгүй гэсэн бараа"
+      footer={<><Button onClick={onClose}>Болих</Button><Button variant="danger" loading={busy} disabled={!any || note.replace(/\s/g, '').length < 5} onClick={() => void go()}>Хасах{removedSum ? ` (−${money(removedSum)})` : ''}</Button></>}>
+      <div className="flex flex-col gap-3 text-[13.5px]">
+        {err ? <Notice>{err}</Notice> : null}
+        <p className="rounded-xl bg-warn-soft px-3 py-2 text-warn">Хассан бараа <b>жолоочид өр</b> болж бүртгэгдэнэ. Жолооч барааг агуулахад өгөхөд өр автоматаар хаагдана. Захиалгын дүн, авах мөнгө буурна.</p>
+        <ul className="divide-y divide-line rounded-xl border border-line">
+          {o.lines.map((l) => {
+            const have = l.qty - l.refusedQty;
+            if (have <= 0) return null;
+            return (
+              <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{l.name}{l.label ? ` · ${l.label}` : ''} <span className="text-muted">· хүргэсэн {have}ш · {money(l.unitPrice)}</span></span>
+                <span className="flex items-center gap-1.5">
+                  <span className="text-muted">Хасах:</span>
+                  <select aria-label={`${l.name} хасах тоо`} value={q[l.id] ?? 0} onChange={(e) => setQ({ ...q, [l.id]: Number(e.target.value) })} className="h-9 rounded-lg border border-line bg-surface px-2">
+                    {Array.from({ length: have + 1 }, (_, i) => <option key={i} value={i}>{i}</option>)}
+                  </select>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+        <label className="flex flex-col gap-1.5 font-semibold text-muted">Шалтгаан (5+ тэмдэгт)
+          <textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Жишээ: Үйлчлүүлэгч залгаж 1 барааг авахгүй гэсэн, жолооч маргааш авчирна" className="rounded-lg border border-line bg-surface px-3 py-2 font-normal text-ink outline-none focus:border-accent" />
+        </label>
+      </div>
     </Modal>
   );
 }

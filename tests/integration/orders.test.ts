@@ -152,7 +152,7 @@ describe('захиалга үүсгэх', () => {
     await err(O.createOrder(op2, ub({ phone: '77001122', extraPhone: '99112233' })), 409, 'duplicate_order');
     const both = await Promise.allSettled([O.createOrder(op, ub({ phone: '95000001' })), O.createOrder(op2, ub({ phone: '95000002', extraPhone: '95000001' }))]);
     expect(both.filter((x) => x.status === 'fulfilled')).toHaveLength(1);
-    await err(O.cancelOrder(op, order.id, { reason: 'CUSTOMER_CANCELLED', note: 'ab' }), 400, 'reason_required');
+    await err(O.cancelOrder(op, order.id, { reason: 'OTHER', note: 'ab' }), 400, 'reason_required'); // #172-4: «Бусад» үед л тайлбар заавал
     await O.cancelOrder(op, order.id, { reason: 'CUSTOMER_CANCELLED', note: 'Үйлчлүүлэгч болисон' });
     await O.createOrder(op2, ub({ phone: '99112233' }));
   });

@@ -437,7 +437,7 @@ export async function listTransactions(actor: UserActor, f: BankFilter) {
   if (!edit && f.q) f = { ...f, q: undefined }; // харах эрхтэй хүн утсаар хайж олохгүй
   const w = where(f);
   const [items, total] = await Promise.all([
-    db.bankTransaction.findMany({ where: w, orderBy: [{ txDate: 'desc' }, { id: 'desc' }], skip: (page - 1) * 50, take: 50 }),
+    db.bankTransaction.findMany({ where: w, orderBy: [{ txDate: 'desc' }, { id: 'desc' }], skip: (page - 1) * BANK_PAGE, take: BANK_PAGE }),
     db.bankTransaction.count({ where: w }),
   ]);
   const orders = await db.order.findMany({ where: { id: { in: items.map((t) => t.orderId).filter((x): x is number => !!x) } }, select: { id: true, number: true, total: true, phone: true, status: true, prepaid: true, originalTotal: true } });
@@ -455,7 +455,7 @@ export async function listTransactions(actor: UserActor, f: BankFilter) {
       AND NOT EXISTS (SELECT 1 FROM "BankTransaction" t WHERE t."orderId" = o.id AND t.status = 'EXCESS_AMOUNT' AND NOT t.refunded AND NOT t."isDuplicate")
     ORDER BY o.id DESC LIMIT 200` : [];
   return {
-    page, total, pages: Math.max(1, Math.ceil(total / 50)), canEdit: canBankImport(actor.roles),
+    page, total, pages: Math.max(1, Math.ceil(total / BANK_PAGE)), canEdit: canBankImport(actor.roles),
     manualExcess: manualExcess.map((o) => ({ ...o, excess: o.paidAmount - o.total, why: excessWhy(o) })),
     items: items.map(maskFor(edit)).map((t) => ({ ...t, why: t.status === 'EXCESS_AMOUNT' && t.orderId ? excessWhy(om.get(t.orderId)) : null, statusLabel: t.refunded ? BANK_STATUS_LABEL.REFUNDED : t.isDuplicate ? BANK_STATUS_LABEL.DUPLICATE : BANK_STATUS_LABEL[t.status] ?? t.status, order: t.orderId ? om.get(t.orderId) ?? null : null,
       excess: t.status === 'EXCESS_AMOUNT' && t.orderId && !t.refunded ? Math.max(0, (pm.get(t.orderId) ?? 0) - (om.get(t.orderId)?.total ?? 0)) : 0 })),
@@ -590,6 +590,9 @@ export async function paidCancelledAlert(roles: string[]): Promise<{ count: numb
   }
   return paidCancelCache.n ? { count: paidCancelCache.n } : null;
 }
+/** #172-8: Банкны импортын жагсаалт хуудаслалт — нэг хуудсанд 25 */
+const BANK_PAGE = 25;
+
 export async function paidCancelledList(actor: UserActor) {
   if (!actor.roles.includes('SUPER_ADMIN')) throw forbidden('Зөвхөн Супер админ');
   const rows = await db.$queryRaw<{ id: number; number: string; phone: string; total: number; paid: number; cancelReason: string | null; cancelNote: string | null; cancelledByName: string | null; cancelledAt: Date | null; driverName: string | null }[]>`

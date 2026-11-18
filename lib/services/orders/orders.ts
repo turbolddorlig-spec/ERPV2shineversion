@@ -9,7 +9,7 @@ import { dateOnly, ubDay, ymdOf } from '../../ubdate';
 import { variantLabel } from '../../catalog/variants';
 import { cleanIdemKey } from '../stock/core';
 import {
-  ACTIVE, activeBlacklist, availableFor, cleanAddress, cleanDeliveryDate, cleanOptPhone, cleanPhone, findActiveDuplicate, inTx,
+  ACTIVE, CANCEL_LABEL, activeBlacklist, availableFor, cleanAddress, cleanDeliveryDate, cleanOptPhone, cleanPhone, findActiveDuplicate, inTx,
   lockOrder, lockPhones, lockVariants, nextOrderNumber, orderSettings, paidOrderData, requireReason, staleError, uniqueViolation, type Tx, type UserActor, NO_PAGE_NAME, noPageId,
 } from './core';
 import { enqueueMeta, skipMeta } from './meta';
@@ -181,6 +181,8 @@ export async function createOrder(actor: UserActor, input: CreateInput) {
   const settings = await orderSettings();
   // Орон нутаг заавал урьдчилгаатай (#43 8); УБ «Урьдчилгаа хүлээх» тэмдэглэвэл (#51)
   const pending = !isUB(addr.province) || input.prepaidWait === true;
+  // #172-3 (эзний шийдвэр): «Төлбөр хүлээж буй» захиалга хэзээ ч он сар өдөртэй (маргаашаас хойш) үүсэхгүй
+  if (pending && deliveryDate > ubDay(new Date(), 1)) throw badRequest('«Төлбөр хүлээж буй» (орон нутаг / урьдчилгаа хүлээх) захиалга он сар өдөртэй байж болохгүй — маргааш эсвэл өнөөдөр сонгоно уу', 'pending_scheduled');
 
   try {
     let replay: Order | null = null;
@@ -308,6 +310,7 @@ export async function updateOrder(actor: UserActor, idInput: unknown, input: Upd
           const dup = await findActiveDuplicate(tx, [o.phone, ...(o.extraPhone ? [o.extraPhone] : [])], id);
           if (dup) throw conflict(`Энэ утсаар идэвхтэй захиалга №${dup.number} байна — тэр захиалгад бараа нэмэх эсвэл нэгийг нь цуцална уу`, 'duplicate_order');
         }
+        if (o.status === 'PENDING_PAYMENT' && d > tomorrowYmd) throw badRequest('«Төлбөр хүлээж буй» захиалга он сар өдөртэй байж болохгүй — маргааш эсвэл өнөөдөр сонгоно уу', 'pending_scheduled');
         data.deliveryDate = dateOnly(d); changes.deliveryDate = { from: ymdOf(o.deliveryDate), to: d };
       }
     }
@@ -416,7 +419,9 @@ export async function cancelOrder(actor: UserActor | typeof SYSTEM_ACTOR & { rol
   if (!Number.isInteger(id) || id <= 0) throw notFound('Захиалга олдсонгүй');
   const reason = (opts.system ? 'PAYMENT_TIMEOUT' : String(input.reason ?? '')) as CancelReason;
   if (!opts.system && !CANCEL_REASONS.includes(reason)) throw badRequest('Цуцлах шалтгаанаа сонгоно уу', 'cancel_reason');
-  const note = opts.system ? 'Төлбөрийн хугацаа дууссан (автомат)' : requireReason(input.note, 'reason_required');
+  // #172-4 (эзний шийдвэр): шалтгаан сонгосон бол тайлбар заавал биш — «Бусад» үед л тайлбар заавал
+  const extra = String(input.note ?? '').trim().slice(0, 300);
+  const note = opts.system ? 'Төлбөрийн хугацаа дууссан (автомат)' : reason === 'OTHER' ? requireReason(input.note, 'reason_required') : (extra || CANCEL_LABEL[reason]);
   const res = await inTx(async (tx) => {
     // Модуль 4: хуваарилсан/падаанд орсон захиалгыг цуцлахад падааны түгжээг эхэлж авна (deadlock-гүй дараалал)
     const pre = await tx.order.findUnique({ where: { id }, select: { status: true } });

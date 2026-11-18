@@ -53,6 +53,10 @@ export function CallsModal({ open, onClose, onCreateOrder }: { open: boolean; on
 function CallsBody({ onCreateOrder }: { onCreateOrder: (p: OrderPrefill) => void }) {
   const [tab, setTab] = useState<(typeof TABS)[number]['v']>('PENDING');
   const [scope, setScope] = useState<'own' | 'all'>('own');
+  // #172-6 (хуучин шиг): «Бүх оператор» үед огноогоор (анхдагч — өнөөдөр)
+  const todayYmd = () => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+  const [from, setFrom] = useState(todayYmd);
+  const [to, setTo] = useState(todayYmd);
   const [owner, setOwner] = useState('');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
@@ -74,8 +78,9 @@ function CallsBody({ onCreateOrder }: { onCreateOrder: (p: OrderPrefill) => void
     const sp = new URLSearchParams({ status: tab === 'incoming' ? 'open' : tab, page: String(page), scope });
     if (q.trim()) sp.set('q', q.trim());
     if (scope === 'all' && owner) sp.set('ownerId', owner);
+    if (scope === 'all') { if (from) sp.set('from', from); if (to) sp.set('to', to); }
     return api<Resp>(`/api/calls?${sp}`).then((r) => { if (id === req.current) { setData(r); setError(null); } }).catch((e) => setError(msg(e)));
-  }, [tab, page, q, scope, owner]);
+  }, [tab, page, q, scope, owner, from, to]);
   useEffect(() => { const t = setTimeout(load, q ? 250 : 0); return () => clearTimeout(t); }, [load, q]);
   useEffect(() => {
     api<{ items: { id: string; name: string }[] }>('/api/calls/operators').then((r) => setOps(r.items)).catch(() => undefined);
@@ -112,6 +117,14 @@ function CallsBody({ onCreateOrder }: { onCreateOrder: (p: OrderPrefill) => void
             <option value="">Бүгд</option>
             {ops.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
           </select>
+        ) : null}
+        {sup && scope === 'all' ? (
+          <span className="flex flex-wrap items-center gap-1.5">
+            <input type="date" aria-label="Эхлэх огноо" value={from} max={to || undefined} onChange={(e) => { setFrom(e.target.value); setPage(1); }} className={clsx(inp, 'w-[150px]')} />
+            <span className="text-muted">–</span>
+            <input type="date" aria-label="Дуусах огноо" value={to} min={from || undefined} onChange={(e) => { setTo(e.target.value); setPage(1); }} className={clsx(inp, 'w-[150px]')} />
+            <button type="button" onClick={() => { setFrom(todayYmd()); setTo(todayYmd()); setPage(1); }} className="h-9 rounded-lg px-2 text-[13px] font-semibold text-muted hover:bg-surface2">Өнөөдөр</button>
+          </span>
         ) : null}
         <label className="relative min-w-[180px] flex-1">
           <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-subtle"><Icon name="search" size={14} /></span>

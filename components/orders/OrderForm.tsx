@@ -157,6 +157,19 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
     return () => clearTimeout(t);
   }, [phone, extraPhone]);
 
+  // #172-2: ижил хаяг өөр утасны идэвхтэй захиалгад байгаа эсэх (зөвхөн шинэ захиалга үүсгэхэд)
+  const [addrDup, setAddrDup] = useState<{ id: number; number: string; phone: string; statusLabel: string; operatorName: string }[]>([]);
+  const [addrOk, setAddrOk] = useState(false);
+  useEffect(() => {
+    setAddrOk(false);
+    if (edit || detail.trim().length < 5) { setAddrDup([]); return; }
+    const ph = [phone, extraPhone].map((x) => x.replace(/\D/g, '')).filter((x) => x.length === 8);
+    const sp = new URLSearchParams({ province, district: isUB(province) ? district : '', khoroo: isUB(province) ? khoroo : '', detail });
+    ph.forEach((x) => sp.append('phone', x));
+    const t = setTimeout(() => api<{ items: typeof addrDup }>(`/api/orders/address-check?${sp}`).then((r) => setAddrDup(r.items)).catch(() => undefined), 400);
+    return () => clearTimeout(t);
+  }, [edit, phone, extraPhone, province, district, khoroo, detail]);
+
   useEffect(() => {
     if (!pageId || edit) return;
     api<{ items: Hit[] }>(`/api/orders/popular?pageId=${pageId}`).then((r) => setPopular(r.items)).catch(() => setPopular([]));
@@ -191,6 +204,9 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
   const ub = isUB(province);
   const deliveryDate = dateMode === 'today' ? ubDay() : dateMode === 'tomorrow' ? ubDay(1) : otherDate;
   const scheduled = deliveryDate > ubDay(1);
+  // #172-3: «Төлбөр хүлээж буй» захиалга хэзээ ч он сар өдөртэй (маргаашаас хойш) байхгүй
+  const pendingForm = edit ? edit.status === 'PENDING_PAYMENT' : (!isUB(province) || prepaidWait);
+  useEffect(() => { if (pendingForm && dateMode === 'other' && otherDate > ubDay(1)) setDateMode('tomorrow'); }, [pendingForm, dateMode, otherDate]);
   const subtotal = lines.reduce((a, l) => a + l.listPrice * l.qty, 0);
   const discount = lines.reduce((a, l) => a + (l.listPrice - l.unitPrice) * l.qty, 0);
   // Аудит А11 (#124-3): засахад бүс ба төлбөр ногдох эсэх өөрчлөгдөөгүй бол хадгалсан төлбөр (сервертэй ижил)
@@ -225,6 +241,7 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
     if (!lines.length) return setError('Дор хаяж нэг бараа нэмнэ үү');
     const badDisc = lines.find((l) => l.unitPrice < l.listPrice && l.discountReason.replace(/\s/g, '').length < 5);
     if (badDisc) return setError(`«${badDisc.name}» үнийг бууруулсан шалтгаанаа бичнэ үү (5+ тэмдэгт)`);
+    if (!edit && addrDup.length && !addrOk) return setError('Энэ хаяг өөр утасны захиалгад байна — утас, хаягаа шалгаад «Шалгасан, зөв» гэж тэмдэглэнэ үү');
     const body = {
       phone, extraPhone: extraPhone || null, province, district: ub ? district : null, khoroo: ub && khoroo ? Number(khoroo) : null, addressDetail: detail,
       note, pageId: pages.some((p) => String(p.id) === pageId) ? Number(pageId) : edit && pageId === String(edit.pageId) ? Number(pageId) : 0, deliveryDate,
@@ -323,13 +340,15 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
             <span className={lbl}>Хүргэх өдөр</span>
             <div className="grid grid-cols-3 gap-1.5">
               {(['tomorrow', 'today', 'other'] as const).map((m) => (
-                <button key={m} type="button" aria-pressed={dateMode === m} onClick={() => setDateMode(m)} className={clsx('h-9 rounded-lg border text-[13px] font-semibold', dateMode === m ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface')}>
+                <button key={m} type="button" aria-pressed={dateMode === m} disabled={m === 'other' && pendingForm} title={m === 'other' && pendingForm ? '«Төлбөр хүлээж буй» захиалга он сар өдөртэй байж болохгүй' : undefined}
+                  onClick={() => setDateMode(m)} className={clsx('h-9 rounded-lg border text-[13px] font-semibold disabled:cursor-not-allowed disabled:opacity-40', dateMode === m ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface')}>
                   {m === 'tomorrow' ? 'Маргааш' : m === 'today' ? '🔴 Өнөөдөр' : 'Өөр өдөр'}
                 </button>
               ))}
             </div>
             {dateMode === 'other' ? <input type="date" aria-label="Хүргэх өдөр" min={ubDay(1)} value={otherDate} onChange={(e) => setOtherDate(e.target.value)} className={inp} /> : null}
             {dateMode === 'other' && scheduled ? <p className="text-[12px] text-info">Он сар өдөртэй — тэр өдрийн өмнөх өдөр автоматаар «Шинэ» болно.</p> : null}
+            {pendingForm ? <p className="text-[12px] text-muted">«Төлбөр хүлээж буй» — он сар өдөр сонгох боломжгүй (маргааш эсвэл өнөөдөр).</p> : null}
             {dateMode === 'today' ? <p className="text-[12px] text-bad-ink">Яаралтай — ахлах жолоочийн жагсаалтын эхэнд улаан тэмдэгтэй гарна.</p> : null}
             {!edit && ub ? (
               <label className="flex items-center gap-2 text-[13px] font-semibold">
@@ -368,9 +387,9 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
               <span className="text-[11.5px] text-subtle">Энэ пэйжийн түгээмэл (7 хоног)</span>
               <div className="flex gap-1.5 overflow-x-auto pb-1">
                 {popular.map((h) => (
-                  <button key={h.variantId} type="button" disabled={h.available <= 0} onClick={() => addHit(h)} className="flex w-[96px] shrink-0 flex-col items-center gap-0.5 rounded-lg border border-line bg-surface p-1.5 text-center text-[11px] hover:bg-surface2 disabled:opacity-50">
+                  <button key={h.variantId} type="button" disabled={h.available <= 0} onClick={() => addHit(h)} title={h.fullName} className="flex w-[96px] shrink-0 flex-col items-center gap-0.5 overflow-hidden rounded-lg border border-line bg-surface p-1.5 text-center text-[11px] hover:bg-surface2 disabled:opacity-50">
                     <Thumb src={h.thumb} alt={h.fullName} size={40} />
-                    <span className="line-clamp-2 font-semibold">{h.fullName}</span>
+                    <span className="line-clamp-2 w-full min-w-0 font-semibold leading-tight [overflow-wrap:anywhere]">{h.fullName}</span>
                     <span className="text-subtle">{h.available}ш</span>
                   </button>
                 ))}
@@ -424,6 +443,13 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
       <div className="flex flex-col gap-2 border-t border-line bg-surface2/60 px-4 py-2.5 pb-[max(10px,env(safe-area-inset-bottom))]">
         {error ? <Notice>{error}</Notice> : null}
         {restored && !edit ? <p className="rounded-lg bg-info-soft px-3 py-1.5 text-[12.5px] text-info">📝 Өмнө бөглөж байсан ноорог сэргээгдлээ{draft ? ` (${new Date(draft.savedAt + 8 * 3600_000).toISOString().slice(11, 16)})` : ''}. Шинээр эхлэх бол «Ноорог устгах».</p> : null}
+        {!edit && addrDup.length ? (
+          <div data-addr-dup className="flex flex-col gap-1.5 rounded-xl border border-warn/40 bg-warn-soft px-3 py-2 text-[13px] text-warn">
+            <span className="font-bold">⚠️ Энэ хаяг өөр утасны дугаартай захиалгад байна — утас буруу бичсэн эсвэл өөр хүний хаяг хуулсан эсэхийг шалгана уу:</span>
+            {addrDup.map((d) => <span key={d.id} className="[overflow-wrap:anywhere]">№{d.number} · <b>{formatPhone(d.phone)}</b> · {d.statusLabel} · {d.operatorName}</span>)}
+            <label className="flex items-center gap-2 font-semibold text-ink"><input type="checkbox" checked={addrOk} onChange={(e) => setAddrOk(e.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />Шалгасан, хаяг ба утас зөв — үргэлжлүүлэх</label>
+          </div>
+        ) : null}
         {dup && !edit ? <Notice tone="warn">Энэ утсаар идэвхтэй захиалга №{dup.number} байна — шинэ захиалга үүсгэхгүй, тэр захиалгад бараа нэмнэ.</Notice> : null}
         {!dup && !edit && card?.scheduled ? <Notice tone="warn">Энэ утсаар {String(card.scheduled.deliveryDate).slice(0, 10)}-нд товлосон захиалга №{card.scheduled.number} бий. Шинэ захиалга үүсгэж болно, эсвэл барааг тэр захиалгад нэмнэ.</Notice> : null}
         <div className="flex flex-wrap items-center justify-end gap-2">

@@ -116,13 +116,14 @@ export function BankImportClient() {
           <p className="px-4 pt-3 text-[13px] text-muted">Жолооч эсвэл «Асуудлууд»-аар цуцлагдсан, мөнгө нь захиалгадаа наалдсан хэвээр захиалгууд. Шалтгааныг тогтоогоод (буцаах / өөр захиалгад тааруулах / дахин хүргэх) «Шийдсэн» гэж тэмдэглэнэ.</p>
           <div className="overflow-x-auto"><table className="w-full min-w-[860px] text-[13px]">
             <thead className="bg-surface2 text-[12px] text-muted"><tr><th className="px-3 py-2 text-left">Захиалга</th><th className="px-3 py-2 text-left">Утас</th><th className="px-3 py-2 text-right">Дүн</th><th className="px-3 py-2 text-right">Төлсөн</th><th className="px-3 py-2 text-left">Хэн / хэзээ</th><th className="px-3 py-2 text-left">Шалтгаан</th><th className="px-3 py-2" /></tr></thead>
-            <tbody className="divide-y divide-line">{pc?.map((c) => (
+            <tbody className="divide-y divide-line">{pc?.slice((page - 1) * 25, page * 25).map((c) => (
               <tr key={c.id}><td className="px-3 py-2 font-bold">{c.number}</td><td className="px-3 py-2">{c.phone}</td><td className="px-3 py-2 text-right">{money(c.total)}</td><td className="px-3 py-2 text-right font-bold">{money(c.paid)}</td>
                 <td className="max-w-[200px] px-3 py-2 [overflow-wrap:anywhere]">{c.cancelledByName ?? '—'}{c.driverName && c.driverName !== c.cancelledByName ? ` (жолооч ${c.driverName})` : ''}<div className="text-[12px] text-muted">{c.cancelledAt ? ubDateTime(c.cancelledAt) : ''}</div></td>
                 <td className="max-w-[260px] px-3 py-2 [overflow-wrap:anywhere]">{c.cancelReason === 'ISSUE' ? 'Асуудал: ' : c.cancelReason === 'DRIVER_CANCELLED' ? 'Жолооч: ' : ''}{c.cancelNote ?? ''}</td>
                 <td className="px-3 py-2 text-right"><Button size="sm" variant="secondary" onClick={() => setPcNote({ id: c.id, number: c.number, note: '' })}>Шийдсэн</Button></td></tr>
             ))}</tbody></table></div>
           {pc && !pc.length ? <p className="px-4 py-10 text-center text-muted">Ийм захиалга алга</p> : null}
+          {pc && pc.length ? <div className="border-t border-line"><Pager page={page} pages={Math.max(1, Math.ceil(pc.length / 25))} total={pc.length} unit="захиалга" onPage={setPage} /></div> : null}
         </div>
       ) : tab === 'changes' ? (
         <div className="overflow-hidden rounded-[16px] border border-line bg-surface shadow-card">
@@ -133,6 +134,7 @@ export function BankImportClient() {
                 <td className={clsx('px-3 py-2 text-right font-bold', c.diff < 0 ? 'text-bad-ink' : 'text-info')}>{c.diff > 0 ? '+' : ''}{money(c.diff)}</td><td className="px-3 py-2">{ST_L[c.status] ?? c.status}</td><td className="max-w-[180px] px-3 py-2 [overflow-wrap:anywhere]">{c.operatorName}</td></tr>
             ))}</tbody></table></div>
           {changes && !changes.items.length ? <p className="px-4 py-10 text-center text-muted">Дүн зөрсөн захиалга алга</p> : null}
+          {changes && changes.total > 0 ? <div className="border-t border-line"><Pager page={page} pages={Math.max(1, Math.ceil(changes.total / 50))} total={changes.total} unit="захиалга" onPage={setPage} /></div> : null}
         </div>
       ) : (
         <>
@@ -150,6 +152,7 @@ export function BankImportClient() {
           </div>
         ) : null}
         <div className="overflow-hidden rounded-[16px] border border-line bg-surface shadow-card">
+          {data && data.pages > 1 ? <div className="border-b border-line"><Pager page={page} pages={data.pages} total={data.total} unit="гүйлгээ" onPage={setPage} /></div> : null}
           <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-[13px]">
             <thead className="bg-surface2 text-[12px] text-muted"><tr><th className="px-3 py-2 text-left">Огноо</th><th className="px-3 py-2 text-left">Гүйлгээний утга</th><th className="px-3 py-2 text-right">Дүн</th><th className="px-3 py-2 text-left">Утас</th><th className="px-3 py-2 text-left">Төлөв</th><th className="px-3 py-2 text-left">Захиалга</th><th className="px-3 py-2" /></tr></thead>
             <tbody className="divide-y divide-line">{data?.items.map((t) => (
@@ -167,10 +170,7 @@ export function BankImportClient() {
               </tr>
             ))}</tbody></table></div>
           {data && !data.items.length ? <p className="px-4 py-10 text-center text-muted">Гүйлгээ алга</p> : null}
-          {data && data.pages > 1 ? (
-            <div className="flex items-center justify-between border-t border-line px-3 py-2 text-[13px]"><span className="text-muted">{data.total} гүйлгээ</span>
-              <div className="flex items-center gap-2"><Button size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>‹</Button><span>{page} / {data.pages}</span><Button size="sm" disabled={page >= data.pages} onClick={() => setPage(page + 1)}>›</Button></div></div>
-          ) : null}
+          {data ? <div className="border-t border-line"><Pager page={page} pages={data.pages} total={data.total} unit="гүйлгээ" onPage={(n) => { setPage(n); window.scrollTo({ top: 0, behavior: 'smooth' }); }} /></div> : null}
         </div>
         </>
       )}
@@ -244,5 +244,27 @@ function GmailSettingsModal({ onClose, onDone }: { onClose: () => void; onDone: 
     <Modal open onClose={() => { onClose(); onDone(); }} size="xl" title="Gmail — Хаан банкны мэдэгдэл" subtitle="Gmail хаяг, 16 оронтой App Password бичээд «Хадгалаад Sync»" footer={<Button onClick={() => { onClose(); onDone(); }}>Хаах</Button>}>
       <GmailSettings onSynced={onDone} />
     </Modal>
+  );
+}
+
+/** #172-8: хуудаслалт — эхний / өмнөх / дугаарууд / дараах / сүүлийн */
+function Pager({ page, pages, total, unit, onPage }: { page: number; pages: number; total: number; unit: string; onPage: (p: number) => void }) {
+  if (pages <= 1) return <div className="px-3 py-2 text-[13px] text-muted">{total} {unit}</div>;
+  const nums = [...new Set([1, page - 2, page - 1, page, page + 1, page + 2, pages])].filter((n) => n >= 1 && n <= pages).sort((a, b) => a - b);
+  return (
+    <div data-pager className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-[13px]">
+      <span className="text-muted">{total} {unit} · {page}/{pages} хуудас</span>
+      <div className="flex flex-wrap items-center gap-1">
+        <Button size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)} aria-label="Өмнөх">‹</Button>
+        {nums.map((n, i) => (
+          <span key={n} className="flex items-center gap-1">
+            {i > 0 && n - nums[i - 1]! > 1 ? <span className="text-subtle">…</span> : null}
+            <button type="button" onClick={() => onPage(n)} aria-current={n === page ? 'page' : undefined}
+              className={clsx('h-9 min-w-[36px] rounded-lg border px-2 font-semibold', n === page ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface hover:bg-surface2')}>{n}</button>
+          </span>
+        ))}
+        <Button size="sm" disabled={page >= pages} onClick={() => onPage(page + 1)} aria-label="Дараах">›</Button>
+      </div>
+    </div>
   );
 }

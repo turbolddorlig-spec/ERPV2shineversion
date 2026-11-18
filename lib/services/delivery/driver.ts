@@ -233,6 +233,77 @@ export async function undoDelivery(actor: UserActor, idIn: unknown, input: { not
 }
 
 /**
+ * #172-1 (эзний шийдвэр): хүргэсэн захиалгаас нягтлан нэг/хэдэн барааг хасна — үйлчлүүлэгч дараа нь «энэ барааг авахгүй» гэсэн,
+ * жолооч очиж аваад агуулахад авчирна. Тооцоо баталгаажаагүй (түгжээгүй) өдөрт л.
+ *  • Хассан бараа үйлчлүүлэгчээс → жолоочид (DELIVERY_BACK); захиалгын дүн, авах мөнгө буурна (захиалга «Хүргэсэн (хэсэгчилсэн)» хэвээр).
+ *  • ТЭР ДОРОО жолоочийн «Бараа буцаагаагүй» өр (GOODS_NOT_RETURNED) — агуулахад өгөхөд автоматаар хаагдана (syncShortageDebts).
+ *  • Бүх барааг хасах бол «Цуцлах» ашиглана.
+ */
+export async function returnDeliveredLines(actor: UserActor, idIn: unknown, input: { lines?: unknown; note?: unknown; version?: unknown }) {
+  const ob: OnBehalf = { accountant: true };
+  const id = cleanId(idIn);
+  const note = requireReason(input.note);
+  const want = new Map<number, number>();
+  for (const x of Array.isArray(input.lines) ? input.lines as { lineId?: unknown; qty?: unknown }[] : []) {
+    const lid = Number(x?.lineId); const q = Number(x?.qty);
+    if (Number.isInteger(lid) && lid > 0 && Number.isInteger(q) && q > 0) want.set(lid, (want.get(lid) ?? 0) + q);
+  }
+  if (!want.size) throw badRequest('Хасах бараа, тоогоо сонгоно уу', 'no_lines');
+  const r = await inTx(async (tx) => {
+    const o = await loadOwn(tx, actor, id, 'driver', ob);
+    if (o.status !== 'DELIVERED') throw conflict('Зөвхөн хүргэсэн захиалгаас бараа хасна', 'bad_status');
+    checkVersion(o, input.version);
+    await assertDayOpen(tx, o.handoverId, { allowPending: true });
+    const drv = driverOf(o, actor, ob);
+    const taken = new Map<number, number>();
+    const removed: { line: (typeof o.lines)[number]; qty: number }[] = [];
+    for (const l of o.lines) {
+      const have = l.qty - l.refusedQty;
+      const q = want.get(l.id) ?? 0;
+      if (q > have) throw badRequest(`«${l.name}» — хүргэсэн ${have} ширхэгээс илүү хасах боломжгүй`, 'too_many');
+      taken.set(l.id, have - q);
+      if (q) removed.push({ line: l, qty: q });
+    }
+    for (const lid of want.keys()) if (!o.lines.some((l) => l.id === lid)) throw badRequest('Захиалгын бараа олдсонгүй', 'bad_line');
+    if ([...taken.values()].every((q) => q === 0)) throw conflict('Бүх барааг хасах бол «Цуцлах» товч ашиглана уу', 'all_removed');
+    const labels = new Map(o.lines.map((l) => [l.variantId, `${l.name}${l.label ? ` · ${l.label}` : ''}`]));
+    const toId = await driverLocationId(tx, drv);
+    await applyMoves(tx, actor, { type: 'order', id }, removed.map((x) => ({ type: 'DELIVERY_BACK' as const, variantId: x.line.variantId, qty: x.qty, fromId: null, toId, note: `№${o.number} хүргэсний дараа буцаасан (нягтлан хассан)` })), labels);
+    for (const x of removed) await tx.orderLine.update({ where: { id: x.line.id }, data: { refusedQty: x.line.refusedQty + x.qty } });
+    const sum = recompute(o, taken);
+    const collect = o.deliveryPayment === 'CASH' || o.deliveryPayment === 'BANK' ? sum.total : o.collectAmount;
+    const u = await tx.order.update({ where: { id }, data: { originalTotal: o.originalTotal ?? o.total, subtotal: sum.subtotal, discount: sum.discount, total: sum.total, collectAmount: collect, version: { increment: 1 } } });
+    // «Төлөөгүй» бол жолоочийн хувийн өрийн дэвтрийн дүн ч буурна
+    if (o.deliveryPayment === 'UNPAID') await tx.driverDebt.updateMany({ where: { orderId: id, paidAt: null, cancelledAt: null }, data: { amount: sum.total } });
+    // ТЭР ДОРОО «Бараа буцаагаагүй» өр — бараа бүрээр нэг нээлттэй мөр (байвал нэмэгдэнэ); агуулахад өгөхөд автоматаар хаагдана
+    const today = ubDay();
+    for (const x of removed) {
+      const unit = x.line.unitPrice;
+      const open = await tx.companyDebt.findFirst({ where: { driverId: drv.id, kind: 'GOODS_NOT_RETURNED', status: 'PENDING', variantId: x.line.variantId } });
+      const label = labels.get(x.line.variantId) ?? x.line.name;
+      if (open) {
+        const qty = (open.qty ?? 0) + x.qty;
+        await tx.companyDebt.update({ where: { id: open.id }, data: { qty, amount: qty * (open.unitPrice ?? unit), description: `${open.description} · +${x.qty}ш (№${o.number} хүргэсний дараа буцаасан)`.slice(0, 500), version: { increment: 1 } } });
+        await writeAudit(actor, 'debt.shortage_changed', 'CompanyDebt', String(open.id), { driver: drv.name, item: label, from: open.qty, to: qty, order: o.number }, tx, ['money', 'debt', 'stock']);
+      } else {
+        const d = await tx.companyDebt.create({ data: {
+          driverId: drv.id, driverName: drv.name, kind: 'GOODS_NOT_RETURNED', description: `${label} — ${x.qty}ш: №${o.number} хүргэсний дараа үйлчлүүлэгч буцаасан, жолооч авчирна (${today})`.slice(0, 500),
+          amount: x.qty * unit, variantId: x.line.variantId, qty: x.qty, unitPrice: unit, date: dateOnly(today), createdByName: `Нягтлан ${actor.name}`,
+        } });
+        await writeAudit(actor, 'debt.shortage_created', 'CompanyDebt', String(d.id), { driver: drv.name, item: label, qty: x.qty, amount: d.amount, order: o.number }, tx, ['money', 'debt', 'stock']);
+      }
+    }
+    await writeAudit(actor, 'order.lines_returned', 'Order', String(id), {
+      number: o.number, driver: drv.name, note, removed: removed.map((x) => ({ name: labels.get(x.line.variantId), qty: x.qty })), totalBefore: o.total, total: sum.total, collect,
+    } as Prisma.InputJsonValue, tx, ['order', 'delivery', 'money', 'stock']);
+    return { order: u, handoverId: o.handoverId };
+  });
+  bust();
+  if (r.order.prepaid) await bankRestatus(r.order.id);
+  return r;
+}
+
+/**
  * Аудит #160 (эзний шийдвэр): түгжсэн (нягтлан баталгаажуулсан) өдрийн хүргэсэн захиалгыг үйлчлүүлэгч хожуу буцаасан — зөвхөн нягтлангийн «Төлөв солих»-оос.
  *  • Захиалга «Цуцлагдсан» болно, гэхдээ хүргэсэн мөч, төлбөр, дүн хадгалагдана — тэр өдрийн тооцоонд «хүргэсэн» хэвээр (жолоочийн тооцоо, цалин хөдлөхгүй).
  *  • Бараа үйлчлүүлэгчээс → тэр захиалгын жолоочид (DELIVERY_BACK), жолооч буцаалтаар агуулахад өгнө (өгөхгүй бол шөнө өр).

@@ -91,7 +91,7 @@ export function CancelOrderModal({ order, onClose, onDone }: { order: { id: numb
   useEffect(() => { setReason(''); setNote(''); setError(null); }, [order]);
   return (
     <Modal open={!!order} onClose={onClose} title={order ? `№${order.number} цуцлах` : ''}
-      footer={<><Button onClick={onClose}>Болих</Button><Button variant="danger" loading={busy} disabled={!reason || note.replace(/\s/g, '').length < 5}
+      footer={<><Button onClick={onClose}>Болих</Button><Button variant="danger" loading={busy} disabled={!reason || (reason === 'OTHER' && note.replace(/\s/g, '').length < 5)}
         onClick={async () => {
           if (!order) return;
           setBusy(true); setError(null);
@@ -106,7 +106,7 @@ export function CancelOrderModal({ order, onClose, onDone }: { order: { id: numb
             {CANCEL_REASONS.map((c) => <option key={c.v} value={c.v}>{c.l}</option>)}
           </select>
         </label>
-        <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-muted">Тайлбар (5+ тэмдэгт)
+        <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-muted">{reason === 'OTHER' ? 'Тайлбар (5+ тэмдэгт, заавал)' : 'Нэмэлт тайлбар (заавал биш)'}
           <textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} className="rounded-lg border border-line bg-surface px-3 py-2 text-ink outline-none focus:border-accent" />
         </label>
       </div>

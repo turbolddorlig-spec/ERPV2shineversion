@@ -343,8 +343,8 @@ async function main() {
   const det = JSON.parse((await req(`/api/orders/${oid}`, { cookie: opB.cookie })).text).order;
   const staleO = await req(`/api/orders/${oid}`, { cookie: opB.cookie, method: 'PATCH', body: { version: det.version - 1, note: 'хуучин хувилбар' } });
   check('хуучин хувилбараар засах → 409 stale', staleO.status === 409, staleO.text.slice(0, 80));
-  const cnNo = await req(`/api/orders/${oid}/cancel`, { cookie: opB.cookie, method: 'POST', body: { reason: 'CUSTOMER_CANCELLED', note: '', version: det.version } });
-  check('тайлбаргүй цуцлах → 400', cnNo.status === 400, String(cnNo.status));
+  const cnNo = await req(`/api/orders/${oid}/cancel`, { cookie: opB.cookie, method: 'POST', body: { reason: 'OTHER', note: '', version: det.version } });
+  check('«Бусад» шалтгаан тайлбаргүй цуцлах → 400 (#172-4)', cnNo.status === 400, String(cnNo.status));
   const cn = await Promise.all([1, 2].map(() => req(`/api/orders/${oid}/cancel`, { cookie: opB.cookie, method: 'POST', body: { reason: 'CUSTOMER_CANCELLED', note: 'E2E үйлчлүүлэгч болилоо', version: det.version } })));
   check('зэрэг 2 цуцлалт → алдаагүй, нэг л удаа', cn.some((x) => x.status === 200) && cn.every((x) => x.status === 200 || x.status === 409), cn.map((x) => x.status).join(','));
   check('цуцалсны дараа нөөц суллагдсан', (await avail()) === a0);
