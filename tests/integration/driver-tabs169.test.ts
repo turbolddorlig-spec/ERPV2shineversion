@@ -95,20 +95,37 @@ async function outFor(driver: UserActor, n = 1, lines = [{ variantId: v1, qty: 2
   return ids;
 }
 
-const ids = (r: { items: { id: number }[] }) => r.items.map((x) => x.id);
-describe('#169 жолоочийн табууд', () => {
-  it('өнөөдөр — Хүргэлт/Бүгд; өчигдрийнх — зөвхөн Өчигдөр (тэндээс хүргэж болно); 2 хоногийнх — алга', async () => {
-    const [a, b, c] = await outFor(drv, 3, [{ variantId: v1, qty: 1 }]) as [number, number, number];
-    const y = U.ubDay(new Date(), -1); const y2 = U.ubDay(new Date(), -2);
-    await db.order.update({ where: { id: b }, data: { deliveryDate: new Date(y + 'T00:00:00Z') } });
-    await db.order.update({ where: { id: c }, data: { deliveryDate: new Date(y2 + 'T00:00:00Z') } });
-    const del = await DR.driverOrders(drv, 'delivery');
-    expect(ids(del)).toEqual([a]);
-    expect(del.counts.delivery).toBe(1);
-    expect(ids(await DR.driverOrders(drv, 'all'))).toEqual([a]);
-    const yest = await DR.driverOrders(drv, 'yesterday');
-    expect(ids(yest)).toEqual([b]);
-    expect((yest.items[0] as { can: { deliver: boolean } }).can.deliver).toBe(true);
-    for (const t of ['all', 'delivery', 'delivered', 'cancelled', 'tomorrow', 'yesterday']) expect(ids(await DR.driverOrders(drv, t))).not.toContain(c);
+const ids = (r: { items: { id: number }[] }) => r.items.map((x) => x.id).sort((a, b) => a - b);
+const day = (n: number) => new Date(U.ubDay(new Date(), n) + 'T00:00:00Z');
+describe('#169/#170 жолоочийн табууд ПАДААНААР', () => {
+  it('хуучин огноотой захиалга өнөөдрийн падаанд → Хүргэлт; хүргэхэд падааныхаа бусадтай хамт Хүргэсэн-д; нягтланд падааны бүх захиалга', async () => {
+    const [a, b] = await outFor(drv, 2, [{ variantId: v1, qty: 1 }]) as [number, number];
+    // b захиалга 4 хоногийн өмнө үүссэн, огноо нь хуучин — гэхдээ өнөөдрийн падаанд
+    await db.order.update({ where: { id: b }, data: { deliveryDate: day(-4), createdAt: new Date(Date.now() - 4 * 86_400_000) } });
+    expect(ids(await DR.driverOrders(drv, 'delivery'))).toEqual([a, b]);
+    expect((await DR.driverOrders(drv, 'delivery')).counts.delivery).toBe(2);
+    await DR.deliverOrder(drv, b, { payment: 'CASH' });
+    expect(ids(await DR.driverOrders(drv, 'delivered'))).toEqual([b]);
+    expect(ids(await DR.driverOrders(drv, 'all'))).toEqual([a, b]);
+    const acc = (await import('@/lib/services/accounting/calc'));
+    const rows = await acc.computeDay(db as never, today, drv.id);
+    expect(rows[0]?.delivered).toBe(1);
+  });
+
+  it('өчигдрийн падаан → зөвхөн «Өчигдөр» (тэндээс хүргэнэ, хүргэсэн ч тэндээ); 2 хоногийн падаан — апп-д алга', async () => {
+    const [y1, y2] = await outFor(drv, 2, [{ variantId: v1, qty: 1 }]) as [number, number];
+    const h = await db.handover.findFirstOrThrow({ where: { driverId: drv.id } });
+    await db.handover.update({ where: { id: h.id }, data: { date: day(-1) } });
+    await db.order.updateMany({ where: { id: { in: [y1, y2] } }, data: { deliveryDate: day(-1) } });
+    expect(ids(await DR.driverOrders(drv, 'delivery'))).toEqual([]);
+    const y = await DR.driverOrders(drv, 'yesterday');
+    expect(ids(y)).toEqual([y1, y2]);
+    expect((y.items[0] as { can: { deliver: boolean } }).can.deliver).toBe(true);
+    await DR.deliverOrder(drv, y1, { payment: 'CASH' });
+    expect(ids(await DR.driverOrders(drv, 'yesterday'))).toEqual([y1, y2]);
+    expect(ids(await DR.driverOrders(drv, 'delivered'))).toEqual([]);
+    // Нөгөөдөр
+    await db.handover.update({ where: { id: h.id }, data: { date: day(-2) } });
+    for (const t of ['all', 'delivery', 'delivered', 'cancelled', 'tomorrow', 'yesterday']) expect(ids(await DR.driverOrders(drv, t))).not.toContain(y2);
   });
 });

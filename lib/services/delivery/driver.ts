@@ -491,14 +491,17 @@ export async function driverOrders(actor: UserActor, tabIn?: string) {
   // Тооцоо падааны өдрөөрөө (#83).
   const today = ubDay(); const t0 = ubDayStart(today); const t1 = ubDayStart(addDays(today, 1));
   const nightShift = false;
-  // #169 (эзний шийдвэр, хуучин систем шиг): «Хүргэлт» — ЗӨВХӨН өнөөдрийн падааны (хүргэх өдөр = өнөөдөр) дуусаагүй захиалга.
-  // Маргааш нь «Өчигдөр» таб руу шилжинэ (тэндээс хүргэж / цуцалж болно), нөгөөдөр апп-аас алга болно.
-  const active: Prisma.OrderWhereInput = { driverId: me, status: { in: ['ASSIGNED', 'OUT_FOR_DELIVERY'] }, deliveryDate: dateOnly(today) };
   // Аудит Б2 (B1, #83): «Хүргэсэн / Цуцалсан» ба мөнгө — ӨНӨӨДРИЙН ПАДААНЫ захиалгаар (нягтлангийн «Тооцоо»-той яг ижил).
   // Шөнө 00:00-оос хойш хүргэсэн өчигдрийн падааны захиалга өчигдрийн тооцоонд үлдэнэ.
-  const dayIds = (await db.$queryRaw<{ orderId: number }[]>`
+  const padaanIds = async (ymd: string) => (await db.$queryRaw<{ orderId: number }[]>`
     SELECT ho."orderId" FROM "HandoverOrder" ho JOIN "Handover" h ON h.id = ho."handoverId"
-    WHERE h."driverId" = ${me}::uuid AND h.date = ${dateOnly(today)}::date AND ho."removedAt" IS NULL`).map((r) => r.orderId);
+    WHERE h."driverId" = ${me}::uuid AND h.date = ${dateOnly(ymd)}::date AND ho."removedAt" IS NULL`).map((r) => r.orderId);
+  const yday = addDays(today, -1);
+  const [dayIds, yIds] = await Promise.all([padaanIds(today), padaanIds(yday)]);
+  // #169/#170 (эзний шийдвэр): табууд ПАДААНААР — захиалга хэзээ үүссэн нь хамаагүй, өөрийн падаантайгаа хамт харагдана (тооцоо падаанаар).
+  // «Хүргэлт» = өнөөдрийн падааны дуусаагүй (+ падаан үүсээгүй, өнөөдөр хүргэх оноосон); «Өчигдөр» = өчигдрийн падааны бүх захиалга;
+  // нөгөөдөр апп-аас алга (хуучин систем шиг).
+  const active: Prisma.OrderWhereInput = { driverId: me, status: { in: ['ASSIGNED', 'OUT_FOR_DELIVERY'] }, OR: [{ id: { in: dayIds } }, { handoverId: null, deliveryDate: dateOnly(today) }] };
   const delivered: Prisma.OrderWhereInput = { id: { in: dayIds }, status: 'DELIVERED' };
   const cancelled: Prisma.OrderWhereInput = { id: { in: dayIds }, status: 'CANCELLED' };
   // Аудит #144: өөр жолоочид шилжсэн (дахин хуваарилагдсан) захиалга «Маргааш» табад харагдахгүй
@@ -509,11 +512,12 @@ export async function driverOrders(actor: UserActor, tabIn?: string) {
     delivered,
     cancelled,
     tomorrow: { OR: [postponed, { driverId: me, status: 'ASSIGNED', deliveryDate: dateOnly(addDays(today, 1)) }] },
-    yesterday: { driverId: me, deliveryDate: dateOnly(addDays(today, -1)) },
+    yesterday: { OR: [{ id: { in: yIds } }, { driverId: me, handoverId: null, deliveryDate: dateOnly(yday) }] },
   };
   const rows = await db.order.findMany({ where: where[tab], include: { lines: { orderBy: { id: 'asc' } } }, take: 300, orderBy: [{ routeNo: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }] });
   const counts = await db.$queryRaw<{ k: string; n: number }[]>`
-    SELECT 'delivery' AS k, count(*)::int AS n FROM "Order" WHERE "driverId" = ${me}::uuid AND status IN ('ASSIGNED','OUT_FOR_DELIVERY') AND "deliveryDate" = ${dateOnly(today)}::date
+    SELECT 'delivery' AS k, count(*)::int AS n FROM "Order" WHERE "driverId" = ${me}::uuid AND status IN ('ASSIGNED','OUT_FOR_DELIVERY')
+      AND (id = ANY(${dayIds}::int[]) OR ("handoverId" IS NULL AND "deliveryDate" = ${dateOnly(today)}::date))
     UNION ALL SELECT 'postponed', count(*)::int FROM "Order" WHERE "postponedByDriverId" = ${me}::uuid AND "postponedAt" >= ${t0} AND "postponedAt" < ${t1} AND status = 'NEW' AND "driverId" IS NULL
     UNION ALL SELECT 'tomorrow', count(*)::int FROM "Order" WHERE "driverId" = ${me}::uuid AND status = 'ASSIGNED' AND "deliveryDate" = ${dateOnly(addDays(today, 1))}::date`;
   const c = Object.fromEntries(counts.map((x) => [x.k, x.n])) as Record<string, number>;
@@ -536,7 +540,7 @@ export async function driverOrders(actor: UserActor, tabIn?: string) {
         ...s,
         ...(hidden ? { lines: [], total: 0, subtotal: 0, discount: 0, deliveryFee: 0, originalTotal: null } : {}),
         goodsHidden: hidden,
-        fromPrevDay: o.status !== 'DELIVERED' && o.status !== 'CANCELLED' && ymdOf(o.deliveryDate) < today,
+        fromPrevDay: o.status !== 'DELIVERED' && o.status !== 'CANCELLED' && !dayIds.includes(o.id) && ymdOf(o.deliveryDate) < today,
         issueLabel: o.issueType ? ISSUE_LABEL[o.issueType] : null,
         paymentLabel: o.deliveryPayment ? PAYMENT_LABEL[o.deliveryPayment] : null,
         can: {
