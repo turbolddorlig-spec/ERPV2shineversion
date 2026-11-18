@@ -8,6 +8,7 @@ import { Notice } from '@/components/ui/Notice';
 import { Badge } from '@/components/ui/Badge';
 import { api, ApiError } from '@/components/ui/api';
 import { money, ubDateTime } from '@/lib/format';
+import { ExtrasSection, type ExtrasDay } from './ExtrasSection';
 import { DebtLedgerDialog, OkeyDialog, PayModeDialog, SalaryRulesDialog } from './AccountingDialogs';
 
 /**
@@ -25,7 +26,7 @@ export interface Day {
   driverId: string; driverName: string; date: string; handover: { id: number; number: string; status: string } | null;
   total: number; delivered: number; cancelled: number; excluded: number; postponed: number; out: number; notReceived: number; countable: number;
   deliveredAmount: number; prepaidAmount: number; prepaidCount: number; cancelledAmount: number; cash: number; bank: number; unpaid: number;
-  partialCount: number; refusedAmount: number; perfCalc: number; perfOverride: number | null; perf: number; mode: 'NORMAL' | 'SPECIAL' | 'REGIONAL';
+  partialCount: number; refusedAmount: number; perfCalc: number; perfOverride: number | null; perf: number; mode: 'NORMAL' | 'SPECIAL' | 'REGIONAL' | 'EXCEPTIONAL';
   regionalRate: number | null; rate: number; tier: string; salary: number; toReceive: number; extraSale: { count: number; amount: number };
   padaan?: { orders: number; total: number; cancelled: number; postponed: number; refused: number; open: number; openCount: number };
   settlement: Settlement | null; locked: boolean;
@@ -33,15 +34,15 @@ export interface Day {
 interface Payment { id: number; kind: string; driverId: string; driverName: string; date: string; amount: number; note: string | null; approved: boolean; approvedByName: string | null; createdAt: string }
 export interface RulesText { key: string; title: string; lines: string[] }
 type Totals = Record<string, number> & { settled: { count: number; cash: number; bank: number; debt: number; total: number } };
-interface Board { date: string; canManagePay: boolean; rulesText: RulesText[]; kpi: Totals; filteredTotals: Totals; items: Day[]; payments: Payment[]; approvals: { driverId: string; approved: boolean; note: string | null }[] }
+interface Board { date: string; canManagePay: boolean; rulesText: RulesText[]; kpi: Totals; filteredTotals: Totals; items: Day[]; payments: Payment[]; extras?: ExtrasDay; approvals: { driverId: string; approved: boolean; note: string | null }[] }
 interface DailyDebt { id: number; driverName: string; kindLabel: string; description: string; amount: number; createdAt: string; resolvedAt: string | null; resolvedNote: string | null }
 interface Daily { created: DailyDebt[]; resolved: DailyDebt[]; createdTotal: number; resolvedTotal: number; createdCount?: number; resolvedCount?: number }
 
 export const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа гарлаа');
 const ubToday = (add = 0) => new Date(Date.now() + 8 * 3600_000 + add * 86_400_000).toISOString().slice(0, 10);
 const shift = (ymd: string, n: number) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
-export const MODE_L: Record<string, string> = { NORMAL: 'Энгийн', SPECIAL: 'Тусгай', REGIONAL: 'Орон нутаг' };
-export const TIER_L: Record<string, string> = { flat: '1 хүргэлт тогтмол', regional: 'Орон нутаг (тогтмол)', special: 'Тусгай', manual: 'Гараар засагдсан', big: '35+ захиалга', small: '35-аас цөөн' };
+export const MODE_L: Record<string, string> = { NORMAL: 'Энгийн', SPECIAL: 'Тусгай', REGIONAL: 'Орон нутаг', EXCEPTIONAL: 'Онцгой' };
+export const TIER_L: Record<string, string> = { flat: '1 хүргэлт тогтмол', regional: 'Орон нутаг (тогтмол)', exceptional: 'Онцгой (тогтмол)', special: 'Тусгай', manual: 'Гараар засагдсан', big: '35+ захиалга', small: '35-аас цөөн' };
 const pct = (n: number) => `${Number.isInteger(n) ? n : n.toFixed(2)}%`;
 
 type TabK = 'todo' | 'none' | 'done' | 'all';
@@ -139,6 +140,9 @@ export function AccountingClient() {
               <div className="text-[13px] font-semibold text-muted">Жолоочоос хүлээн авах</div>
               <div className="text-[34px] font-extrabold leading-tight tracking-tight">{money(k.toReceive)}</div>
               <div className="text-[13px] text-muted">Хүргэсэн {money(k.deliveredAmount)} − орон нутаг {money(k.prepaidAmount)} − цалин {money(k.salary)}</div>
+              {data?.extras && (data.extras.totals.openReceive || data.extras.totals.settledReceive) ? (
+                <div data-extras-kpi className="mt-1 text-[13px] font-semibold text-info">+ Нэмэлт бараа (тусдаа): авах {money(data.extras.totals.openReceive)}{data.extras.totals.settledReceive ? ` · авсан ${money(data.extras.totals.settledReceive)}` : ''} → нийт орлого {money(k.toReceive + data.extras.totals.openReceive + data.extras.totals.settledReceive)}</div>
+              ) : null}
             </div>
             <div className="w-full max-w-[340px]">
               <div className="flex items-baseline justify-between text-[13px]"><span className="font-semibold text-muted">Тооцоо нийлсэн</span><b className="text-[15px]">{counts.done} / {counts.all} жолооч</b></div>
@@ -175,6 +179,8 @@ export function AccountingClient() {
           ) : null}
         </section>
       ) : null}
+
+      {data?.extras ? <ExtrasSection d={data.extras} onDone={load} onErr={setErr} onOk={setOkMsg} /> : null}
 
       {/* Жолоочид */}
       <section className="overflow-hidden rounded-[20px] border border-line bg-surface shadow-card">
@@ -268,7 +274,7 @@ function DriverRow({ r, pays, ap, onOpen, onPerf, onApprove, onDone, onErr }: { 
         <button data-driver-open onClick={onOpen} className="text-left text-[14.5px] font-bold hover:text-accent-ink hover:underline [overflow-wrap:anywhere]">{r.driverName}</button>
         <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[12px] text-subtle">
           <span>{r.handover?.number ?? 'падаангүй'}</span>
-          {r.mode !== 'NORMAL' ? <Badge tone="accent">{MODE_L[r.mode]}</Badge> : null}
+          {r.mode === 'EXCEPTIONAL' ? <Badge className="bg-[#F3E8FF] text-[#6B21A8] dark:bg-[#6B21A8]/25 dark:text-[#E9D5FF]" data-mode-badge="EXCEPTIONAL">Онцгой · {money(r.rate)}</Badge> : r.mode !== 'NORMAL' ? <Badge tone="accent">{MODE_L[r.mode]}</Badge> : null}
           {ap && !ap.approved ? <Badge tone="bad">ХОРИГ</Badge> : null}
           {s?.accountingSettled ? <span title="Тооцоо хийсэн">✓ хийсэн</span> : null}
         </div>

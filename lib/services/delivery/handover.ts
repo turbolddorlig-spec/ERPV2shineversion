@@ -12,6 +12,7 @@ import { applyMoves, handedOverNeed, stockCache, type MoveSpec } from '../stock/
 import { inTx, type UserActor } from '../orders/core';
 import { bustCounts } from '../orders/queries';
 import { assertDayOpen } from '../accounting/lock';
+import { adjustExtraDebts } from '../accounting/debts';
 import { HANDOVER_STATUS_LABEL, isGiven, approvalFor, cleanYmd, driverLocationId, lockDrivers, lockHandover, lockOrders, nextHandoverNumber, primaryWarehouse } from './core';
 
 /**
@@ -406,6 +407,8 @@ export async function receiveHandover(actor: UserActor, idInput: unknown) {
     if (xdocs.length) {
       await tx.stockReservation.deleteMany({ where: { ref: { in: xdocs.map((d) => `extra:${d.id}`) } } });
       await tx.driverDoc.updateMany({ where: { id: { in: xdocs.map((d) => d.id) } }, data: { status: 'GIVEN' } });
+      // #175 (эзний шийдвэр): нэмэлт бараа авмагц шууд өр — зарсан гэж бүртгэхэд буурна, агуулахад буцаахад хаагдана
+      await adjustExtraDebts(tx, h.driverId, xqty, ymdOf(h.date), `${h.number} падаанаар нэмэлт бараа авсан`);
     }
     const now = new Date();
     await tx.order.updateMany({ where: { id: { in: orderIds } }, data: { status: 'OUT_FOR_DELIVERY', outForDeliveryAt: now, version: { increment: 1 } } });

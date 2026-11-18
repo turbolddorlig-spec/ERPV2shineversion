@@ -74,7 +74,7 @@ export function PayModeDialog({ onClose }: { onClose: () => void }) {
   };
   const items = (data?.items ?? []).filter((r) => !q || r.name.toLowerCase().includes(q.toLowerCase()) || r.phone.includes(q));
   return (
-    <Modal open onClose={onClose} size="xl" title="Гүйцэтгэл солих" subtitle="Тусгай: ≥91.5% → 5000₮, ≥86.4% → 4500₮ · Орон нутаг: тогтмол хөлс. Өнөөдрөөс хүчинтэй — өнгөрсөн өдрийн тооцоо өөрчлөгдөхгүй" footer={<Button onClick={onClose}>Хаах</Button>}>
+    <Modal open onClose={onClose} size="xl" title="Гүйцэтгэл солих" subtitle="Тусгай: ≥91.5% → 5000₮, ≥86.4% → 4500₮ · Орон нутаг, Онцгой: дураар тогтоосон тогтмол хөлс (гүйцэтгэлээс үл хамаарна). Өнөөдрөөс хүчинтэй — өнгөрсөн өдрийн тооцоо өөрчлөгдөхгүй" footer={<Button onClick={onClose}>Хаах</Button>}>
       {err ? <Notice>{err}</Notice> : null}
       {ok ? <Notice tone="ok">{ok}</Notice> : null}
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Жолооч хайх" className="mb-2 h-10 w-full rounded-xl border border-line bg-surface px-3" aria-label="Жолооч хайх" />
@@ -82,11 +82,12 @@ export function PayModeDialog({ onClose }: { onClose: () => void }) {
         {items.map((r) => (
           <div key={r.id} className="flex flex-wrap items-center gap-2 px-3 py-2.5">
             <div className="min-w-[160px] flex-1"><b className="[overflow-wrap:anywhere]">{r.name}</b>
-              <span className="block text-[12px] text-subtle">{r.modeLabel}{r.mode === 'REGIONAL' ? ` · ${money(r.regionalRate)}` : ''}{r.since ? ` · ${r.since}-аас · ${r.byName}` : ''}</span></div>
+              <span className="block text-[12px] text-subtle">{r.modeLabel}{r.mode === 'REGIONAL' || r.mode === 'EXCEPTIONAL' ? ` · ${money(r.regionalRate)}` : ''}{r.since ? ` · ${r.since}-аас · ${r.byName}` : ''}</span></div>
             {(['NORMAL', 'SPECIAL'] as const).map((m) => <button key={m} onClick={() => void set(r, m)} className={clsx('h-9 rounded-full border px-3 text-[12.5px] font-bold', r.mode === m ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface')}>{m === 'NORMAL' ? 'Энгийн' : 'Тусгай'}</button>)}
-            <input inputMode="numeric" value={rates[r.id] ?? (r.mode === 'REGIONAL' ? String(r.regionalRate ?? '') : '')} placeholder={String(data?.regionalDefault ?? 3000)}
-              onChange={(e) => setRates({ ...rates, [r.id]: e.target.value.replace(/\D/g, '') })} className="h-9 w-[90px] rounded-lg border border-line bg-surface px-2 text-right text-[13px]" aria-label={`${r.name} орон нутгийн хөлс`} />
+            <input inputMode="numeric" value={rates[r.id] ?? (r.mode === 'REGIONAL' || r.mode === 'EXCEPTIONAL' ? String(r.regionalRate ?? '') : '')} placeholder={String(data?.regionalDefault ?? 3000)}
+              onChange={(e) => setRates({ ...rates, [r.id]: e.target.value.replace(/\D/g, '') })} className="h-9 w-[90px] rounded-lg border border-line bg-surface px-2 text-right text-[13px]" aria-label={`${r.name} хөлс (орон нутаг / онцгой)`} />
             <button onClick={() => void set(r, 'REGIONAL')} className={clsx('h-9 rounded-full border px-3 text-[12.5px] font-bold', r.mode === 'REGIONAL' ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface')}>Орон нутаг</button>
+            <button data-mode-exceptional onClick={() => void set(r, 'EXCEPTIONAL')} className={clsx('h-9 rounded-full border px-3 text-[12.5px] font-bold', r.mode === 'EXCEPTIONAL' ? 'border-[#6B21A8] bg-[#6B21A8] text-white' : 'border-line bg-surface')}>Онцгой</button>
           </div>
         ))}
       </div>

@@ -509,6 +509,9 @@ async function main() {
     check('нягтлан ба жолооч ижил тоо', row6 && row6.toReceive === inc.day.toReceive && row6.salary === inc.day.salary && row6.perf === inc.day.perf, `${row6?.toReceive} ${inc.day?.toReceive}`);
     const perms6 = await Promise.all([req('/api/accounting', { cookie: op4.cookie }), req('/api/accounting', { cookie: d5.cookie }), req('/api/driver/income', { cookie: acc6.cookie }), req('/api/accounting/salary-rules', { cookie: acc6.cookie, method: 'POST', body: {} })]);
     check('эрх: оператор/жолооч нягтлан 403, нягтлан жолоочийн орлого 403, нягтлан цалингийн дүрэм солихгүй 403', perms6.every((x) => x.status === 403), perms6.map((x) => x.status).join(','));
+    // #175 нэмэлт барааны тусдаа тооцоо: самбарт extras, эрх
+    const ex6 = await Promise.all([req(`/api/accounting/extras?date=${today6}`, { cookie: acc6.cookie }), req('/api/accounting/extras', { cookie: d5.cookie }), req('/api/accounting/extras', { cookie: d5.cookie, method: 'POST', body: { driverId: free.id } })]);
+    check('#175 нэмэлт барааны тооцоо: нягтлан 200, жолооч 403', ex6[0].status === 200 && Array.isArray(JSON.parse(ex6[0].text).items) && ex6[1].status === 403 && ex6[2].status === 403 && Array.isArray(brd.extras?.items), ex6.map((x) => x.status).join(','));
     const bad6 = await req('/api/driver/income', { cookie: d5.cookie, method: 'POST', body: { action: 'submit', date: today6, cash: 1, bank: 0, debt: 0 } });
     check('Бэлэн+Данс+Өр ≠ Авах дүн → 400', bad6.status === 400 || inc.day.toReceive === 1, bad6.text.slice(0, 100));
     const debtPart = inc.day.toReceive > 1000 ? 1000 : 0;

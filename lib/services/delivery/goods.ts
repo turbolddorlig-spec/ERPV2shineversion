@@ -1,5 +1,5 @@
 import { Prisma, type DeliveryPayment, type DriverDocKind } from '@prisma/client';
-import { syncShortageDebts } from '../accounting/debts';
+import { adjustExtraDebts, syncShortageDebts } from '../accounting/debts';
 import { computeDay } from '../accounting/calc';
 import { db } from '../../db';
 import { badRequest, conflict, forbidden } from '../../errors';
@@ -21,6 +21,7 @@ import { driverGoods, PAYMENT_LABEL } from './driver';
  * Бүх үйлдэл хүргэлтийн түгжээ дор (buцаах тоо = үлдэгдэл − хүргэлтэд явж буй, зэрэг үйлдэлд зөрөхгүй), давхар дарахад нэг удаа (idemKey).
  */
 const DOC_LABEL: Record<DriverDocKind, string> = { RETURN: 'Буцаалт хүлээн авсан', EXTRA_TAKE: 'Нэмэлт бараа авсан', EXTRA_SALE: 'Нэмэлт бараа зарсан' };
+const SALE_STATUS: Record<string, string> = { REPORTED: 'Нэмэлт бараа зарсан — нягтланд тушаах', DONE: 'Нэмэлт бараа зарсан — тооцоо хийсэн', CANCELLED: 'Нэмэлт бараа — үйлчлүүлэгч буцаасан' };
 const EXTRA_STATUS: Record<string, string> = { REQUESTED: 'Нэмэлт бараа — падаанд хүлээгдэж байна', GIVEN: 'Нэмэлт бараа — падаанаар авсан', CANCELLED: 'Нэмэлт бараа — цуцалсан', DONE: 'Нэмэлт бараа авсан' };
 
 function cleanUuid(v: unknown, label = 'Жолооч'): string {
@@ -67,13 +68,35 @@ async function existingDoc(idemKey: string, driverId: string) {
 export async function goodsView(driverId: string) {
   const g = await driverGoods(db, driverId);
   const ids = [...g.balance.keys()];
-  const info = await variantInfo(ids);
+  const [info, extra] = await Promise.all([variantInfo(ids), extraQtyOf(driverId, g.returnable)]);
   const items = ids.map((v) => {
     const i = info.get(v);
     return { variantId: v, code: i?.code ?? '', name: i?.name ?? `#${v}`, label: i?.label ?? '', thumb: i?.thumb ?? null, shelfCode: i?.shelfCode ?? null,
-      balance: g.balance.get(v) ?? 0, held: Math.min(g.held.get(v) ?? 0, g.balance.get(v) ?? 0), returnable: g.returnable.get(v) ?? 0 };
+      balance: g.balance.get(v) ?? 0, held: Math.min(g.held.get(v) ?? 0, g.balance.get(v) ?? 0), returnable: g.returnable.get(v) ?? 0,
+      // #175: буцаах барааны хэд нь нэмэлт бараа (агуулахад «Нэмэлт бараа» тэмдэг), хэд нь «зарсан» (буцаах биш)
+      extra: extra.get(v) ?? 0, sold: Math.min(g.sold.get(v) ?? 0, g.balance.get(v) ?? 0) };
   }).sort((a, b) => (a.shelfCode ?? '~').localeCompare(b.shelfCode ?? '~') || a.code.localeCompare(b.code));
-  return { items, totals: { balance: items.reduce((n, x) => n + x.balance, 0), returnable: items.reduce((n, x) => n + x.returnable, 0) } };
+  return { items, totals: { balance: items.reduce((n, x) => n + x.balance, 0), returnable: items.reduce((n, x) => n + x.returnable, 0), extra: items.reduce((n, x) => n + x.extra, 0), sold: items.reduce((n, x) => n + x.sold, 0) } };
+}
+
+/**
+ * #175: жолоочийн буцаах барааны дундаас НЭМЭЛТ бараа хэд вэ — сүүлийн 14 хоногт падаанаар авсан нэмэлт бараа − тэр хугацаанд зарсан
+ * (жолоочийн бүртгэсэн + нягтлан тооцоо хийсэн), буцаах тооноос хэтрэхгүй. Зөвхөн тэмдэглэгээ — тоо, журналд нөлөөгүй.
+ */
+async function extraQtyOf(driverId: string, returnable: Map<number, number>) {
+  const m = new Map<number, number>();
+  if (!returnable.size) return m;
+  const since = ubDayStart(ubDay(new Date(), -14));
+  const rows = await db.$queryRaw<{ variantId: number; given: number; sold: number }[]>`
+    SELECT l."variantId",
+      COALESCE(sum(l.qty) FILTER (WHERE d.kind = 'EXTRA_TAKE' AND d.status = 'GIVEN'), 0)::int AS given,
+      COALESCE(sum(l.qty) FILTER (WHERE d.kind = 'EXTRA_SALE' AND (d.status = 'REPORTED' OR d."settledAt" IS NOT NULL)), 0)::int AS sold
+    FROM "DriverDoc" d JOIN "DriverDocLine" l ON l."docId" = d.id
+    WHERE d."driverId" = ${driverId}::uuid AND d.kind IN ('EXTRA_TAKE', 'EXTRA_SALE') AND d."createdAt" >= ${since}
+      AND l."variantId" = ANY(${[...returnable.keys()]}::int[])
+    GROUP BY 1`;
+  for (const r of rows) { const n = Math.min(returnable.get(r.variantId) ?? 0, r.given - r.sold); if (n > 0) m.set(r.variantId, n); }
+  return m;
 }
 
 /** Жолооч: миний бараа + сүүлийн баримтууд */
@@ -87,13 +110,18 @@ async function recentDocs(driverId: string, take = 20) {
   const docs = await db.driverDoc.findMany({ where: { driverId }, orderBy: { id: 'desc' }, take, include: { lines: true } });
   const info = await variantInfo([...new Set(docs.flatMap((d) => d.lines.map((l) => l.variantId)))]);
   return docs.map((d) => ({
-    id: d.id, kind: d.kind, kindLabel: d.kind === 'EXTRA_TAKE' ? EXTRA_STATUS[d.status] ?? DOC_LABEL[d.kind] : DOC_LABEL[d.kind], status: d.status, date: d.date ? d.date.toISOString().slice(0, 10) : null, at: d.createdAt, byName: d.byName, note: d.note, total: d.total,
-    payment: d.payment, paymentLabel: d.payment ? PAYMENT_LABEL[d.payment] : null,
+    id: d.id, kind: d.kind, kindLabel: d.kind === 'EXTRA_TAKE' ? EXTRA_STATUS[d.status] ?? DOC_LABEL[d.kind] : d.kind === 'EXTRA_SALE' ? SALE_STATUS[d.status] ?? DOC_LABEL[d.kind] : DOC_LABEL[d.kind], status: d.status, date: d.date ? d.date.toISOString().slice(0, 10) : null, at: d.createdAt, byName: d.byName, note: d.note, total: d.total,
+    payment: d.payment, paymentLabel: d.payment ? PAYMENT_LABEL[d.payment] : null, fee: d.fee, settledAt: d.settledAt, settledByName: d.settledByName,
     lines: d.lines.map((l) => ({ variantId: l.variantId, name: info.get(l.variantId)?.name ?? `#${l.variantId}`, label: info.get(l.variantId)?.label ?? '', qty: l.qty, expected: l.expected, unitPrice: l.unitPrice })),
   }));
 }
 
 // ───────────────────────── Буцаалт хүлээн авах (агуулах) ─────────────────────────
+
+/** #175: «зарсан» нэмэлт бараа (нягтлан мөнгийг аваагүй) — жолоочид байгаа ч буцаах бараа биш */
+const SOLD_CTE = Prisma.sql`sold AS (
+      SELECT d."driverId", sum(l.qty)::int AS sold FROM "DriverDoc" d JOIN "DriverDocLine" l ON l."docId" = d.id
+      WHERE d.kind = 'EXTRA_SALE' AND d.status = 'REPORTED' GROUP BY 1)`;
 
 /** Буцаах бараатай жолоочид (агуулахын самбар) */
 export async function returnsBoard(actor: UserActor) {
@@ -104,9 +132,10 @@ export async function returnsBoard(actor: UserActor) {
       WHERE l.kind = 'DRIVER' GROUP BY l."userId"),
     held AS (
       SELECT o."driverId", sum(ol.qty)::int AS held FROM "Order" o JOIN "OrderLine" ol ON ol."orderId" = o.id
-      WHERE o.status = 'OUT_FOR_DELIVERY' AND o."driverId" IN (SELECT "userId" FROM bal) GROUP BY 1)
-    SELECT bal."userId" AS "driverId", u.name, bal.balance, COALESCE(held.held, 0)::int AS held
-    FROM bal JOIN "User" u ON u.id = bal."userId" LEFT JOIN held ON held."driverId" = bal."userId" ORDER BY u.name`;
+      WHERE o.status = 'OUT_FOR_DELIVERY' AND o."driverId" IN (SELECT "userId" FROM bal) GROUP BY 1),
+    ${SOLD_CTE}
+    SELECT bal."userId" AS "driverId", u.name, bal.balance, (COALESCE(held.held, 0) + COALESCE(sold.sold, 0))::int AS held
+    FROM bal JOIN "User" u ON u.id = bal."userId" LEFT JOIN held ON held."driverId" = bal."userId" LEFT JOIN sold ON sold."driverId" = bal."userId" ORDER BY u.name`;
   const last = await db.$queryRaw<{ driverId: string; at: Date }[]>`SELECT "driverId", max("createdAt") AS at FROM "DriverDoc" WHERE kind = 'RETURN' GROUP BY 1`;
   const lm = new Map(last.map((x) => [x.driverId, x.at]));
   return {
@@ -295,17 +324,42 @@ export async function extraSale(actor: UserActor, input: { lines?: unknown; paym
       if (l.qty > have) throw conflict(`«${labels.get(l.variantId)}» танд ${have} байна (хүргэлтийн захиалгын барааг зарахгүй)`, 'too_many');
     }
     const total = lines.reduce((n, l) => n + (prices.get(l.variantId) ?? 0) * l.qty, 0);
-    // Аудит Б16 (эзний шийдвэр): жолоочийн «зарсан» бүртгэл зөвхөн МЭДЭЭЛЭЛ — бараа жолоочийн нэр дээр үлдэж, өр хаагдахгүй.
-    // Нягтланд мөнгө тушаахад (Өр → «Мөнгө авсан») эсвэл бараагаа агуулахад буцаахад л хаагдана.
+    // #175 (эзний шийдвэр, Б16-г орлоно): «зарсан» бараа жолоочийн нэр дээр үлдэнэ (журнал хөдлөхгүй), харин буцаах жагсаалтаас гарч,
+    // барааны өр тэр хэмжээгээр буурна. Нягтлан «Нэмэлтийн мөнгө авсан» дармагц бараа журналаар гарна (хөлсийг хасаж тооцно).
     const d = await tx.driverDoc.create({
       data: { kind: 'EXTRA_SALE', status: 'REPORTED', driverId: actor.id, driverName: actor.name, byId: actor.id, byName: actor.name, note, idemKey, payment, total,
         lines: { create: lines.map((l) => ({ variantId: l.variantId, qty: l.qty, unitPrice: prices.get(l.variantId) ?? 0 })) } },
     });
+    await adjustExtraDebts(tx, actor.id, new Map(lines.map((l) => [l.variantId, -l.qty])), ubDay(), 'Нэмэлт бараа зарсан');
     await writeAudit(actor, 'driver.extra_sale', 'DriverDoc', String(d.id), { total, payment, reported: true, lines: lines.map((l) => ({ name: labels.get(l.variantId), qty: l.qty, price: prices.get(l.variantId) })) } as Prisma.InputJsonValue, tx, ['delivery', 'money']);
     return d;
   });
   stockCache.today = null;
   return { doc, duplicate: false };
+}
+
+/**
+ * #175 «Үйлчлүүлэгч буцаасан»: зарсан гэж бүртгэсэн нэмэлт барааг үйлчлүүлэгч буцааж өгсөн — нягтлан тооцоо хийхээс өмнө л.
+ * Бараа дахин «Агуулахад буцаах» болж, өр нь буцаж нэмэгдэнэ (агуулахад өгвөл хаагдана).
+ */
+export async function extraSaleUndo(actor: UserActor, docIdIn: unknown) {
+  if (!canDrive(actor.roles)) throw forbidden();
+  const id = Number(docIdIn);
+  if (!Number.isInteger(id) || id <= 0) throw badRequest('Баримт олдсонгүй');
+  await inTx(async (tx) => {
+    await lockDrivers(tx, [actor.id]);
+    const d = await tx.driverDoc.findUnique({ where: { id }, include: { lines: true } });
+    if (!d || d.driverId !== actor.id || d.kind !== 'EXTRA_SALE') throw badRequest('Баримт олдсонгүй');
+    if (d.status === 'CANCELLED') return;
+    if (d.status !== 'REPORTED') throw conflict('Нягтлан тооцоог нь хийсэн — нягтланд хэлнэ үү', 'already_settled');
+    await tx.driverDoc.update({ where: { id }, data: { status: 'CANCELLED' } });
+    const back = new Map<number, number>();
+    for (const l of d.lines) back.set(l.variantId, (back.get(l.variantId) ?? 0) + l.qty);
+    await adjustExtraDebts(tx, actor.id, back, ubDay(), 'Үйлчлүүлэгч нэмэлт барааг буцаасан');
+    await writeAudit(actor, 'driver.extra_sale_returned', 'DriverDoc', String(id), { total: d.total, lines: d.lines.map((l) => ({ variantId: l.variantId, qty: l.qty })) } as Prisma.InputJsonValue, tx, ['delivery', 'money']);
+  });
+  stockCache.today = null;
+  return { ok: true };
 }
 
 // ───────────────────────── Жолоочийн хяналт ─────────────────────────
@@ -338,8 +392,9 @@ export async function driverControl(actor: UserActor, dateIn?: string) {
         WHERE l.kind = 'DRIVER' GROUP BY l."userId"),
       held AS (
         SELECT o."driverId", sum(ol.qty)::int AS held FROM "Order" o JOIN "OrderLine" ol ON ol."orderId" = o.id
-        WHERE o.status = 'OUT_FOR_DELIVERY' AND o."driverId" IN (SELECT "userId" FROM bal) GROUP BY 1)
-      SELECT bal."userId" AS id, bal.balance, COALESCE(held.held, 0)::int AS held FROM bal LEFT JOIN held ON held."driverId" = bal."userId"`,
+        WHERE o.status = 'OUT_FOR_DELIVERY' AND o."driverId" IN (SELECT "userId" FROM bal) GROUP BY 1),
+      ${SOLD_CTE}
+      SELECT bal."userId" AS id, bal.balance, (COALESCE(held.held, 0) + COALESCE(sold.sold, 0))::int AS held FROM bal LEFT JOIN held ON held."driverId" = bal."userId" LEFT JOIN sold ON sold."driverId" = bal."userId"`,
     db.$queryRaw<{ id: string; at: Date }[]>`SELECT "driverId" AS id, max("createdAt") AS at FROM "DriverDoc" WHERE kind = 'RETURN' GROUP BY 1`,
   ]);
   const by = <T extends { id: string }>(rows: T[]) => new Map(rows.map((r) => [r.id, r]));

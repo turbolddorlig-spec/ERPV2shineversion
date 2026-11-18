@@ -26,8 +26,8 @@ interface DOrder {
   can: { deliver: boolean; cancel: boolean; postpone: boolean; postponeLocked: boolean; issue: boolean; undoDelivery: boolean; redeliver: boolean; undoPostpone: boolean };
 }
 interface ListResp { tab: string; today: string; nightShift?: boolean; counts: { delivery: number; delivered: number; cancelled: number; postponed: number; tomorrow: number }; money: { cash: number; bank: number; unpaid: number; prepaid: number }; items: DOrder[] }
-interface GItem { variantId: number; code: string; name: string; label: string; thumb: string | null; balance: number; held: number; returnable: number }
-interface GDoc { id: number; kind: string; status: string; date: string | null; kindLabel: string; at: string; byName: string; note: string | null; total: number; paymentLabel: string | null; lines: { variantId: number; name: string; label: string; qty: number; expected: number; unitPrice: number }[] }
+interface GItem { variantId: number; code: string; name: string; label: string; thumb: string | null; balance: number; held: number; returnable: number; extra?: number; sold?: number }
+interface GDoc { id: number; kind: string; status: string; date: string | null; kindLabel: string; at: string; byName: string; note: string | null; total: number; paymentLabel: string | null; fee?: number | null; lines: { variantId: number; name: string; label: string; qty: number; expected: number; unitPrice: number }[] }
 interface GoodsResp { items: GItem[]; totals: { balance: number; returnable: number }; docs: GDoc[] }
 interface PickOrder { id: number; number: string; fullAddress: string; deliveryDate: string; postponeCount: number; note: string | null }
 
@@ -597,7 +597,9 @@ function GoodsTab() {
             <span className="min-w-0 flex-1 text-[13.5px] leading-tight [overflow-wrap:anywhere]"><b>{i.name}</b>{i.label ? ` · ${i.label}` : ''}<span className="block text-[12px] text-subtle">{i.code}</span></span>
             <span className="flex flex-col items-end text-[12.5px]">
               {i.held ? <span className="text-info">Хүргэлтэд <b>{i.held}</b></span> : null}
-              {i.returnable ? <span className="font-bold text-warn">Буцаах {i.returnable}</span> : null}
+              {i.extra ? <span data-goods-extra className="font-bold text-info">Нэмэлт бараа {i.extra} · зарах эсвэл буцаах (эс бөгөөс өр)</span> : null}
+              {i.returnable - (i.extra ?? 0) > 0 ? <span className="font-bold text-warn">Буцаах {i.returnable - (i.extra ?? 0)}</span> : null}
+              {i.sold ? <span data-goods-sold className="text-ok-ink">Зарсан {i.sold} · нягтланд тушаана</span> : null}
             </span>
           </li>
         ))}
@@ -613,13 +615,24 @@ function GoodsTab() {
           ))}
         </section>
       ) : null}
+      {g?.docs.some((d) => d.kind === 'EXTRA_SALE' && d.status === 'REPORTED') ? (
+        <section className="flex flex-col gap-1.5">
+          <h2 className="text-[15px] font-extrabold">Зарсан нэмэлт бараа — нягтланд тушаах</h2>
+          {g.docs.filter((d) => d.kind === 'EXTRA_SALE' && d.status === 'REPORTED').map((d) => (
+            <div key={d.id} data-sale-doc={d.id} className="flex items-center gap-2 rounded-[12px] border border-ok/40 bg-ok-soft px-3 py-2 text-[13px]">
+              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]"><b>{money(d.total)}</b> · {d.lines.map((l) => `${l.name}${l.label ? ` · ${l.label}` : ''} ${l.qty}ш`).join(', ')}<span className="block text-[12px] text-subtle">{ubDateTime(d.at)}{d.paymentLabel ? ` · ${d.paymentLabel}` : ''}</span></span>
+              <Button size="sm" variant="ghost" data-sale-undo onClick={async () => { if (!confirm('Үйлчлүүлэгч барааг буцааж өгсөн үү? Бараа «Агуулахад буцаах» болж, агуулахад өгөөгүй бол өр болно.')) return; try { await api('/api/driver/goods', { method: 'POST', json: { kind: 'sale-undo', docId: d.id } }); setFlash('Буцаалт бүртгэгдлээ — барааг агуулахад өгнө үү'); await load(); } catch (e) { setErr(msg(e)); } }}>Үйлчлүүлэгч буцаасан</Button>
+            </div>
+          ))}
+        </section>
+      ) : null}
       {g?.docs.length ? (
         <section className="flex flex-col gap-1.5">
           <h2 className="text-[15px] font-extrabold">Сүүлийн баримт</h2>
           {g.docs.map((d) => (
             <div key={d.id} className="rounded-[12px] border border-line bg-surface px-3 py-2 text-[13px]">
               <div className="flex flex-wrap justify-between gap-2"><b>{d.kindLabel}</b><span className="text-subtle">{ubDateTime(d.at)} · {d.byName}</span></div>
-              <div className="text-muted [overflow-wrap:anywhere]">{d.lines.map((l) => `${l.name}${l.label ? ` · ${l.label}` : ''} ${l.qty}ш${d.kind === 'RETURN' && l.expected > l.qty ? ` (дутуу ${l.expected - l.qty})` : ''}`).join(', ')}{d.total ? ` · ${money(d.total)} ${d.paymentLabel ?? ''}` : ''}</div>
+              <div className="text-muted [overflow-wrap:anywhere]">{d.lines.map((l) => `${l.name}${l.label ? ` · ${l.label}` : ''} ${l.qty}ш${d.kind === 'RETURN' && l.expected > l.qty ? ` (дутуу ${l.expected - l.qty})` : ''}`).join(', ')}{d.total ? ` · ${money(d.total)} ${d.paymentLabel ?? ''}` : ''}{d.fee ? ` · хөлс ${money(d.fee)}` : ''}</div>
             </div>
           ))}
         </section>

@@ -6,6 +6,7 @@ import { canAccount, canDrive, canManagePay } from '../../permissions';
 import { dateOnly, ubDay, ymdOf, isYmd } from '../../ubdate';
 import { inTx, type UserActor } from '../orders/core';
 import { cleanYmd } from '../delivery/core';
+import { extrasDay } from './extras';
 import { computeDay, computeDriverDay, DEFAULT_RULES, MODE_LABEL, rulesFor, rulesText, type DriverDay, type PayMode, type SalaryRules } from './calc';
 
 type Tx = Prisma.TransactionClient;
@@ -63,14 +64,15 @@ export async function accountingDay(actor: UserActor, dateIn?: string, f: BoardF
   else if (f.status === 'NONE') rows = rows.filter((r) => !r.settlement || r.settlement.status === 'DRAFT');
   if (f.prepaid === 'yes') rows = rows.filter((r) => r.prepaidCount > 0);
   else if (f.prepaid === 'no') rows = rows.filter((r) => r.prepaidCount === 0);
-  const [payments, approvals] = await Promise.all([
+  const [payments, approvals, extras] = await Promise.all([
     db.driverPayment.findMany({ where: { date: dateOnly(date) }, orderBy: { createdAt: 'desc' } }),
     db.driverApproval.findMany({ where: { date: dateOnly(date) } }),
+    extrasDay(date), // #175 нэмэлт барааны тусдаа тооцоо (үндсэн тооцоонд нийлэхгүй)
   ]);
   return {
     date, canManagePay: canManagePay(actor.roles), rules, rulesText: rulesText(rules),
     kpi, filteredTotals: totals(rows), items: rows,
-    payments: payments.map((p) => ({ ...p, date: ymdOf(p.date) })),
+    payments: payments.map((p) => ({ ...p, date: ymdOf(p.date) })), extras,
     approvals: approvals.map((a) => ({ driverId: a.driverId, approved: a.approved, note: a.note, byName: a.byName })),
   };
 }
@@ -361,6 +363,11 @@ export async function setPayMode(actor: UserActor, input: { driverId?: unknown; 
     rate = input.rate === undefined || input.rate === '' || input.rate === null ? (await rulesFor(db, ubDay())).regionalDefault : Number(input.rate);
     if (!Number.isInteger(rate) || rate < 1000 || rate > 10000) throw badRequest('Орон нутгийн хөлс 1,000–10,000₮');
   }
+  // #175 «Онцгой»: хөлсийг заавал бичнэ (гүйцэтгэлээс үл хамаарна)
+  if (mode === 'EXCEPTIONAL') {
+    rate = Number(input.rate);
+    if (input.rate === undefined || input.rate === '' || input.rate === null || !Number.isInteger(rate) || rate < 500 || rate > 50000) throw badRequest('Онцгой хөлсийг бичнэ үү (500–50,000₮)', 'rate_required');
+  }
   const name = await driverName(db, driverId);
   const today = ubDay();
   return inTx(async (tx) => {
@@ -373,7 +380,7 @@ export async function setPayMode(actor: UserActor, input: { driverId?: unknown; 
     });
     await reopenPending(tx, driverId, today, actor.name, 'Гүйцэтгэлийн горим солигдсон');
     await writeAudit(actor, 'driver.pay_mode', 'User', driverId, { driver: name, mode, rate, from: today }, tx, ['money']);
-    return { ok: true, message: mode === 'NORMAL' ? `${name} энгийн гүйцэтгэл рүү буцлаа` : mode === 'SPECIAL' ? `${name} тусгай гүйцэтгэлтэй боллоо` : `${name} орон нутгийн гүйцэтгэлтэй боллоо (${rate!.toLocaleString('en-US')}₮)` };
+    return { ok: true, message: mode === 'NORMAL' ? `${name} энгийн гүйцэтгэл рүү буцлаа` : mode === 'SPECIAL' ? `${name} тусгай гүйцэтгэлтэй боллоо` : mode === 'EXCEPTIONAL' ? `${name} онцгой гүйцэтгэлтэй боллоо (${rate!.toLocaleString('en-US')}₮ / хүргэлт)` : `${name} орон нутгийн гүйцэтгэлтэй боллоо (${rate!.toLocaleString('en-US')}₮)` };
   });
 }
 

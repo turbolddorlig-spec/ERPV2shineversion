@@ -619,12 +619,17 @@ model DriverDoc {
   /// Нэмэлт барааны хүсэлт аль өдрийн падаанд орох вэ
   date       DateTime?        @db.Date
   handoverId Int?
+  /// #175 Нэмэлт бараа зарсан (EXTRA_SALE): хүргэлтийн хөлс (ширхэг × тэр өдрийн хөлс) — нягтлан «Нэмэлтийн мөнгө авсан» дарахад
+  fee        Int?
+  settledAt     DateTime?
+  settledByName String?
   lines      DriverDocLine[]
 
   @@index([driverId, createdAt])
   @@index([kind, createdAt])
   @@index([handoverId])
   @@index([driverId, status])
+  @@index([kind, status, driverId])
 }
 
 model DriverDocLine {

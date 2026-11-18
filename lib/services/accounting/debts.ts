@@ -202,6 +202,48 @@ export async function syncShortageDebts(tx: Tx, driverId: string, opts: { close?
   return { created, changed, resolved };
 }
 
+const extraText = (label: string, qty: number, date: string) => `Нэмэлт бараа (зараагүй / буцаагаагүй): ${label} × ${qty}ш (${date})`;
+
+/**
+ * #175 Нэмэлт бараа: авмагц ШУУД өр (бүтэн үнээр), зарсан гэж бүртгэхэд өр буурна, «Үйлчлүүлэгч буцаасан» → өр буцаж нэмэгдэнэ.
+ * delta: бараа бүрийн өөрчлөлт (+ нэмэх / − хасах). Шинэ тоо = [0 … одоогийн буцаах бараа] хооронд (жолоочид байхгүй барааны өр үүсэхгүй).
+ * Нэг бараанд нэг нээлттэй өр (өмнөх өртэй нийлнэ). Барааны журналд огт хүрэхгүй — зөвхөн мөнгөн бүртгэл.
+ */
+export async function adjustExtraDebts(tx: Tx, driverId: string, delta: Map<number, number>, date: string, reason: string) {
+  if (!delta.size) return;
+  const ids = [...delta.keys()];
+  const [g, open, info, driver] = await Promise.all([
+    driverGoods(tx, driverId),
+    tx.companyDebt.findMany({ where: { driverId, kind: 'GOODS_NOT_RETURNED', status: 'PENDING', variantId: { in: ids } } }),
+    priceAndLabel(tx, ids),
+    tx.user.findUnique({ where: { id: driverId }, select: { name: true } }),
+  ]);
+  const openM = new Map(open.map((d) => [d.variantId!, d]));
+  for (const [v, dq] of delta) {
+    const d = openM.get(v);
+    const inf = info.get(v) ?? { price: 0, label: `#${v}` };
+    const target = Math.max(0, Math.min((d?.qty ?? 0) + dq, g.returnable.get(v) ?? 0));
+    if (!d) {
+      if (target <= 0) continue;
+      const nd = await tx.companyDebt.create({ data: {
+        driverId, driverName: driver?.name ?? '', kind: 'GOODS_NOT_RETURNED', description: extraText(inf.label, target, date),
+        amount: target * inf.price, variantId: v, qty: target, unitPrice: inf.price, date: dateOnly(date), createdByName: 'Автомат (нэмэлт бараа)',
+      } });
+      await writeAudit(SYS, 'debt.extra_created', 'CompanyDebt', String(nd.id), { driver: nd.driverName, item: inf.label, qty: target, amount: nd.amount, reason }, tx, ['money', 'debt', 'stock']);
+      continue;
+    }
+    if (target === d.qty) continue;
+    if (target <= 0) {
+      await tx.companyDebt.update({ where: { id: d.id }, data: { status: 'RESOLVED', resolvedAt: new Date(), resolvedByName: 'Автомат', resolvedNote: `${reason} — өр автоматаар хаагдлаа`, version: { increment: 1 } } });
+      await writeAudit(SYS, 'debt.shortage_resolved', 'CompanyDebt', String(d.id), { driver: d.driverName, item: inf.label, qty: d.qty, amount: d.amount, reason }, tx, ['money', 'debt', 'stock']);
+    } else {
+      const unit = d.unitPrice ?? inf.price;
+      await tx.companyDebt.update({ where: { id: d.id }, data: { qty: target, amount: target * unit, description: extraText(inf.label, target, date), version: { increment: 1 } } });
+      await writeAudit(SYS, 'debt.shortage_changed', 'CompanyDebt', String(d.id), { driver: d.driverName, item: inf.label, from: d.qty, to: target, amount: target * unit, reason }, tx, ['money', 'debt', 'stock']);
+    }
+  }
+}
+
 /** Өдрийн эцсийн автомат өр — өдөрт нэг удаа (арын ажил, олон апп байсан ч advisory lock + тэмдэглэлээр нэг л удаа) */
 export async function closeDayShortages(now = new Date()): Promise<{ ran: boolean; skipped?: boolean; date?: string; created?: number; changed?: number; resolved?: number }> {
   const date = ubDay(now, -1);

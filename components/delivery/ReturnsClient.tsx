@@ -14,7 +14,7 @@ import { money, ubDateTime } from '@/lib/format';
  * (цуцалсан, маргааш болсон, болиулсан, нэмэлт) нэг жагсаалтаар — тоолж оруулаад «Хүлээн авсан». Дутуу нь жолоочид үлдэнэ.
  */
 interface BRow { driverId: string; name: string; balance: number; held: number; returnable: number; lastReturnAt: string | null }
-interface Item { variantId: number; code: string; name: string; label: string; thumb: string | null; shelfCode: string | null; balance: number; held: number; returnable: number }
+interface Item { variantId: number; code: string; name: string; label: string; thumb: string | null; shelfCode: string | null; balance: number; held: number; returnable: number; extra?: number; sold?: number }
 interface Doc { id: number; kindLabel: string; at: string; byName: string; note: string | null; total: number; lines: { name: string; label: string; qty: number; expected: number }[] }
 interface Detail { driver: { id: string; name: string }; canReceive: boolean; items: Item[]; totals: { balance: number; returnable: number }; docs: Doc[]; sources: { id: number; number: string; why: string; at: string | null }[] }
 
@@ -84,7 +84,7 @@ export function ReturnsClient() {
                         const v = Number(cnt[i.variantId] ?? 0) || 0;
                         return (
                           <tr key={i.variantId} className={clsx(v < i.returnable && 'bg-warn-soft/40')}>
-                            <td className="px-3 py-2"><div className="flex items-center gap-2"><Thumb src={i.thumb} alt={i.name} size={36} zoom={i.code} /><span className="min-w-0 [overflow-wrap:anywhere]"><b>{i.name}</b>{i.label ? ` · ${i.label}` : ''}<span className="block text-[12px] text-subtle">{i.code}</span></span></div></td>
+                            <td className="px-3 py-2"><div className="flex items-center gap-2"><Thumb src={i.thumb} alt={i.name} size={36} zoom={i.code} /><span className="min-w-0 [overflow-wrap:anywhere]"><b>{i.name}</b>{i.label ? ` · ${i.label}` : ''}<span className="block text-[12px] text-subtle">{i.code}</span>{i.extra ? <span data-return-extra className="mt-0.5 inline-block rounded-full bg-info-soft px-2 py-0.5 text-[11.5px] font-bold text-info">Нэмэлт бараа{i.extra < i.returnable ? ` ${i.extra}ш` : ''}</span> : null}</span></div></td>
                             <td className="px-2 py-2 font-semibold">{i.shelfCode ?? '—'}</td>
                             <td className="px-2 py-2 text-right font-bold">{i.returnable}</td>
                             <td className="px-3 py-2 text-right"><input inputMode="numeric" aria-label={`${i.name} ирсэн`} value={cnt[i.variantId] ?? ''} disabled={!d.canReceive}

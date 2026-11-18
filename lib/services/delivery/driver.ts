@@ -63,17 +63,22 @@ function noPendingIssue(o: Order) {
 /** Жолоочийн гарт байгаа бараа: үлдэгдэл, хүргэлтэд явж буй захиалгынх (held), буцаах (returnable) */
 export async function driverGoods(tx: Tx | typeof db, driverId: string) {
   const loc = await tx.stockLocation.findUnique({ where: { kind_userId: { kind: 'DRIVER', userId: driverId } }, select: { id: true } });
-  const [bal, held] = await Promise.all([
+  const [bal, held, sold] = await Promise.all([
     loc ? tx.stockBalance.findMany({ where: { locationId: loc.id, qty: { gt: 0 } }, select: { variantId: true, qty: true } }) : Promise.resolve([]),
     tx.$queryRaw<{ variantId: number; qty: number }[]>`
       SELECT l."variantId", sum(l.qty)::int AS qty FROM "OrderLine" l JOIN "Order" o ON o.id = l."orderId"
       WHERE o.status = 'OUT_FOR_DELIVERY' AND o."driverId" = ${driverId}::uuid GROUP BY 1`,
+    // #175: нэмэлт бараа «зарсан» (нягтлан мөнгийг нь хараахан аваагүй) — жолоочид байгаа ч буцаах бараанд тооцогдохгүй
+    tx.$queryRaw<{ variantId: number; qty: number }[]>`
+      SELECT l."variantId", sum(l.qty)::int AS qty FROM "DriverDoc" d JOIN "DriverDocLine" l ON l."docId" = d.id
+      WHERE d.kind = 'EXTRA_SALE' AND d.status = 'REPORTED' AND d."driverId" = ${driverId}::uuid GROUP BY 1`,
   ]);
   const balance = new Map(bal.map((b) => [b.variantId, b.qty]));
   const heldM = new Map(held.map((h) => [h.variantId, h.qty]));
+  const soldM = new Map(sold.map((h) => [h.variantId, h.qty]));
   const returnable = new Map<number, number>();
-  for (const [v, q] of balance) { const r = q - (heldM.get(v) ?? 0); if (r > 0) returnable.set(v, r); }
-  return { locationId: loc?.id ?? null, balance, held: heldM, returnable };
+  for (const [v, q] of balance) { const r = q - (heldM.get(v) ?? 0) - (soldM.get(v) ?? 0); if (r > 0) returnable.set(v, r); }
+  return { locationId: loc?.id ?? null, balance, held: heldM, sold: soldM, returnable };
 }
 
 /** Жолоочид буцаах бараа хүрэлцэх эсэх (өөр захиалгын бараанд хүрэхгүй) */

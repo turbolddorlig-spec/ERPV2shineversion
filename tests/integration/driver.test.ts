@@ -347,19 +347,20 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     expect([s.doc.total, s.doc.kind, s.doc.status]).toEqual([20000, 'EXTRA_SALE', 'REPORTED']);
     await DR.deliverOrder(drv, ids[0]!, { payment: 'CASH' });
     await G.receiveReturn(wh, { driverId: drv.id, lines: [{ variantId: v1, qty: 1 }], idemKey: key() });
-    // Аудит Б16: «зарсан» нь зөвхөн мэдээлэл — бараа жолоочид хэвээр, нягтланд мөнгө тушаах хүртэл
-    expect(await goods(drv)).toEqual({ [v1]: [2, 0, 2] });
+    // #175 (Б16-г орлоно): «зарсан» бараа жолоочид хэвээр (журнал хөдлөхгүй) боловч буцаах бараа биш, өр нь буурна
+    expect(await goods(drv)).toEqual({ [v1]: [2, 0, 0] });
+    expect(await db.companyDebt.count({ where: { driverId: drv.id, status: 'PENDING' } })).toBe(0);
     let c = await G.driverControl(sa);
-    expect(c.items.find((x) => x.id === drv.id)).toMatchObject({ delivered: 1, cash: 20000, extraSales: 0, goods: 2, returnable: 2 });
-    // Б17: нягтлан өр үүсгэж (Одоо хаах) «Мөнгө авсан» → бараа жолоочоос хасагдаж, өр дахин үүсэхгүй
-    const DB = await import('@/lib/services/accounting/debts');
-    await DB.closeShortagesNow(sa, drv.id);
-    const debt = await db.companyDebt.findFirstOrThrow({ where: { driverId: drv.id, kind: 'GOODS_NOT_RETURNED', status: 'PENDING' } });
-    await err(DB.resolveDebt(sa, debt.id, { note: 'Бэлнээр өгсөн' }), 400, 'payment_required');
-    await DB.resolveDebt(sa, debt.id, { note: 'Бэлнээр өгсөн', payment: 'CASH' });
+    expect(c.items.find((x) => x.id === drv.id)).toMatchObject({ delivered: 1, cash: 20000, extraSales: 0, goods: 2, returnable: 0 });
+    await err(G.receiveReturn(wh, { driverId: drv.id, lines: [{ variantId: v1, qty: 1 }], idemKey: key() }), 409, 'too_many'); // зарсныг агуулах авахгүй
+    // Нягтлан «Нэмэлтийн мөнгө авсан» → бараа жолоочоос журналаар гарна
+    const X = await import('@/lib/services/accounting/extras');
+    const st = await X.settleExtras(sa, { driverId: drv.id, date: today });
+    expect([st.pieces, st.amount, st.fee + st.receive]).toEqual([2, 20000, 20000]);
     expect(await goods(drv)).toEqual({});
     c = await G.driverControl(sa);
     expect(c.items.find((x) => x.id === drv.id)).toMatchObject({ extraSales: 20000, goods: 0 });
+    const DB = await import('@/lib/services/accounting/debts');
     await DB.closeShortagesNow(sa, drv.id);
     expect(await db.companyDebt.count({ where: { driverId: drv.id, status: 'PENDING' } })).toBe(0);
     await recOk();

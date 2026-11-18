@@ -45,14 +45,16 @@ export const DEFAULT_RULES: SalaryRules = {
   flatRate: 5000,
 };
 
-export type PayMode = 'NORMAL' | 'SPECIAL' | 'REGIONAL';
-export const MODE_LABEL: Record<PayMode, string> = { NORMAL: 'Энгийн', SPECIAL: 'Тусгай', REGIONAL: 'Орон нутаг' };
-export type Tier = 'regional' | 'flat' | 'special' | 'manual' | 'big' | 'small';
+// #175: EXCEPTIONAL «Онцгой» — нягтлангийн дураар тогтоосон 1 хүргэлтийн хөлс (орон нутаг шиг, гүйцэтгэлээс үл хамаарна)
+export type PayMode = 'NORMAL' | 'SPECIAL' | 'REGIONAL' | 'EXCEPTIONAL';
+export const MODE_LABEL: Record<PayMode, string> = { NORMAL: 'Энгийн', SPECIAL: 'Тусгай', REGIONAL: 'Орон нутаг', EXCEPTIONAL: 'Онцгой' };
+export type Tier = 'regional' | 'exceptional' | 'flat' | 'special' | 'manual' | 'big' | 'small';
 
 /** Хуучин ERP-ийн цалингийн хүснэгт (яг ижил дараалал): орон нутаг → тусгай → гараар засагдсан → 35+ → 35-аас цөөн */
 export function rateFor(rules: SalaryRules, mode: { mode: PayMode; regionalRate: number | null }, perf: number, countable: number, manual: boolean): { rate: number; tier: Tier } {
   const pick = (t: Tiers) => (perf >= t.high ? rules.rates.high : perf >= t.mid ? rules.rates.mid : rules.rates.low);
   if (mode.mode === 'REGIONAL') return { rate: mode.regionalRate ?? rules.regionalDefault, tier: 'regional' };
+  if (mode.mode === 'EXCEPTIONAL') return { rate: mode.regionalRate ?? rules.regionalDefault, tier: 'exceptional' };
   if (rules.basis === 'FLAT') return { rate: rules.flatRate, tier: 'flat' };
   if (mode.mode === 'SPECIAL') return { rate: pick(rules.special), tier: 'special' };
   if (manual) return { rate: pick(rules.big), tier: 'manual' };
@@ -160,7 +162,7 @@ export async function computeDay(tx: Tx | typeof db, ymd: string, driverId?: str
     rulesOverride ? Promise.resolve(rulesOverride) : rulesFor(tx, ymd),
     tx.$queryRaw<{ driverId: string; n: number; amount: number }[]>`
       SELECT "driverId", count(*)::int AS n, coalesce(sum(total), 0)::int AS amount FROM "DriverDoc"
-      WHERE kind = 'EXTRA_SALE' AND status = 'DONE' AND "createdAt" >= ${ubDayStart(ymd)} AND "createdAt" < ${ubDayStart(addDays(ymd, 1))}
+      WHERE kind = 'EXTRA_SALE' AND status = 'DONE' AND "settledAt" IS NULL AND "createdAt" >= ${ubDayStart(ymd)} AND "createdAt" < ${ubDayStart(addDays(ymd, 1))}
       ${driverId ? Prisma.sql`AND "driverId" = ${driverId}::uuid` : Prisma.empty} GROUP BY 1`,
   ]);
   const ids = new Set<string>([...handovers.map((h) => h.driverId), ...settlements.map((s) => s.driverId)]);
