@@ -488,10 +488,12 @@ export async function driverOrders(actor: UserActor, tabIn?: string) {
   const tab = (['all', 'delivery', 'delivered', 'cancelled', 'tomorrow', 'yesterday'].includes(tabIn ?? '') ? tabIn : 'all') as DriverTab;
   const me = actor.id;
   // Аудит #155 (эзний шийдвэр, хуучин шиг): апп ЦАГИЙН өдрөөр — #144-ийн шөнийн (00:00–06:00 өчигдрийн падаан) горимыг авсан.
-  // Хүргэлтэд гарсан захиалга огноо харгалзахгүй харагдсаар (бараа жолоочид); тооцоо падааны өдрөөрөө (#83).
+  // Тооцоо падааны өдрөөрөө (#83).
   const today = ubDay(); const t0 = ubDayStart(today); const t1 = ubDayStart(addDays(today, 1));
   const nightShift = false;
-  const active: Prisma.OrderWhereInput = { driverId: me, status: { in: ['ASSIGNED', 'OUT_FOR_DELIVERY'] }, OR: [{ deliveryDate: { lte: dateOnly(today) } }, { status: 'OUT_FOR_DELIVERY' }] };
+  // #169 (эзний шийдвэр, хуучин систем шиг): «Хүргэлт» — ЗӨВХӨН өнөөдрийн падааны (хүргэх өдөр = өнөөдөр) дуусаагүй захиалга.
+  // Маргааш нь «Өчигдөр» таб руу шилжинэ (тэндээс хүргэж / цуцалж болно), нөгөөдөр апп-аас алга болно.
+  const active: Prisma.OrderWhereInput = { driverId: me, status: { in: ['ASSIGNED', 'OUT_FOR_DELIVERY'] }, deliveryDate: dateOnly(today) };
   // Аудит Б2 (B1, #83): «Хүргэсэн / Цуцалсан» ба мөнгө — ӨНӨӨДРИЙН ПАДААНЫ захиалгаар (нягтлангийн «Тооцоо»-той яг ижил).
   // Шөнө 00:00-оос хойш хүргэсэн өчигдрийн падааны захиалга өчигдрийн тооцоонд үлдэнэ.
   const dayIds = (await db.$queryRaw<{ orderId: number }[]>`
@@ -511,7 +513,7 @@ export async function driverOrders(actor: UserActor, tabIn?: string) {
   };
   const rows = await db.order.findMany({ where: where[tab], include: { lines: { orderBy: { id: 'asc' } } }, take: 300, orderBy: [{ routeNo: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }] });
   const counts = await db.$queryRaw<{ k: string; n: number }[]>`
-    SELECT 'delivery' AS k, count(*)::int AS n FROM "Order" WHERE "driverId" = ${me}::uuid AND (status = 'OUT_FOR_DELIVERY' OR (status = 'ASSIGNED' AND "deliveryDate" <= ${dateOnly(today)}::date))
+    SELECT 'delivery' AS k, count(*)::int AS n FROM "Order" WHERE "driverId" = ${me}::uuid AND status IN ('ASSIGNED','OUT_FOR_DELIVERY') AND "deliveryDate" = ${dateOnly(today)}::date
     UNION ALL SELECT 'postponed', count(*)::int FROM "Order" WHERE "postponedByDriverId" = ${me}::uuid AND "postponedAt" >= ${t0} AND "postponedAt" < ${t1} AND status = 'NEW' AND "driverId" IS NULL
     UNION ALL SELECT 'tomorrow', count(*)::int FROM "Order" WHERE "driverId" = ${me}::uuid AND status = 'ASSIGNED' AND "deliveryDate" = ${dateOnly(addDays(today, 1))}::date`;
   const c = Object.fromEntries(counts.map((x) => [x.k, x.n])) as Record<string, number>;
