@@ -270,7 +270,7 @@ function lastHist(h: unknown, re: RegExp): Hist | null {
 const dt = (s: string | undefined, fb: Date) => { const d = s ? new Date(s) : null; return d && !Number.isNaN(d.getTime()) ? d : fb; };
 const orderIdMap = new Map<number, number>();
 async function migrateOrders() {
-  const r = { scanned: 0, created: 0, existing: 0, deleted: 0, skippedDate: 0, badPhone: 0, numberTaken: 0, errors: [] as string[], unknownLines: 0, byStatus: {} as Record<string, number>, openAs: A.open, totalSum: 0 };
+  const r = { scanned: 0, created: 0, existing: 0, deleted: 0, skippedDate: 0, badPhone: 0, numberTaken: 0, renumbered: 0, errors: [] as string[], unknownLines: 0, byStatus: {} as Record<string, number>, openAs: A.open, totalSum: 0 };
   const existing = new Map((await db.order.findMany({ where: { idemKey: { startsWith: 'legacy-' } }, select: { id: true, idemKey: true } })).map((o) => [o.idemKey, o.id]));
   let last = 0;
   for (;;) {
@@ -305,7 +305,7 @@ async function migrateOrders() {
         }
       }
     };
-    await Promise.all(Array.from({ length: 8 }, worker));
+    await Promise.all(Array.from({ length: 6 }, worker));
     log(`захиалга ${r.scanned} уншсан · ${r.created} орсон`);
   }
   // Шинэ захиалгын дугаар хуучинтай давхцахгүй
@@ -314,7 +314,7 @@ async function migrateOrders() {
   await db.$executeRawUnsafe(`SELECT setval('order_number_seq', GREATEST((SELECT last_value FROM order_number_seq), ${next}), false)`);
   report.orders = r;
 }
-async function createOrder(o: OldOrder, phone: string, r: { unknownLines: number; byStatus: Record<string, number>; totalSum: number }) {
+async function createOrder(o: OldOrder, phone: string, r: { unknownLines: number; byStatus: Record<string, number>; totalSum: number; renumbered: number }) {
   // Мөрүүд (ижил хувилбар нэгтгэнэ — @@unique(orderId, variantId))
   const items = Array.isArray(o.products) ? (o.products as { productId?: number; productName?: string; name?: string; displayName?: string; code?: string; quantity?: number; price?: number }[]) : [];
   const lines = new Map<number, { variantId: number; productId: number; code: string; name: string; label: string; imageKey: string | null; price: number; qty: number; value: number }>();
@@ -378,12 +378,24 @@ async function createOrder(o: OldOrder, phone: string, r: { unknownLines: number
     idemKey: `legacy-${o.id}`, createdAt: o.createdAt,
     lines: { create: [...lines.values()].map((l) => ({ variantId: l.variantId, productId: l.productId, code: l.code, name: l.name, label: l.label, imageKey: l.imageKey, listPrice: l.price, unitPrice: l.price, qty: l.qty })) },
   };
-  return db.$transaction(async (tx) => {
+  const write = () => db.$transaction(async (tx) => {
     const c = await tx.order.create({ data, select: { id: true } });
     // Нээлттэй захиалга — барааг нөөцөлнө (V2-ийн дүрэм: «Шинэ» захиалга бараа нөөцөлдөг)
     if (status === 'NEW' || status === 'PENDING_PAYMENT') await tx.stockReservation.createMany({ data: [...lines.values()].map((l) => ({ ref: `order:${c.id}`, orderId: c.id, variantId: l.variantId, qty: l.qty })) });
     return c.id;
-  });
+  }, { timeout: 60_000, maxWait: 60_000 });
+  for (let attempt = 0; ; attempt++) {
+    try { return await write(); } catch (e) {
+      const m = (e as Error).message;
+      // Ачаалалтай серверт commit-ийн хариу хоцорсон ч бичигдсэн байж болно — legacy-<id>-аар шалгана
+      const done = await db.order.findUnique({ where: { idemKey: data.idemKey }, select: { id: true } });
+      if (done) return done.id;
+      // Дугаар шинэ системийн захиалгатай давхцвал (жишээ нь шилжүүлэхээс өмнө үүсгэсэн №00000001) — «L» угтвартай
+      if (/Unique/.test(m) && /number/.test(m) && !data.number.startsWith('L')) { data.number = `L${data.number}`.slice(0, 20); r.renumbered++; continue; }
+      if (attempt < 2 && /Transaction|timeout|closed|expired/i.test(m)) continue;
+      throw e;
+    }
+  }
 }
 
 // ───────────── 6. Хар жагсаалт, өр ─────────────
