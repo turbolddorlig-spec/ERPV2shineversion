@@ -8,6 +8,7 @@ import { Notice } from '@/components/ui/Notice';
 import { Badge } from '@/components/ui/Badge';
 import { api, ApiError } from '@/components/ui/api';
 import { money, ubDateTime } from '@/lib/format';
+import { Thumb } from '@/components/products/ProductsClient';
 
 /**
  * Барааны гарц (Модуль 7г): 7 хоногийн гарц (захиалгын өдрөөр, өдөр дуусахад бэхлэгдэнэ), $/Бүүст/AD, хариуцагч, «Хийсэн ✓»,
@@ -26,7 +27,7 @@ const STATUS: Record<Status, { icon: string; label: string; cls: string }> = {
   LOW: { icon: '🟠', label: 'Зорилт 80–99%', cls: 'text-warn' }, LOSS: { icon: '🔴', label: 'Зорилт хангаагүй', cls: 'text-bad-ink' },
 };
 interface Row {
-  id: number; code: string; name: string; price: number | null; dollar: number; zones: number; adNumber: number | null; ownerId: string | null; ownerName: string | null;
+  id: number; code: string; name: string; price: number | null; imageKey?: string | null; dollar: number; zones: number; adNumber: number | null; ownerId: string | null; ownerName: string | null;
   doneAt: string | null; doneByName: string | null; note: string; daily: number[]; weekTotal: number; avg: number; phones: number[]; phoneWeek: number; variantCount: number; bulk: { n: number; qty: number }[];
   stock?: { total: number; available: number; driver: number }; alert?: 'RED' | 'ORANGE' | null; profit?: { status: Status | null; perUnit: number | null; orders: number; target: number } | null;
   alertInfo?: { level: 'RED' | 'ORANGE'; reasons: string[]; pages: { name: string; n: number }[]; watchedUntil: string | null; watchedBy: string | null } | null;
@@ -159,12 +160,16 @@ export function OutflowClient() {
                 {d.rows.map((r) => (<Fragment key={r.id}>
                   <tr className={clsx('border-t border-line', r.alert === 'RED' && 'shadow-[inset_3px_0_0_var(--bad)]', r.alert === 'ORANGE' && 'shadow-[inset_3px_0_0_var(--warn-ink)]')}>
                     {d.isLead ? <td className="px-2"><input type="checkbox" aria-label={`${r.name} сонгох`} checked={sel.has(r.id)} onChange={(e) => { const n = new Set(sel); if (e.target.checked) n.add(r.id); else n.delete(r.id); setSel(n); }} /></td> : null}
-                    <td className="w-[160px] min-w-[160px] max-w-[160px] px-2 py-1.5" onMouseEnter={(e) => setHover({ id: r.id, x: e.clientX, y: e.clientY })} onMouseLeave={() => setHover(null)}>
-                      <div className="flex items-start gap-1">
+                    <td className="w-[210px] min-w-[210px] max-w-[210px] px-2 py-1.5" onMouseEnter={(e) => setHover({ id: r.id, x: e.clientX, y: e.clientY })} onMouseLeave={() => setHover(null)}>
+                      <div className="flex items-start gap-1.5">
                         {r.variantCount > 1 ? <button type="button" data-variants={r.id} aria-label={`${r.name} өнгө, хэмжээгээр`} aria-expanded={open.has(r.id)} onClick={() => toggle(r.id)} className="mt-0.5 h-5 w-5 shrink-0 rounded text-[12px] text-muted hover:bg-surface2">{open.has(r.id) ? '▾' : '▸'}</button> : null}
-                        <div title={r.name} className="line-clamp-2 min-w-0 [overflow-wrap:anywhere] font-semibold">{r.name}</div>
+                        {/* Хуучин ERP шиг барааны зураг (томруулж харна) */}
+                        <span data-outflow-thumb><Thumb src={r.imageKey ? `/media/${r.imageKey}-sm.webp` : null} alt={r.name} size={36} zoom={r.code} /></span>
+                        <div className="min-w-0">
+                          <div title={r.name} className="line-clamp-2 [overflow-wrap:anywhere] font-semibold">{r.name}</div>
+                          <div className="[overflow-wrap:anywhere] text-[11.5px] text-muted">{r.code}{r.price !== null ? ` · ${money(r.price)}` : ''}{r.doneAt ? ` · ✓ ${r.doneByName ?? ''}` : ''}</div>
+                        </div>
                       </div>
-                      <div className="[overflow-wrap:anywhere] text-[11.5px] text-muted">{r.code}{r.price !== null ? ` · ${money(r.price)}` : ''}{r.doneAt ? ` · ✓ ${r.doneByName ?? ''}` : ''}</div>
                     </td>
                     <BoostCell row={r} field="dollar" post={post} />
                     <BoostCell row={r} field="zones" post={post} />
@@ -191,7 +196,7 @@ export function OutflowClient() {
             {d.rows.map((r) => (
               <div key={r.id} className={clsx('flex min-w-0 flex-col gap-2 rounded-2xl border border-line bg-surface p-3', r.alert === 'RED' && 'border-l-4 border-l-bad', r.alert === 'ORANGE' && 'border-l-4 border-l-warn')}>
                 <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0"><b className="[overflow-wrap:anywhere]">{r.name}</b><div className="[overflow-wrap:anywhere] text-[12px] text-muted">{r.code} · {r.ownerName ?? 'хариуцагчгүй'}{r.doneAt ? ' · ✓' : ''}</div></div>
+                  <div className="flex min-w-0 items-start gap-2"><Thumb src={r.imageKey ? `/media/${r.imageKey}-sm.webp` : null} alt={r.name} size={44} zoom={r.code} /><div className="min-w-0"><b className="[overflow-wrap:anywhere]">{r.name}</b><div className="[overflow-wrap:anywhere] text-[12px] text-muted">{r.code} · {r.ownerName ?? 'хариуцагчгүй'}{r.doneAt ? ' · ✓' : ''}</div></div></div>
                   <div className="shrink-0 text-right"><b className="text-[18px]">{r.weekTotal}</b><div className="text-[11px] text-muted">7 хоног · ⌀{r.avg}</div></div>
                 </div>
                 <div className="grid grid-cols-7 gap-1 text-center text-[12px]">
@@ -249,7 +254,7 @@ function VariantRows({ id, lead, sa, cover, onCover, onHover }: { id: number; le
       {v.variants.map((x) => (
         <tr key={x.id} data-variant-row className="border-t border-line/60 bg-surface2/50 text-[12px]">
           {lead ? <td /> : null}
-          <td className="w-[160px] min-w-[160px] max-w-[160px] py-1 pl-7 pr-2" onMouseEnter={(e) => onHover?.(x.id, x.label, e)} onMouseLeave={() => onHover?.(x.id, x.label, null)}><div className="line-clamp-2 [overflow-wrap:anywhere] text-muted">↳ <b className="text-ink">{x.label}</b></div><div className="text-[10.5px] text-subtle">{x.code}</div></td>
+          <td className="w-[210px] min-w-[210px] max-w-[210px] py-1 pl-7 pr-2" onMouseEnter={(e) => onHover?.(x.id, x.label, e)} onMouseLeave={() => onHover?.(x.id, x.label, null)}><div className="line-clamp-2 [overflow-wrap:anywhere] text-muted">↳ <b className="text-ink">{x.label}</b></div><div className="text-[10.5px] text-subtle">{x.code}</div></td>
           <td /><td /><td />
           {x.daily.map((n, i) => <td key={i} className="px-0.5 py-1 text-center"><div className={clsx('mx-auto w-9 rounded-md py-0.5', n ? 'font-semibold text-ink' : 'text-subtle')}>{n}</div>{x.phones[i] ? <div className="text-[10px] text-warn">☎{x.phones[i]}</div> : null}</td>)}
           <td className="px-1 py-1 text-center font-bold">{x.week}</td>
