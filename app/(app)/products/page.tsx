@@ -4,7 +4,7 @@ import { PageHeader } from '@/components/shell/AppShell';
 import { ProductsClient } from '@/components/products/ProductsClient';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Бараа · zahialga•' };
+export const metadata = { title: 'Бараа' };
 
 export default async function ProductsPage() {
   const { user, access } = await requirePage('products');

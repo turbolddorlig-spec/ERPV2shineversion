@@ -5,9 +5,10 @@ import { GmailSettings } from '@/components/accounting/GmailSettings';
 import { OfficeAccess } from '@/components/orders/OfficeAccess';
 import { PenaltyAutoSettings } from '@/components/penalties/PenaltyAutoSettings';
 import { DriveSettings } from '@/components/orders/DriveSettings';
+import { BrandSettings } from '@/components/orders/BrandSettings';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Тохиргоо · zahialga•' };
+export const metadata = { title: 'Тохиргоо' };
 
 export default async function SettingsPage() {
   const { user } = await requirePage('settings');
@@ -30,7 +31,7 @@ export default async function SettingsPage() {
         <p className="text-[13px] text-subtle">Gmail хаяг, 16 оронтой App Password-оо бичээд «Хадгалаад Sync» дарна. Холбогдсоны дараа банкны орлого автоматаар «Банкны импорт»-д орж, утас + дүнгээр захиалга «Мөнгө орсон» болно.</p>
         <GmailSettings />
       </section>
-      {user.roles.includes('SUPER_ADMIN') ? <DriveSettings /> : null}
+      {user.roles.includes('SUPER_ADMIN') ? <><BrandSettings /><DriveSettings /></> : null}
     </>
   );
 }

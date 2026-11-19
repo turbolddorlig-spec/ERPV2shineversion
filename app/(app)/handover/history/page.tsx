@@ -3,7 +3,7 @@ import { PageHeader } from '@/components/shell/AppShell';
 import { HandoverHistoryClient } from '@/components/delivery/HandoverHistoryClient';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Падааны түүх · zahialga•' };
+export const metadata = { title: 'Падааны түүх' };
 
 export default async function HandoverHistoryPage() {
   await requirePage('handover');

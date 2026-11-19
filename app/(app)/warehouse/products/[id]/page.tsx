@@ -4,7 +4,7 @@ import { PageHeader } from '@/components/shell/AppShell';
 import { MovesClient } from '@/components/stock/MovesClient';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Барааны түүх · zahialga•' };
+export const metadata = { title: 'Барааны түүх' };
 
 export default async function ProductStockHistoryPage({ params }: { params: { id: string } }) {
   await requirePage('warehouse');

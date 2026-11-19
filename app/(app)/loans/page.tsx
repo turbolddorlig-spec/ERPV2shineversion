@@ -5,7 +5,7 @@ import { WarehouseNav } from '@/components/stock/WarehouseNav';
 import { LoansClient } from '@/components/stock/LoansClient';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Бараа зээл · zahialga•' };
+export const metadata = { title: 'Бараа зээл' };
 
 export default async function LoansPage({ searchParams }: { searchParams: { from?: string } }) {
   const { user } = await requirePage('loans');

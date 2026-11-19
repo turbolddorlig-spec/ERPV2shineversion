@@ -5,7 +5,7 @@ import { WarehouseNav } from '@/components/stock/WarehouseNav';
 import { CountsClient } from '@/components/stock/CountsClient';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Тооллого · zahialga•' };
+export const metadata = { title: 'Тооллого' };
 
 export default async function CountsPage() {
   const { user } = await requirePage('warehouse');

@@ -5,7 +5,7 @@ import { money, ubDateTime } from '@/lib/format';
 import { PrintButton } from './PrintButton';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Падаан · zahialga•' };
+export const metadata = { title: 'Падаан' };
 
 const mmdd = (d: Date | null) => (d ? `${new Date(d.getTime() + 8 * 3600_000).getUTCMonth() + 1} сарын ${new Date(d.getTime() + 8 * 3600_000).getUTCDate()}-нд үүссэн` : '');
 

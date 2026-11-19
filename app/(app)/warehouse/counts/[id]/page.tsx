@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/shell/AppShell';
 import { CountDetail } from '@/components/stock/CountsClient';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Тооллого · zahialga•' };
+export const metadata = { title: 'Тооллого' };
 
 export default async function CountPage({ params }: { params: { id: string } }) {
   const { user } = await requirePage('warehouse');

@@ -6,7 +6,7 @@ import { Notice } from '@/components/ui/Notice';
 import { canApproveStock } from '@/lib/permissions';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Зарлага хянах · zahialga•' };
+export const metadata = { title: 'Зарлага хянах' };
 
 /** Аудит #143: зарлага шууд гарна — Супер админ, Админ үнийн дүнтэй жагсаалтаар хянаж «Шалгасан» гэж тэмдэглэнэ */
 export default async function IssuesReviewPage() {

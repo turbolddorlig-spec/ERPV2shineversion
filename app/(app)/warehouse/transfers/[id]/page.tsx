@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/shell/AppShell';
 import { TransferDetail } from '@/components/stock/TransfersClient';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Шилжүүлэг · zahialga•' };
+export const metadata = { title: 'Шилжүүлэг' };
 
 export default async function TransferPage({ params }: { params: { id: string } }) {
   const { user } = await requirePage('warehouse');

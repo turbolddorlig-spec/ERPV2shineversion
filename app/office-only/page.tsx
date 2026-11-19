@@ -1,6 +1,6 @@
 import { OfficeLogout } from './OfficeLogout';
 
-export const metadata = { title: 'Зөвхөн ажлын байрнаас · zahialga•' };
+export const metadata = { title: 'Зөвхөн ажлын байрнаас' };
 
 /** «Зөвхөн ажлын байрнаас» (#86): ажлын интернэтээс гадуур байгаа хязгаарлагдсан ажилтанд */
 export default function OfficeOnly() {

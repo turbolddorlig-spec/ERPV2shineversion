@@ -3,7 +3,7 @@ import { requirePage } from '@/lib/current-user';
 import { OrdersClient } from '@/components/orders/OrdersClient';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Шинэ захиалга · zahialga•' };
+export const metadata = { title: 'Шинэ захиалга' };
 
 /** Захиалгын жагсаалт + «Шинэ захиалга» цонх нээлттэй (хуучин ERP шиг) */
 export default async function NewOrderPage() {

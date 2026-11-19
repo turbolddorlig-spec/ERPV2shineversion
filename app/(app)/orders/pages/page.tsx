@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/shell/AppShell';
 import { PageAssignClient } from '@/components/orders/OrderAdminClients';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Пэйж хуваарилалт · zahialga•' };
+export const metadata = { title: 'Пэйж хуваарилалт' };
 
 export default async function Page() {
   const { user } = await requirePage('orders');

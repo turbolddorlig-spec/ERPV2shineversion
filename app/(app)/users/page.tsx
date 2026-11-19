@@ -4,7 +4,7 @@ import { PageHeader } from '@/components/shell/AppShell';
 import { UsersClient } from './UsersClient';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Хэрэглэгч · zahialga•' };
+export const metadata = { title: 'Хэрэглэгч' };
 
 export default async function UsersPage() {
   const { user } = await requirePage('users');

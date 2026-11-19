@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/shell/AppShell';
 import { DiscountReviewClient } from '@/components/orders/OrderAdminClients';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Хөнгөлөлт шалгах · zahialga•' };
+export const metadata = { title: 'Хөнгөлөлт шалгах' };
 
 export default async function Page() {
   const { user } = await requirePage('orders');

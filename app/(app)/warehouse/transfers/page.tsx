@@ -5,7 +5,7 @@ import { WarehouseNav } from '@/components/stock/WarehouseNav';
 import { TransfersClient } from '@/components/stock/TransfersClient';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Шилжүүлэг · zahialga•' };
+export const metadata = { title: 'Шилжүүлэг' };
 
 export default async function TransfersPage() {
   const { user } = await requirePage('warehouse');

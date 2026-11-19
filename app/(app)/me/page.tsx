@@ -7,7 +7,7 @@ import { ChangePasswordForm } from '@/components/ChangePasswordForm';
 import { MeActions } from './MeActions';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Миний мэдээлэл · zahialga•' };
+export const metadata = { title: 'Миний мэдээлэл' };
 
 export default async function MePage() {
   const user = await requireUser();

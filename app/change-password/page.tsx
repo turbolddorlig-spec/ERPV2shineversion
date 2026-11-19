@@ -3,7 +3,7 @@ import { currentSession } from '@/lib/current-user';
 import { ChangePasswordForm } from '@/components/ChangePasswordForm';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Нууц үг солих · zahialga•' };
+export const metadata = { title: 'Нууц үг солих' };
 
 export default async function ChangePasswordPage() {
   const s = await currentSession();

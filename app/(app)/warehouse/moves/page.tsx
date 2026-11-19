@@ -4,7 +4,7 @@ import { WarehouseNav } from '@/components/stock/WarehouseNav';
 import { MovesClient } from '@/components/stock/MovesClient';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Хөдөлгөөн · zahialga•' };
+export const metadata = { title: 'Хөдөлгөөн' };
 
 export default async function MovesPage() {
   await requirePage('warehouse');

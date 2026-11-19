@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/shell/AppShell';
 import { StockDocForm } from '@/components/stock/StockDocForm';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Зарлага · zahialga•' };
+export const metadata = { title: 'Зарлага' };
 
 export default async function IssuePage() {
   const { user } = await requirePage('warehouse');

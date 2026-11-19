@@ -15,10 +15,13 @@ function initials(name: string) {
   return name.split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
 }
 
-function Logo({ small }: { small?: boolean }) {
+/** #177 Нэр ба лого — Тохиргооноос (компани бүр өөрийнх) */
+export interface BrandView { name: string; dot: boolean; logo: string | null }
+const DEFAULT_BRAND_VIEW: BrandView = { name: 'zahialga', dot: true, logo: null };
+function Logo({ small, brand }: { small?: boolean; brand: BrandView }) {
   return (
-    <span className={clsx('font-extrabold tracking-[-0.03em]', small ? 'text-[19px]' : 'text-[22px]')}>
-      zahialga<span className="text-accent">•</span>
+    <span data-brand-name className={clsx('block max-w-full truncate font-extrabold tracking-[-0.03em]', small ? 'text-[19px]' : 'text-[22px]')}>
+      {brand.name}{brand.dot ? <span className="text-accent">•</span> : null}
     </span>
   );
 }
@@ -33,7 +36,7 @@ async function logout() {
 export interface StockAlert { kind: 'mismatch' | 'stale'; count: number; at: string | null; since: string | null }
 const ubTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString('mn-MN', { timeZone: 'Asia/Ulaanbaatar', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 
-export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHref, assignAlert, handoverAlert, paidCancelAlert, staleGoodsAlert, jobsAlert, shortageSkip, backupAlert, smsAlert, children }: { user: { name: string; roleLabels: string[] }; nav: NavItem[]; alert?: StockAlert | null; boostAlert?: { red: number; orange: number } | null; reorderAlert?: { urgent: number; order: number; late: number } | null; reorderHref?: string; assignAlert?: { today: number; leftover: number; late: boolean; hour: number } | null; handoverAlert?: { count: number } | null; paidCancelAlert?: { count: number } | null; staleGoodsAlert?: { drivers: number; qty: number; amount: number; days: number } | null; jobsAlert?: { at: string } | null; shortageSkip?: { date: string; at: string } | null; backupAlert?: { level: 'bad' | 'warn'; text: string }[] | null; smsAlert?: { count: number; error: string | null } | null; children: ReactNode }) {
+export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHref, assignAlert, handoverAlert, paidCancelAlert, staleGoodsAlert, jobsAlert, shortageSkip, backupAlert, smsAlert, brand = DEFAULT_BRAND_VIEW, children }: { brand?: BrandView; user: { name: string; roleLabels: string[] }; nav: NavItem[]; alert?: StockAlert | null; boostAlert?: { red: number; orange: number } | null; reorderAlert?: { urgent: number; order: number; late: number } | null; reorderHref?: string; assignAlert?: { today: number; leftover: number; late: boolean; hour: number } | null; handoverAlert?: { count: number } | null; paidCancelAlert?: { count: number } | null; staleGoodsAlert?: { drivers: number; qty: number; amount: number; days: number } | null; jobsAlert?: { at: string } | null; shortageSkip?: { date: string; at: string } | null; backupAlert?: { level: 'bad' | 'warn'; text: string }[] | null; smsAlert?: { count: number; error: string | null } | null; children: ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [pathname]);
@@ -85,9 +88,13 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
       {/* Компьютер, том таблет: зүүн цэс — өргөн (бүтэцтэй, #130) эсвэл нарийн (хуучин rail) */}
       <nav aria-label="Үндсэн цэс" data-nav={slim ? 'slim' : 'wide'} className={clsx('fixed inset-y-0 left-0 z-30 hidden flex-col gap-0.5 overflow-y-auto bg-rail py-3.5 lg:flex', slim ? 'w-[84px] px-2' : 'w-[204px] px-2.5')}>
         <div className={clsx('mb-3 flex items-center', slim ? 'flex-col gap-2' : 'justify-between pl-1')}>
-          <Link href="/" aria-label="Нүүр" className="grid h-11 w-11 place-items-center rounded-[13px] bg-[#E8590C] text-[22px] font-extrabold tracking-[-0.04em] text-white">
-            z<span className="text-[#16181D]">.</span>
-          </Link>
+          {brand.logo ? (
+            <Link href="/" aria-label="Нүүр" title={brand.name} className="block h-11 w-11 shrink-0 overflow-hidden rounded-[13px] bg-white"><img data-brand-logo src={brand.logo} alt={brand.name} className="h-full w-full object-cover" /></Link>
+          ) : (
+            <Link href="/" aria-label="Нүүр" title={brand.name} className="grid h-11 w-11 shrink-0 place-items-center rounded-[13px] bg-[#E8590C] text-[22px] font-extrabold tracking-[-0.04em] text-white">
+              {(brand.name.trim()[0] ?? 'z').toLowerCase()}<span className="text-[#16181D]">.</span>
+            </Link>
+          )}
           <div className={clsx('flex items-center gap-1', slim && 'flex-col')}>
             <AlertBell items={alerts} open={bellOpen} setOpen={setBellOpen} dark />
             <button type="button" onClick={toggleSlim} aria-label={slim ? 'Цэсийг өргөн болгох' : 'Цэсийг нарийн болгох'} title={slim ? 'Өргөн цэс' : 'Нарийн цэс'}
@@ -142,7 +149,7 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
           <Icon name="menu" />
         </button>
         <div className="flex min-w-0 flex-1 flex-col leading-tight">
-          <Logo small />
+          <Logo small brand={brand} />
           <span className="flex min-w-0 items-center gap-1.5 text-[12.5px] font-semibold text-muted">
             {current ? <span aria-hidden className="h-2 w-2 shrink-0 rounded-full" style={{ background: moduleColor(current.key) }} /> : null}
             <span className="truncate">{current?.label ?? ''}</span>
@@ -159,7 +166,7 @@ export function AppShell({ user, nav, alert, boostAlert, reorderAlert, reorderHr
           <button type="button" aria-label="Цэс хаах" className="absolute inset-0 bg-black/50" onClick={() => setOpen(false)} />
           <div className="absolute inset-y-0 left-0 flex w-[min(320px,86vw)] flex-col overflow-y-auto bg-surface pb-[max(16px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] shadow-pop">
             <div className="flex items-center justify-between px-4 pb-3">
-              <Logo />
+              <Logo brand={brand} />
               <button type="button" onClick={() => setOpen(false)} aria-label="Цэс хаах" className="grid h-11 w-11 place-items-center rounded-xl text-muted hover:bg-surface2">
                 <Icon name="close" />
               </button>

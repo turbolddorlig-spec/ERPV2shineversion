@@ -1,8 +1,19 @@
 import './globals.css';
 import type { Metadata, Viewport } from 'next';
 import { cookies } from 'next/headers';
+import { brandText, getBrand, logoUrl } from '@/lib/services/brand';
 
-export const metadata: Metadata = { title: 'zahialga• ERP', description: 'Захиалгын систем' };
+// #177: нэр, лого Тохиргооноос (компани бүр өөрийнх) — хуудсын гарчиг «Хуудас · Нэр•»
+export const dynamic = 'force-dynamic';
+export async function generateMetadata(): Promise<Metadata> {
+  const b = await getBrand();
+  const t = brandText(b);
+  const icon = logoUrl(b, 64);
+  return {
+    title: { template: `%s · ${t}`, default: `${t} ERP` }, description: 'Захиалгын систем',
+    icons: icon ? { icon: [{ url: icon, type: 'image/png' }], apple: logoUrl(b, 180)! } : { icon: [{ url: '/icon.svg', type: 'image/svg+xml' }] },
+  };
+}
 export const viewport: Viewport = { width: 'device-width', initialScale: 1, viewportFit: 'cover', themeColor: '#16181D' };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

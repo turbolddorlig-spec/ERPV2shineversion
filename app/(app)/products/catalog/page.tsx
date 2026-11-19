@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/shell/AppShell';
 import { CatalogClient } from '@/components/products/CatalogClient';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Ангилал, улирал · zahialga•' };
+export const metadata = { title: 'Ангилал, улирал' };
 
 export default async function CatalogPage() {
   const { user } = await requirePage('products');

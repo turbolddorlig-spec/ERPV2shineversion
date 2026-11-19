@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/shell/AppShell';
 import { OrderDetail } from '@/components/orders/OrderDetail';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Захиалга · zahialga•' };
+export const metadata = { title: 'Захиалга' };
 
 export default async function OrderPage({ params }: { params: { id: string } }) {
   await requirePage('orders');

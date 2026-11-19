@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/shell/AppShell';
 import { ProductEditor } from '@/components/products/ProductEditor';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Бараа нэмэх · zahialga•' };
+export const metadata = { title: 'Бараа нэмэх' };
 
 export default async function NewProductPage() {
   const { user, access } = await requirePage('products');

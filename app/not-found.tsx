@@ -1,6 +1,6 @@
 import Link from 'next/link';
 
-export const metadata = { title: 'Хуудас олдсонгүй · zahialga•' };
+export const metadata = { title: 'Хуудас олдсонгүй' };
 
 /** Аудит А10: Монгол 404 хуудас */
 export default function NotFound() {

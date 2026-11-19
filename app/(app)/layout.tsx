@@ -2,6 +2,7 @@ import { requireUser } from '@/lib/current-user';
 import { accessTo, visiblePages } from '@/lib/permissions';
 import { ROLE_LABEL } from '@/lib/roles';
 import { AppShell, type NavItem } from '@/components/shell/AppShell';
+import { getBrand, logoUrl } from '@/lib/services/brand';
 import { unreviewedCount } from '@/lib/services/product-history';
 import { reconcileAlert, warehouseBadge } from '@/lib/services/stock/views';
 import { pendingIssueCount } from '@/lib/services/delivery/driver';
@@ -55,13 +56,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     // #166: явж чадаагүй SMS (СА)
     user.roles.includes('SUPER_ADMIN') ? smsFailAlert().catch(() => null) : null,
   ]);
+  const brand = await getBrand();
   const nav: NavItem[] = visiblePages(user.roles).map((p) => ({
     key: p.key, label: p.label, short: p.short, href: p.href, group: p.group, icon: p.icon,
     readOnly: accessTo(user.roles, p.key) === 'view',
     badge: p.key === 'product-history' && pending > 0 ? pending : p.key === 'warehouse' && whWork > 0 ? whWork : p.key === 'orders' && discounts > 0 ? discounts : p.key === 'issues' && issues > 0 ? issues : undefined,
   }));
   return (
-    <AppShell user={{ name: user.name, roleLabels: user.roles.map((r) => ROLE_LABEL[r]) }} nav={nav}
+    <AppShell user={{ name: user.name, roleLabels: user.roles.map((r) => ROLE_LABEL[r]) }} nav={nav} brand={{ name: brand.name, dot: brand.dot, logo: logoUrl(brand) }}
       jobsAlert={jobs} shortageSkip={skip} backupAlert={backup} boostAlert={boost} reorderAlert={reorder} assignAlert={unassigned} handoverAlert={staleHo} paidCancelAlert={paidCancel} staleGoodsAlert={staleGoods} smsAlert={smsFail} reorderHref={user.roles.includes('SUPPLIER') ? '/supplier' : user.roles.includes('PURCHASER') && !user.roles.includes('SUPER_ADMIN') ? '/reorder' : '/goods-outflow?tab=reorder'}
       alert={recAlert ? { kind: recAlert.kind, count: recAlert.status?.count ?? 0, at: recAlert.status?.at ?? null, since: recAlert.status?.since ?? null } : null}>
       {children}

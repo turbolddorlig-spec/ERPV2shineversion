@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/shell/AppShell';
 import { StockDocForm } from '@/components/stock/StockDocForm';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Шилжүүлэг · zahialga•' };
+export const metadata = { title: 'Шилжүүлэг' };
 
 export default async function NewTransferPage() {
   const { user } = await requirePage('warehouse');

@@ -5,7 +5,7 @@ import { WarehouseNav } from '@/components/stock/WarehouseNav';
 import { WarehousesClient } from '@/components/stock/WarehousesClient';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Агуулахууд · zahialga•' };
+export const metadata = { title: 'Агуулахууд' };
 
 export default async function WarehouseSettingsPage() {
   const { user } = await requirePage('warehouse');

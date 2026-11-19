@@ -5,7 +5,7 @@ import { WarehouseNav } from '@/components/stock/WarehouseNav';
 import { RefillClient } from '@/components/stock/RefillClient';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Дүүргэлт · zahialga•' };
+export const metadata = { title: 'Дүүргэлт' };
 
 export default async function RefillPage() {
   const { user } = await requirePage('warehouse');

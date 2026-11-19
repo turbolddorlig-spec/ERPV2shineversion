@@ -3,7 +3,7 @@ import { PageHeader } from '@/components/shell/AppShell';
 import { BlacklistClient } from '@/components/orders/OrderAdminClients';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Хар жагсаалт · zahialga•' };
+export const metadata = { title: 'Хар жагсаалт' };
 
 export default async function Page() {
   await requirePage('orders');

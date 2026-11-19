@@ -1,6 +1,6 @@
 import Link from 'next/link';
 
-export const metadata = { title: 'Эрхгүй · zahialga•' };
+export const metadata = { title: 'Эрхгүй' };
 
 export default function Forbidden() {
   return (

@@ -3,7 +3,7 @@ import { PageHeader } from '@/components/shell/AppShell';
 import { HistoryClient } from '@/components/products/HistoryClient';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Барааны засвар · zahialga•' };
+export const metadata = { title: 'Барааны засвар' };
 
 export default async function ProductHistoryPage() {
   const { user, access } = await requirePage('product-history');
