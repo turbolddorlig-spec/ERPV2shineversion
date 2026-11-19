@@ -24,7 +24,8 @@ function args(): Args {
   const get = (k: string) => { const i = a.indexOf(k); return i >= 0 ? a[i + 1] ?? null : null; };
   const legacy = get('--legacy') ?? process.env.LEGACY_URL ?? '';
   if (!legacy) { console.error('--legacy <postgres url> заавал'); process.exit(1); }
-  const open = get('--open') === 'cancel' ? 'cancel' : 'new';
+  // Эзний шийдвэр (2026-11-20): дуусаагүй хуучин захиалга «Цуцалсан» болж орно (--open new — идэвхтэй болгох)
+  const open = get('--open') === 'new' ? 'new' : 'cancel';
   return { legacy, images: get('--images'), skipFrom: get('--skip-from'), skipTo: get('--skip-to'), open, analyze: a.includes('--analyze') };
 }
 const A = args();
@@ -230,13 +231,25 @@ async function unknownLineRaw() {
 
 // ───────────── 4. Пэйж ─────────────
 const pageMap = new Map<string, Promise<number>>();
+/** Эзний шийдвэр: «Greenshopy» ба «Green shopy» нэг пэйж — зай, том/жижиг үсгийг үл харгалзана; хамгийн олон захиалгатай бичлэгээр нэрлэнэ */
+const pageKey = (s: string) => s.toLowerCase().replace(/\s+/g, '');
+const pageCanon = new Map<string, string>();
 function pageId(name: string | null | undefined) {
-  const n = String(name ?? '').trim().slice(0, 100) || 'Хуучин ERP';
+  const raw = String(name ?? '').trim().slice(0, 100) || 'Хуучин ERP';
+  const n = pageCanon.get(pageKey(raw)) ?? raw;
   if (!pageMap.has(n)) pageMap.set(n, db.page.upsert({ where: { name: n }, create: { name: n }, update: {} }).then((p) => p.id));
   return pageMap.get(n)!;
 }
 async function migratePages() {
   let n = 0;
+  const names = await q<{ name: string | null; n: number }>(`SELECT "shopSource" AS name, count(*)::int AS n FROM "Order" WHERE "deletedAt" IS NULL GROUP BY 1 ORDER BY 2 DESC`);
+  const merged: Record<string, string[]> = {};
+  for (const x of names) {
+    const raw = String(x.name ?? '').trim().slice(0, 100); if (!raw) continue;
+    const k = pageKey(raw);
+    if (!pageCanon.has(k)) pageCanon.set(k, raw); else (merged[pageCanon.get(k)!] ??= []).push(raw);
+  }
+  report.pagesMerged = merged;
   if (await tableExists('FacebookPage')) for (const p of await q<{ pageName: string; displayName: string | null }>(`SELECT "pageName", "displayName" FROM "FacebookPage" WHERE "isActive"`)) { await pageId(p.displayName || p.pageName); n++; }
   report.pages = { facebookPages: n };
 }
