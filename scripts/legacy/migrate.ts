@@ -18,7 +18,7 @@ import { saveProductImage } from '../../lib/storage';
 import { variantCode, cleanProductCode } from '../../lib/catalog/variants';
 
 const db = new PrismaClient();
-type Args = { legacy: string; images: string | null; skipFrom: string | null; skipTo: string | null; open: 'new' | 'cancel'; analyze: boolean };
+type Args = { legacy: string; images: string | null; skipFrom: string | null; skipTo: string | null; open: 'new' | 'cancel'; analyze: boolean; initialStock: number };
 function args(): Args {
   const a = process.argv.slice(2);
   const get = (k: string) => { const i = a.indexOf(k); return i >= 0 ? a[i + 1] ?? null : null; };
@@ -26,7 +26,8 @@ function args(): Args {
   if (!legacy) { console.error('--legacy <postgres url> заавал'); process.exit(1); }
   // Эзний шийдвэр (2026-11-20): дуусаагүй хуучин захиалга «Цуцалсан» болж орно (--open new — идэвхтэй болгох)
   const open = get('--open') === 'new' ? 'new' : 'cancel';
-  return { legacy, images: get('--images'), skipFrom: get('--skip-from'), skipTo: get('--skip-to'), open, analyze: a.includes('--analyze') };
+  const initialStock = Math.max(0, Math.min(10000, Math.floor(Number(get('--initial-stock') ?? 0) || 0)));
+  return { legacy, images: get('--images'), skipFrom: get('--skip-from'), skipTo: get('--skip-to'), open, analyze: a.includes('--analyze'), initialStock };
 }
 const A = args();
 const L = new PrismaClient({ datasourceUrl: A.legacy });
@@ -448,6 +449,26 @@ async function migrateDebts() {
   report.debts = r;
 }
 
+// ───────────── 6б. Түр үлдэгдэл (эзний хүсэлт) ─────────────
+/**
+ * Идэвхтэй бараа (идэвхтэй хувилбар) бүрт N ширхэг — үндсэн агуулахад «Орлого» баримтаар (журнал, B2 — тулгалт зөрөхгүй).
+ * Эзэн маргааш тоолж «Тооллого»-оор бодит үлдэгдэлд тохируулна. Дахин ажиллуулахад давхар нэмэгдэхгүй (idemKey).
+ */
+async function initialStock(n: number) {
+  const { createReceipt } = await import('../../lib/services/stock/docs');
+  const wh = await db.warehouse.findFirst({ where: { isPrimary: true }, select: { id: true, name: true } });
+  if (!wh) { report.initialStock = { error: 'үндсэн агуулах алга' }; return; }
+  const vs = await db.productVariant.findMany({ where: { isActive: true, product: { status: 'ACTIVE', code: { not: 'LEGACY-UNKNOWN' } } }, select: { id: true }, orderBy: { id: 'asc' } });
+  const actor = { id: migrator.id, name: migrator.name, roles: migrator.roles, ip: '127.0.0.1' };
+  let docs = 0, dup = 0;
+  for (let i = 0; i < vs.length; i += 400) {
+    const chunk = vs.slice(i, i + 400);
+    const r = await createReceipt(actor as never, { warehouseId: wh.id, idemKey: `legacy-initstock-${n}-${i / 400}`, note: `Түр үлдэгдэл ${n}ш (шилжүүлэлт) — тоолж «Тооллого»-оор засна`, lines: chunk.map((v) => ({ variantId: v.id, qty: n })) });
+    if (r.duplicate) dup++; else docs++;
+  }
+  report.initialStock = { perVariant: n, variants: vs.length, warehouse: wh.name, receipts: docs, alreadyDone: dup };
+}
+
 // ───────────── 7. Тулгалт ─────────────
 async function reconcile() {
   const where = `"deletedAt" IS NULL ${A.skipFrom && A.skipTo ? `AND (("createdAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Ulaanbaatar')::date NOT BETWEEN '${A.skipFrom}'::date AND '${A.skipTo}'::date` : ''}`;
@@ -475,6 +496,7 @@ async function main() {
     await migrateOrders(); log('захиалга ✓');
     await migrateBlacklist(); log('хар жагсаалт ✓');
     await migrateDebts(); log('өр ✓');
+    if (A.initialStock > 0) { await initialStock(A.initialStock); log(`түр үлдэгдэл ${A.initialStock} ✓`); }
     await reconcile();
     await db.auditLog.create({ data: { actorName: 'Хуучин ERP шилжүүлэлт', action: 'legacy.migrated', entityType: 'System', details: JSON.parse(JSON.stringify(report, (_k, v) => (typeof v === 'bigint' ? Number(v) : v))) as never, tags: ['system'] } });
   }

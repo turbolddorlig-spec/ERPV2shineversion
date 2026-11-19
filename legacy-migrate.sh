@@ -10,6 +10,7 @@
 #   ./legacy-migrate.sh cleanup   — туршилтын систем, түр database, хуулбар файлуудыг устгана
 #
 # Эзний шийдвэр: 11/18–11/20-нд ҮҮССЭН захиалга орохгүй (хуучин ERP-д дуусгана); нийлүүлэгч орохгүй; үлдэгдэл 0 (тоолж оруулна).
+# Түр үлдэгдэл: INITIAL_STOCK=100 ./legacy-migrate.sh real — идэвхтэй бараа бүрт 100ш «Орлого»-оор (дараа нь «Тооллого»-оор засна).
 set -euo pipefail
 cd "$(dirname "$0")"
 say() { printf '\n\033[1;33m▶ %s\033[0m\n' "$1"; }
@@ -42,7 +43,7 @@ run_migrate() { # $1 = зорилтот database, $2 = зургийн volume, ү
   local target="$1" vol="$2"; shift 2
   local imgargs=(); [ -d "$M/images" ] && imgargs=(-v "$M/images:/legacy-images:ro")
   docker compose run --rm --no-deps -T -e DATABASE_URL="$(url "$target")" -e UPLOAD_DIR=/mig-uploads -v "$vol:/mig-uploads" "${imgargs[@]}" \
-    --entrypoint node app dist/legacy-migrate.mjs --legacy "$(url legacy)" ${imgargs:+--images /legacy-images} --skip-from "$SKIP_FROM" --skip-to "$SKIP_TO" "$@"
+    --entrypoint node app dist/legacy-migrate.mjs --legacy "$(url legacy)" ${imgargs:+--images /legacy-images} --skip-from "$SKIP_FROM" --skip-to "$SKIP_TO" --initial-stock "${INITIAL_STOCK:-0}" "$@"
 }
 
 case "${1:-}" in
