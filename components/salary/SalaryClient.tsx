@@ -249,7 +249,7 @@ function RecordDialog({ ym, row, half, isSA, hasLockCode, onClose, onDone, onUnl
             <section className="rounded-[14px] border border-line p-3">
               <div className="mb-2 text-[13px] font-bold">{orderBased ? 'Захиалгын цалин' : 'Үндсэн цалин'}</div>
               {orderBased ? (
-                <div className="text-[14px]"><b>{a.orderCount}</b> хүргэгдсэн захиалга × {money(a.cfg.oppRatePerOrder)} = <b>{money(a.orderSalary)}</b><p className="text-[12px] text-subtle">Тухайн хугацаанд хүргэгдсэн захиалга (хүргэсэн өдрөөр)</p>
+                <div className="text-[14px]"><b>{a.orderCount}</b> хүргэгдсэн захиалга × {money(a.cfg.oppRatePerOrder)} = <b>{money(a.orderSalary)}</b><p className="text-[12px] text-subtle">Тухайн хугацаанд ҮҮССЭН, хүргэгдсэн захиалга (цуцлагдсан, хүргэгдээгүй нь тоологдохгүй)</p>
                   {!locked && a.lateLabel ? <p className="mt-1 text-[13px] font-semibold text-bad-ink [overflow-wrap:anywhere]">− {money(a.lateDeduction ?? 0)} · {a.lateLabel} (өмнөх цоожилсон цалинд тоологдсон)</p> : null}</div>
               ) : (
                 <div className="grid gap-2 sm:grid-cols-[1fr_1fr]">

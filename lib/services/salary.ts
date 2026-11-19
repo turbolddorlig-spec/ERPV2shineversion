@@ -265,12 +265,13 @@ async function computeInputs(tx: Tx | typeof db, st: Staff, p: Period) {
   let orderCount = 0;
   let lateReturns: { id: number; number: string }[] = [];
   if (!st.external && cfg.salaryType === 'ORDER_BASED' && isOpp) {
-    // Аудит #157 (эзний шийдвэр): зөвхөн ХҮРГЭГДСЭН захиалга, ХҮРГЭСЭН өдрөөр (Улаанбаатар) — урьдчилж төлсөн ч хүргэгдээгүй бол тоологдохгүй.
-    // Хүргэлт хоцорвол дараагийн хагас сарын цалинд орно (цоожилсон цалинд нөлөөлөхгүй, нэг ч захиалга алдагдахгүй); цуцлагдвал тоологдохгүй.
+    // #185 (эзний шийдвэр, #157-г орлоно): хуучин ERP шиг — тухайн хагас сард ҮҮССЭН, ХҮРГЭГДСЭН захиалга (Улаанбаатар).
+    // Цалинг хагас сар дууссанаас 4 хоногийн дараа боддог тул ихэнх нь хүргэгдсэн / цуцлагдсан байна; хүргэгдээгүй, цуцлагдсан нь тоологдохгүй.
+    // Хуучин ERP-тэй ижил дүрэм тул шилжилтийн заагт (11/15 → 11/16) давхардахгүй.
     const r = await tx.$queryRaw<{ n: number }[]>`
       SELECT count(*)::int AS n FROM "Order" o
       WHERE o."operatorId" = ${st.userId!}::uuid AND o.status = 'DELIVERED'
-        AND o."deliveredAt" >= ${ubDayStart(p.start)} AND o."deliveredAt" < ${ubDayStart(addDays(p.end, 1))}`;
+        AND o."createdAt" >= ${ubDayStart(p.start)} AND o."createdAt" < ${ubDayStart(addDays(p.end, 1))}`;
     orderCount = r[0]?.n ?? 0;
     // Аудит #160 (эзний шийдвэр): энэ хугацаанд ХОЖУУ БУЦААСАН захиалга, аль хэдийн ЦООЖИЛСОН өмнөх цалинд тоологдсон бол — энэ цалингаас хасна
     // (цоожлогдоогүй хугацааных бол тэнд автоматаар тоологдохгүй тул энд хасахгүй — давхар хасагдахгүй)
@@ -278,7 +279,7 @@ async function computeInputs(tx: Tx | typeof db, st: Staff, p: Period) {
     lateReturns = await tx.$queryRaw<{ id: number; number: string }[]>`
       SELECT o.id, o.number FROM "Order" o
       JOIN "StaffSalaryRecord" r ON r."staffKey" = ${st.key} AND r."isLocked" AND r."salaryType" = 'ORDER_BASED' AND r."lockedAt" < o."lateCancelledAt"
-        AND (o."deliveredAt" + interval '8 hours')::date BETWEEN r."periodStart" AND r."periodEnd"
+        AND (o."createdAt" + interval '8 hours')::date BETWEEN r."periodStart" AND r."periodEnd"
       WHERE o."operatorId" = ${st.userId!}::uuid AND o."lateCancelledAt" IS NOT NULL AND o."lateCancelledAt" < ${ubDayStart(addDays(p.end, 1))}
         AND GREATEST((o."lateCancelledAt" + interval '8 hours')::date, r."periodEnd" + 1) BETWEEN ${dateOnly(p.start)}::date AND ${dateOnly(p.end)}::date
       ORDER BY o.id`;

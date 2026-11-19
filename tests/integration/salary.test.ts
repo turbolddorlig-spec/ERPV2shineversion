@@ -79,7 +79,7 @@ describe('хагас сар, тогтмол цалин', () => {
     expect((await S.salaryBoard(acc, ym)).totals.transferred).toBe(700_000);
   });
 
-  it('#157 захиалгаар (оператор): зөвхөн ХҮРГЭГДСЭН захиалга, ХҮРГЭСЭН өдрөөр × хөлс; урьдчилж төлсөн ч хүргээгүй бол тоологдохгүй', async () => {
+  it('#185 захиалгаар (оператор): тухайн хагас сард ҮҮССЭН, ХҮРГЭГДСЭН захиалга × хөлс; урьдчилж төлсөн ч хүргээгүй бол тоологдохгүй', async () => {
     const key = `u:${op.id}`;
     await S.setConfig(acc, { staffKey: key, salaryType: 'ORDER_BASED', oppRatePerOrder: 1500, bonusSalary: 0 });
     const page = (await A.savePage(sa, { name: 'Шоп' })).id;
@@ -100,16 +100,22 @@ describe('хагас сар, тогтмол цалин', () => {
     expect([prep.auto.orderCount, prep.auto.orderSalary]).toEqual([2, 3000]);
     const r = await S.saveSalary(acc, { staffKey: key, ym, half, baseSalary: 999_999 });
     expect([r.salaryType, r.orderSalary, r.baseSalary, r.transferSalary]).toEqual(['ORDER_BASED', 3000, 0, 3000]);
-    // хүргэлт хоцорсон (40 хоногийн дараа хүргэсэн) — тэр хүргэсэн өдрийн хагас сард, энэ хугацаанд биш
+    // хүргэлт хоцорсон (40 хоногийн дараа хүргэсэн) — ҮҮССЭН хагас сардаа тоологдоно (хуучин ERP шиг), хүргэсэн хагас сард биш
     const far = U.ubDay(new Date(), 40);
     const a4 = await mk();
     await db.order.update({ where: { id: a4 }, data: { status: 'DELIVERED', deliveredAt: new Date(`${far}T12:00:00+08:00`) } });
     // хүргэсний дараа цуцлагдсан — тоологдохгүй
     const a5 = await mk();
     await db.order.update({ where: { id: a5 }, data: { status: 'CANCELLED', deliveredAt: new Date() } });
-    expect((await S.prepareSalary(acc, key, ym, half)).auto.orderCount).toBe(2);
+    // өмнөх хагас сард үүсээд энэ хагас сард хүргэгдсэн — энэ хугацаанд тоологдохгүй (өмнөх хагас сарын цалинд)
+    const a6 = await mk();
+    const prevDay = U.ubDay(new Date(), -20);
+    await db.order.update({ where: { id: a6 }, data: { status: 'DELIVERED', deliveredAt: new Date(), createdAt: new Date(`${prevDay}T12:00:00+08:00`) } });
+    expect((await S.prepareSalary(acc, key, ym, half)).auto.orderCount).toBe(3);
     const fhalf = Number(far.slice(8)) <= 15 ? 1 : 2;
-    expect((await S.prepareSalary(acc, key, far.slice(0, 7), fhalf)).auto.orderCount).toBe(1);
+    expect((await S.prepareSalary(acc, key, far.slice(0, 7), fhalf)).auto.orderCount).toBe(0);
+    const phalf = Number(prevDay.slice(8)) <= 15 ? 1 : 2;
+    expect((await S.prepareSalary(acc, key, prevDay.slice(0, 7), phalf)).auto.orderCount).toBe(1);
   });
 });
 
