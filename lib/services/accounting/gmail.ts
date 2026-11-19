@@ -4,7 +4,8 @@ import { badRequest, forbidden } from '../../errors';
 import { writeAudit, SYSTEM_ACTOR, type Actor } from '../../audit';
 import { canBankImport, canBankSetup, canEdit, canView } from '../../permissions';
 import type { UserActor } from '../orders/core';
-import { importTransactions, parseKhanMessages, type TxIn } from './bank';
+import { accountAllowed, importTransactions, parseKhanMessages, type TxIn } from './bank';
+import { bankAccounts } from './bank-sms';
 
 /**
  * Gmail холболт (хуучин ERP шиг IMAP + «App Password»): Тохиргоо хуудсанд Gmail хаяг + 16 оронтой App Password бичээд «Sync» —
@@ -151,6 +152,7 @@ async function gmailSyncRaw(actor: Actor, opts: { days?: number } = {}) {
   const days = Math.min(30, Math.max(1, opts.days ?? s.days));
   try {
     const mails = await fetcher({ email: s.email, password, sender: s.sender, days });
+    const accounts = await bankAccounts();
     const txs: TxIn[] = [];
     let skipped = 0; let rejected = 0;
     const rejectedLog: { id: string; from: string }[] = [];
@@ -162,7 +164,9 @@ async function gmailSyncRaw(actor: Actor, opts: { days?: number } = {}) {
       if (!ps.length) { skipped++; continue; }
       const p = ps[0]!;
       if (!p.income) { skipped++; continue; }
-      txs.push({ date: p.date, description: p.description, amount: p.amount, phone: p.phone, emailMessageId: m.id });
+      // #181: Тохиргооны данс (сүүлийн 4 орон) — өөр дансны орлого алгасна
+      if (!accountAllowed(p, accounts)) { skipped++; continue; }
+      txs.push({ date: p.date, description: p.description, amount: p.amount, phone: p.phone, emailMessageId: m.id, fingerprint: p.fingerprint });
     }
     if (rejected) await writeAudit(actor, 'bank.gmail_rejected', 'AppSetting', KEY, { rejected, sample: rejectedLog.slice(0, 20) } as unknown as Prisma.InputJsonValue, db, ['money', 'bank', 'security']);
     const knownTx = new Set((await db.bankTransaction.findMany({ where: { emailMessageId: { in: txs.map((t) => t.emailMessageId!) } }, select: { emailMessageId: true } })).map((x) => x.emailMessageId));

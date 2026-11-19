@@ -2,6 +2,7 @@ import { requirePage } from '@/lib/current-user';
 import { PageHeader } from '@/components/shell/AppShell';
 import { SettingsClient } from '@/components/orders/SettingsClient';
 import { GmailSettings } from '@/components/accounting/GmailSettings';
+import { BankSmsSettings } from '@/components/accounting/BankSmsSettings';
 import { OfficeAccess } from '@/components/orders/OfficeAccess';
 import { PenaltyAutoSettings } from '@/components/penalties/PenaltyAutoSettings';
 import { DriveSettings } from '@/components/orders/DriveSettings';
@@ -27,9 +28,10 @@ export default async function SettingsPage() {
         <OfficeAccess />
       </section>
       <section id="gmail" className="mt-4 flex flex-col gap-3 rounded-[18px] border border-line bg-surface p-4 shadow-card">
-        <h2 className="text-[16px] font-extrabold">Gmail — Хаан банкны мэдэгдэл</h2>
+        <h2 className="text-[16px] font-extrabold">Банкны орлого — Gmail ба утас (Хаан банк)</h2>
         <p className="text-[13px] text-subtle">Gmail хаяг, 16 оронтой App Password-оо бичээд «Хадгалаад Sync» дарна. Холбогдсоны дараа банкны орлого автоматаар «Банкны импорт»-д орж, утас + дүнгээр захиалга «Мөнгө орсон» болно.</p>
         <GmailSettings />
+        {user.roles.includes('SUPER_ADMIN') ? <BankSmsSettings /> : null}
       </section>
       {user.roles.includes('SUPER_ADMIN') ? <><BrandSettings /><DriveSettings /></> : null}
     </>

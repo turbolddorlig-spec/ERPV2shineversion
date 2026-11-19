@@ -182,6 +182,9 @@ async function main() {
     check(`${who} бүгдийг шалгасан болгох → ${want}`, r.status === want, `${r.status} ${r.text.slice(0, 80)}`);
   }
   const saU = await loginAs('80000001');
+  // #181 утаснаас (MacroDroid): нэвтрэлтгүй ч хүрнэ, түлхүүргүй → 401 (redirect биш); тохиргоо зөвхөн СА
+  const sms = await Promise.all([req('/api/bank/sms', { method: 'POST', body: { text: 'Khan Bank' } }), req('/api/settings/bank-sms', { cookie: saU.cookie }), req('/api/settings/bank-sms', { cookie: adm.cookie })]);
+  check('#181 утаснаас: түлхүүргүй 401, СА тохиргоо 200, админ 403', sms[0].status === 401 && sms[1].status === 200 && sms[2].status === 403, sms.map((x) => x.status).join(','));
   // #177 лого ба нэр: Супер админ л; лого хаяг нийтэд (нэвтрээгүй ч 401 биш)
   const br = await Promise.all([req('/api/settings/brand', { cookie: saU.cookie }), req('/api/settings/brand', { cookie: adm.cookie }), req('/brand/logo-64.png'), req('/brand/x.png')]);
   check('#177 лого/нэр: СА 200, админ 403, лого нийтэд (404 биш 401)', br[0].status === 200 && JSON.parse(br[0].text).text?.length > 0 && br[1].status === 403 && br[2].status !== 401 && br[3].status === 404, br.map((x) => x.status).join(','));

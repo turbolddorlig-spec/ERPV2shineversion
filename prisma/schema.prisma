@@ -1159,6 +1159,8 @@ model BankTransaction {
   excessRefundedByName String?
   source         String    @default("CSV")
   emailMessageId String?   @unique
+  /// #181: «khan:<дансны сүүлийн 4>:<дүн>:<үлдэгдэл>» — Gmail ба утаснаас ирсэн ижил гүйлгээг нэг л удаа
+  fingerprint    String?   @unique
   importedAt     DateTime  @default(now())
   importedByName String
   matchedAt      DateTime?

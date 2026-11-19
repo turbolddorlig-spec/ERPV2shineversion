@@ -55,7 +55,7 @@ export function extractPhones(text: string): string[] {
   return out;
 }
 
-export interface ParsedTx { amount: number; date: Date; description: string; phone: string | null; income: boolean }
+export interface ParsedTx { amount: number; date: Date; description: string; phone: string | null; income: boolean; account: string | null; balance: number | null; fingerprint: string | null }
 
 /**
  * Хаан банкны мессеж (хуучин ERP шиг ЗӨВХӨН «Khan Bank» гэсэн толгойтой). Бусад имэйл (сурталчилгаа г.м.) → null.
@@ -85,7 +85,19 @@ export function parseKhanMessage(text: string, when: Date = new Date()): ParsedT
   if (!Number.isFinite(amount) || amount <= 0) return null;
   const u = body.match(/(?:Guilgeenii\s+)?utga\s*:\s*(.*)$/i);
   const description = (u ? u[1]! : '').replace(/\s*Uldegdel\s*:?\s*[\d,]+(?:\.\d{1,2})?\s*MNT\.?/i, '').trim().replace(/\.$/, '').slice(0, 300);
-  return { amount, date: when, description: description || 'Хаан банк (утгагүй)', phone: description ? extractPhones(description)[0] ?? null : null, income };
+  // #181: данс (сүүлийн 4 орон) ба гүйлгээний дараах үлдэгдэл — дансны шүүлтүүр ба давхардал (Gmail + утас) таних
+  const acc = pre.match(/Tany\s+\d*\**(\d{4})\s+dansand/i) ?? pre.match(/\d\*+(\d{4})/);
+  const account = acc ? acc[1]! : null;
+  const bal = pre.match(/ULDEGDEL\s*:?\s*(-?[\d,]+(?:\.\d{1,2})?)\s*MNT/i);
+  const balance = bal ? Math.round(parseFloat(bal[1]!.replace(/,/g, '')) * 100) : null;
+  const fingerprint = account && balance !== null ? `khan:${account}:${amount}:${income ? 'in' : 'out'}:${balance}` : null;
+  return { amount, date: when, description: description || 'Хаан банк (утгагүй)', phone: description ? extractPhones(description)[0] ?? null : null, income, account, balance, fingerprint };
+}
+
+/** #181 Тохиргооны данс (сүүлийн 4 орон) — хоосон бол бүх данс; бичсэн бол зөвхөн тэдгээр дансны мессеж */
+export function accountAllowed(p: { account: string | null }, accounts: string[]): boolean {
+  if (!accounts.length) return true;
+  return !!p.account && accounts.includes(p.account);
 }
 
 /** Аудит #148 (эзний шийдвэр): НЭГ имэйл = НЭГ гүйлгээ (утга дотор «Khan Bank» гэж бичсэн ч хоёр дахь гүйлгээ болгож хуваахгүй) */
@@ -109,7 +121,7 @@ function ub(y: number, mo: number, d: number, h: number, mi: number, se: number)
 
 // ───────────────────────── Импорт ба тааруулах ─────────────────────────
 
-export interface TxIn { date: Date; description: string; amount: number; phone?: string | null; emailMessageId?: string | null }
+export interface TxIn { date: Date; description: string; amount: number; phone?: string | null; emailMessageId?: string | null; fingerprint?: string | null }
 
 /** Захиалгын төлсөн нийлбэр (давхардсан, буцаасныг тооцохгүй) */
 async function paidFor(tx: Tx, orderId: number, exceptId?: number) {
@@ -214,7 +226,7 @@ export async function rescanUnmatched(): Promise<{ scanned: number; phones: numb
   return { scanned: rows.length, phones, matched };
 }
 
-export async function importTransactions(actor: Actor, list: TxIn[], source: 'CSV' | 'GMAIL') {
+export async function importTransactions(actor: Actor, list: TxIn[], source: 'CSV' | 'GMAIL' | 'SMS') {
   const res = { imported: 0, matched: 0, partial: 0, duplicates: 0, errors: [] as string[], notProcessed: Math.max(0, list.length - 5000) };
   const rowsLog: { id: number; amount: number; phone: string | null; status: string; order?: number | null }[] = [];
   for (const raw of list.slice(0, 5000)) {
@@ -229,17 +241,19 @@ export async function importTransactions(actor: Actor, list: TxIn[], source: 'CS
         const phones = [...new Set([...(raw.phone ? [raw.phone] : []), ...extractPhones(description)])];
         const phone = phones[0] ?? null;
         if (raw.emailMessageId && (await tx.bankTransaction.findUnique({ where: { emailMessageId: raw.emailMessageId } }))) { res.duplicates++; return; }
+        // #181: ижил гүйлгээ нөгөө сувгаар (Gmail ↔ утас) аль хэдийн орсон
+        if (raw.fingerprint && (await tx.bankTransaction.findUnique({ where: { fingerprint: raw.fingerprint } }))) { res.duplicates++; return; }
         const day = ubDay(raw.date);
         // Gmail: имэйл бүр өөрийн дугаартай тул яг давхардлыг дугаараар нь (утгагүй ижил дүнтэй 2 өөр хүнийг давхардал гэхгүй).
         // Аудит #148: дугааргүй (гараар / туршилт) — ижил өдөр + дүн + утас (утга) байвал «Давхардсан» (хянана) — «өөр хүлээгдэж буй захиалга байна»
         // гэдгээр шинэ мөнгө гэж үзэхгүй (нэг мөнгө хоёр захиалгад орохгүй)
-        const same = raw.emailMessageId ? [] : await tx.bankTransaction.findMany({
+        const same = raw.emailMessageId || raw.fingerprint ? [] : await tx.bankTransaction.findMany({
           where: { txDate: { gte: ubDayStart(day), lt: ubDayStart(addDays(day, 1)) }, amount, isDuplicate: false, ...(phone ? { phone } : { phone: null, description }) },
           select: { id: true }, take: 1,
         });
         const dup = same.length > 0;
         const t = await tx.bankTransaction.create({ data: {
-          txDate: raw.date, description, amount, phone, source, emailMessageId: raw.emailMessageId ?? null, importedByName: actor.name,
+          txDate: raw.date, description, amount, phone, source, emailMessageId: raw.emailMessageId ?? null, fingerprint: raw.fingerprint ?? null, importedByName: actor.name,
           ...(dup ? { isDuplicate: true, status: 'DUPLICATE' } : {}),
         } });
         if (dup) { res.duplicates++; rowsLog.push({ id: t.id, amount, phone, status: 'DUPLICATE' }); return; }

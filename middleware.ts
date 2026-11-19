@@ -4,7 +4,8 @@ import { NextResponse, type NextRequest } from 'next/server';
  * Зөвхөн хурдан чиглүүлэлт: cookie байхгүй бол нэвтрэх хуудас руу.
  * Жинхэнэ шалгалт (токен хүчинтэй эсэх, эрх) СЕРВЕР талд хүсэлт бүрт хийгдэнэ.
  */
-const PUBLIC = ['/login', '/api/auth/login', '/api/health'];
+// #181 /api/bank/sms — утаснаас (MacroDroid) нууц түлхүүрээр (сервис дотор шалгана)
+const PUBLIC = ['/login', '/api/auth/login', '/api/health', '/api/bank/sms'];
 
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
