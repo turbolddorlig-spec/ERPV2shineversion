@@ -81,6 +81,8 @@ async function analyze() {
 
 // ───────────── 1. Ажилчид ─────────────
 const userMap = new Map<string, { id: string; name: string }>(); // хуучин id → шинэ
+/** Хуучин «opp» нь ажилтны нэр ЭСВЭЛ дэлгэцийн нэрээр бичигддэг (хуучин цалин хоёуланг нь тоолдог) */
+const legacyNames: [string | null, string | null, { id: string; name: string }][] = [];
 let migrator: { id: string; name: string; roles: Role[] };
 async function migrateUsers() {
   const rows = await q<{ id: string; phone: string; passwordHash: string; name: string; displayName: string | null; role: string; isActive: boolean; createdAt: Date }>(`SELECT id, phone, "passwordHash", name, "displayName", role::text AS role, "isActive", "createdAt" FROM "User" ORDER BY "createdAt"`);
@@ -92,11 +94,12 @@ async function migrateUsers() {
     if (!phone) { r.badPhone.push(`${u.name} (${u.phone})`); continue; }
     const name = (u.displayName || u.name || phone).trim().slice(0, 100);
     const ex = await db.user.findUnique({ where: { phone } });
-    if (ex) { userMap.set(u.id, { id: ex.id, name: ex.name }); r.existing++; continue; }
+    if (ex) { userMap.set(u.id, { id: ex.id, name: ex.name }); legacyNames.push([u.name, u.displayName, { id: ex.id, name: ex.name }]); r.existing++; continue; }
     const ext = u.role === 'EXTERNAL_DELIVERY';
     if (ext) r.externalDelivery.push(name);
     const nu = await db.user.create({ data: { phone, name, roles: [role ?? 'OPERATOR'], passwordHash: u.passwordHash || 'x', isActive: u.isActive && !ext, createdAt: u.createdAt } });
     userMap.set(u.id, { id: nu.id, name: nu.name });
+    legacyNames.push([u.name, u.displayName, { id: nu.id, name: nu.name }]);
     r.created++;
   }
   report.users = r;
@@ -109,6 +112,8 @@ async function prepareOperators() {
   const ex = await db.user.findUnique({ where: { phone: ph } });
   legacyUser = ex ? { id: ex.id, name: ex.name } : await db.user.create({ data: { phone: ph, name: 'Хуучин ERP', roles: ['OPERATOR'], passwordHash: 'x', isActive: false } }).then((u) => ({ id: u.id, name: u.name }));
   for (const u of await db.user.findMany({ select: { id: true, name: true } })) nameMap.set(u.name.trim().toLowerCase(), u);
+  // Хуучин нэр, дэлгэцийн нэр хоёулаа тухайн ажилтанд (шинэ системийн нэрээс давуу)
+  for (const [n, dn, v] of legacyNames) for (const x of [n, dn]) if (x?.trim()) nameMap.set(x.trim().toLowerCase(), v);
   const sa = await db.user.findFirst({ where: { roles: { has: 'SUPER_ADMIN' }, isActive: true }, orderBy: { createdAt: 'asc' } });
   migrator = { id: sa?.id ?? legacyUser.id, name: 'Хуучин ERP шилжүүлэлт', roles: ['SUPER_ADMIN'] };
 }
@@ -341,7 +346,8 @@ async function createOrder(o: OldOrder, phone: string, r: { unknownLines: number
   let delivered: { at: Date; by: string | null; payment: DeliveryPayment } | null = null;
   if (o.status === 'DELIVERED') {
     status = 'DELIVERED';
-    const h = lastHist(o.history, /DELIVER|ХҮРГЭ/i);
+    // Хүргэсэн мөч: хуучин түүхийн «DELIVERED» бичлэг (OUT_FOR_DELIVERY биш); байхгүй бол сүүлд өөрчлөгдсөн цаг
+    const h = lastHist(o.history, /^DELIVERED$/) ?? lastHist(o.history, /ХҮРГЭ/i);
     const m = String(o.deliveryPaymentMethod ?? '').toUpperCase();
     const payment: DeliveryPayment = o.prepaid ? 'PREPAID' : o.isPaidToDriver === false ? 'UNPAID' : m === 'CASH' ? 'CASH' : m ? 'BANK' : 'CASH';
     delivered = { at: dt(h?.timestamp, o.updatedAt), by: h?.user ?? null, payment };
