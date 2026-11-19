@@ -151,7 +151,7 @@ describe('Бүрэн өдрийн урсгал — бүх хуудас уялд�
     DASH.bustDashboard();
     const sm = await DASH.summary(adm, 'day', undefined);
     // 7 захиалга: хүргэсэн 4 (o1,o2,o3,o7), цуцлагдсан o4, o6 + маргааш o5 = 3
-    expect([sm.kpi.total, sm.kpi.delivered, sm.kpi.cancelled, sm.kpi.inDelivery, sm.kpi.postponed]).toEqual([7, 4, 3, 0, 1]);
+    expect([sm.kpi.total, sm.kpi.delivered, sm.kpi.cancelled, sm.kpi.inDelivery, sm.kpi.postponed]).toEqual([5, 4, 3, 0, 1]); // #186: нийт = цуцлагдаагүй (2 цуцлагдсан хасагдана)
     expect(sm.kpi.successRate + sm.kpi.cancelRate).toBeCloseTo(100, 0);
 
     // ── 9. Барааны гарц: тэр өдөртөө цуцлагдсан (o4, o6) тоологдохгүй ──

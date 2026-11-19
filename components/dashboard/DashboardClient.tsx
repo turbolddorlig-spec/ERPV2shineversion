@@ -16,7 +16,7 @@ type Range = 'day' | 'week' | 'month';
 interface Day { date: string; total: number; delivered: number; cancelled: number; inDelivery: number; waiting: number; postponed: number }
 interface Summary {
   range: Range; from: string; to: string;
-  kpi: { total: number; delivered: number; cancelled: number; inDelivery: number; waiting: number; postponed: number; successRate: number; cancelRate: number };
+  kpi: { total: number; all?: number; delivered: number; cancelled: number; inDelivery: number; waiting: number; postponed: number; successRate: number; cancelRate: number };
   trend: Day[];
   reasons: { key: string; label: string; n: number; pct: number }[];
   cancelledProducts: { productId: number; code: string; name: string; orders: number; qty: number }[];
@@ -114,8 +114,8 @@ export function DashboardClient() {
             <Kpi label="Хүргэсэн" value={num(s.kpi.delivered)} tone="ok" />
             <Kpi label="Цуцлагдсан" value={num(s.kpi.cancelled)} tone="bad" sub={s.kpi.postponed ? `үүнээс хойшлуулсан ${num(s.kpi.postponed)}` : undefined} />
             <Kpi label="Хүргэлтэд" value={num(s.kpi.inDelivery)} tone="warn" />
-            <Kpi label="Амжилт" value={`${s.kpi.successRate}%`} tone="ok" sub={s.kpi.total ? (s.kpi.successRate >= 90 ? 'Сайн' : s.kpi.successRate >= 80 ? 'Дунд' : 'Сайжруулах') : '—'} />
-            <Kpi label="Цуцлалт" value={`${s.kpi.cancelRate}%`} tone="bad" sub={s.kpi.total ? (s.kpi.cancelRate <= 5 ? 'Маш сайн' : s.kpi.cancelRate <= 10 ? 'Хэвийн' : 'Анхаар!') : '—'} />
+            <Kpi label="Амжилт" value={`${s.kpi.successRate}%`} tone="ok" sub={s.kpi.total + s.kpi.cancelled ? (s.kpi.successRate >= 90 ? 'Сайн' : s.kpi.successRate >= 80 ? 'Дунд' : 'Сайжруулах') : '—'} />
+            <Kpi label="Цуцлалт" value={`${s.kpi.cancelRate}%`} tone="bad" sub={s.kpi.total + s.kpi.cancelled ? (s.kpi.cancelRate <= 5 ? 'Маш сайн' : s.kpi.cancelRate <= 10 ? 'Хэвийн' : 'Анхаар!') : '—'} />
           </section>
           {s.trend.length > 1 ? <Trend days={s.trend} /> : null}
           {s.hourly ? <Hourly s={s} /> : null}
@@ -138,7 +138,7 @@ export function DashboardClient() {
                   <thead><tr className="text-[12px] text-muted"><th className="py-1 text-left">Пэйж</th><th className="px-2 text-right">Захиалга</th><th className="px-2 text-right">Хүргэсэн</th><th className="px-2 text-right">Цуцалсан</th><th className="px-2 text-right">Амжилт</th></tr></thead>
                   <tbody>{s.pages.map((p) => (
                     <tr key={p.pageId} className="border-t border-line"><td className="max-w-[220px] py-1.5 font-semibold [overflow-wrap:anywhere]">{p.name}</td><td className="px-2 text-right font-bold">{num(p.total)}</td><td className="px-2 text-right">{num(p.delivered)}</td><td className="px-2 text-right">{num(p.cancelled)}</td>
-                      <td className={clsx('px-2 text-right font-bold', p.total && p.rate < 80 ? 'text-bad-ink' : 'text-ok-ink')}>{p.total ? `${p.rate}%` : '—'}</td></tr>
+                      <td className={clsx('px-2 text-right font-bold', p.total + p.cancelled && p.rate < 80 ? 'text-bad-ink' : 'text-ok-ink')}>{p.total + p.cancelled ? `${p.rate}%` : '—'}</td></tr>
                   ))}</tbody>
                 </table></div>
               ) : <p className="text-[13px] text-muted">Захиалга алга</p>}

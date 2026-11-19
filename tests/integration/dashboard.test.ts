@@ -56,16 +56,16 @@ describe('Хянах самбар (#123)', () => {
     await order({ status: 'DELIVERED' }, new Date(U.ubDayStart(U.ubDay()).getTime() + 0.5 * H));
     await order({ status: 'DELIVERED' }, new Date(U.ubDayStart(U.ubDay()).getTime() - 0.5 * H));
     const s = await DB.summary(adm, 'day', undefined);
-    expect(s.kpi).toEqual({ total: 11, delivered: 7, cancelled: 3, inDelivery: 1, waiting: 0, postponed: 1, successRate: 63.6, cancelRate: 27.3 });
+    expect(s.kpi).toEqual({ total: 9, all: 11, delivered: 7, cancelled: 3, inDelivery: 1, waiting: 0, postponed: 1, successRate: 63.6, cancelRate: 27.3 });
     expect(s.reasons.map((r) => [r.key, r.n])).toEqual([['NO_ANSWER', 2], ['POSTPONED', 1]]);
     expect(s.reasons[1]!.label).toBe('Жолооч хойшлуулсан');
     expect(s.cancelledProducts[0]).toMatchObject({ name: 'Самбарын бараа', orders: 3, qty: 3 });
     // 7 хоног: чиг хандлагын нийлбэр = картууд; өчигдрийн 23:30-ийнх өчигдөрт
     const w = await DB.summary(adm, 'week', undefined);
     expect(w.trend).toHaveLength(7);
-    expect(w.trend.at(-1)).toMatchObject({ date: U.ubDay(), total: 11, delivered: 7, cancelled: 3 });
+    expect(w.trend.at(-1)).toMatchObject({ date: U.ubDay(), total: 9, all: 11, delivered: 7, cancelled: 3 });
     expect(w.trend.at(-2)).toMatchObject({ date: U.ubDay(new Date(), -1), total: 1, delivered: 1 });
-    expect([w.kpi.total, w.kpi.delivered]).toEqual([12, 8]);
+    expect([w.kpi.total, w.kpi.all, w.kpi.delivered]).toEqual([10, 12, 8]); // #186: нийт = цуцлагдаагүй
     expect(w.trend.reduce((a, d) => a + d.total, 0)).toBe(w.kpi.total);
     // хойшлуулсан захиалга дахин хүргэгдвэл Хүргэсэн
     await db.order.updateMany({ where: { postponedByDriverId: drv.id }, data: { status: 'DELIVERED' } });
@@ -80,13 +80,13 @@ describe('Хянах самбар (#123)', () => {
     await order({ status: 'NEW' }, new Date(t0 + 14 * H));
     const s = await DB.summary(adm, 'day', undefined);
     expect(s.hourly).toHaveLength(24);
-    expect([s.hourly[10]!.n, s.hourly[14]!.n, s.hourly[3]!.n, s.hourlyAvg]).toEqual([4, 1, 0, false]);
+    expect([s.hourly[10]!.n, s.hourly[14]!.n, s.hourly[3]!.n, s.hourlyAvg]).toEqual([3, 1, 0, false]); // #186: цуцлагдсан цагийн графикт орохгүй
     // цуцлагдсан захиалга «зарагдсан»-д орохгүй
     expect(s.topSold[0]).toMatchObject({ name: 'Самбарын бараа', orders: 4, qty: 4 });
-    expect(s.pages[0]).toMatchObject({ name: 'greenshopy', total: 5, delivered: 3, cancelled: 1, rate: 60 });
+    expect(s.pages[0]).toMatchObject({ name: 'greenshopy', total: 4, delivered: 3, cancelled: 1, rate: 60 });
     // 7 хоног — цаг бүрийн өдрийн дундаж
     const w = await DB.summary(adm, 'week', undefined);
-    expect([w.hourlyAvg, w.hourly[10]!.n]).toEqual([true, Math.round((4 / 7) * 10) / 10]);
+    expect([w.hourlyAvg, w.hourly[10]!.n]).toEqual([true, Math.round((3 / 7) * 10) / 10]);
     const e = await DB.endOfDay(adm);
     expect(e).toMatchObject({ date: U.ubDay(), unassigned: 1, notReceived: 0, notSubmitted: 0, notApproved: 0, out: 0 });
     await expect(DB.endOfDay(op)).rejects.toBeInstanceOf(AppError);

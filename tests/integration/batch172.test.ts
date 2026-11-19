@@ -187,6 +187,20 @@ describe('#172-5 өнөөдрийн тоо — баталгаажсан өдрө
   });
 });
 
+describe('#186 «Өнөөдөр» таб — цуцалсан орохгүй', () => {
+  it('өнөөдөр үүссэн захиалгыг цуцлахад тоо ба жагсаалтаас хасагдана, «Цуцлагдсан» табд үлдэнэ', async () => {
+    const a = (await O.createOrder(op, ub({}))).order;
+    Q.bustCounts();
+    const before = (await Q.tabCounts()).today ?? 0;
+    expect((await Q.listOrders(sa, { tab: 'today' } as never)).items.map((x: { id: number }) => x.id)).toContain(a.id);
+    await O.cancelOrder(op, a.id, { reason: 'DUPLICATE' });
+    Q.bustCounts();
+    expect((await Q.tabCounts()).today).toBe(before - 1);
+    expect((await Q.listOrders(sa, { tab: 'today' } as never)).items.map((x: { id: number }) => x.id)).not.toContain(a.id);
+    expect((await Q.listOrders(sa, { tab: 'CANCELLED' } as never)).items.map((x: { id: number }) => x.id)).toContain(a.id);
+  });
+});
+
 describe('#172-2 ижил хаяг өөр утсанд', () => {
   it('идэвхтэй захиалга ижил хаягтай (зай, том жижиг үсэг харгалзахгүй) → анхааруулга; ижил утас эсвэл цуцлагдсан бол үгүй', async () => {
     const a = (await O.createOrder(op, ub({ addressDetail: 'Баянзүрх 45-р байр 2-р орц 56 тоот' }))).order;

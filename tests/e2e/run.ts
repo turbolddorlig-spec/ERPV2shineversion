@@ -649,7 +649,7 @@ async function main() {
     const sm = await req('/api/dashboard?view=summary&range=week', { cookie: admD.cookie });
     const smj = sm.status === 200 ? JSON.parse(sm.text) : null;
     check('самбар 7 хоног (Админ)', !!smj && smj.trend.length === 7 && smj.kpi.total === smj.trend.reduce((a: number, d: { total: number }) => a + d.total, 0), sm.text.slice(0, 100));
-    check('самбар: хувь ÷ нийт', !!smj && (smj.kpi.total === 0 || Math.abs(smj.kpi.cancelRate - Math.round(smj.kpi.cancelled / smj.kpi.total * 1000) / 10) < 0.01), JSON.stringify(smj?.kpi));
+    check('самбар: хувь ÷ нийт', !!smj && (smj.kpi.total === 0 || Math.abs(smj.kpi.cancelRate - Math.round(smj.kpi.cancelled / smj.kpi.all * 1000) / 10) < 0.01), JSON.stringify(smj?.kpi));
     const at = await req('/api/dashboard?view=attention', { cookie: admD.cookie });
     check('анхаарах зүйлс — Админд бараа татах алга', at.status === 200 && !JSON.parse(at.text).items.some((x: { key: string }) => x.key === 'reorder'), at.text.slice(0, 100));
     const atS = await req('/api/dashboard?view=attention', { cookie: saD.cookie });

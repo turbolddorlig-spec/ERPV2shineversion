@@ -17,7 +17,7 @@ import type { UserActor } from './users';
  *  • өдөр = ЗАХИАЛГЫН өдөр (баталгаажсан, Улаанбаатар; урьдчилж төлсөн — мөнгө орсон өдөр, #102), төлбөр хүлээж буй орохгүй;
  *  • Нийт = бүх бодит захиалга (цуцлагдсан орно) — хуучинд цуцлагдсаныг хасаад хувь буруу гардаг байсан;
  *  • Цуцлагдсан = цуцлагдсан + жолооч хойшлуулаад дахин хуваарилагдаагүй (хуучин шиг); хүргэгдвэл Хүргэсэн;
- *  • Амжилт % = хүргэсэн ÷ нийт, Цуцлалт % = цуцлагдсан ÷ нийт; чиг хандлага картуудтай яг ижил өдрөөр (хуучны UTC зөрүү засагдсан).
+ *  • #186 (эзэн): «Нийт» = цуцлагдаагүй захиалга (цагийн график, пэйжийн «нийт» ч мөн). Амжилт % = хүргэсэн ÷ орж ирсэн бүх, Цуцлалт % = цуцлагдсан ÷ орж ирсэн бүх; чиг хандлага картуудтай яг ижил өдрөөр (хуучны UTC зөрүү засагдсан).
  * Зөвхөн уншина. 60 сек кэш.
  */
 const RANGE: Record<string, number> = { day: 1, week: 7, month: 30 };
@@ -47,8 +47,8 @@ export async function summary(actor: UserActor, rangeIn: unknown, dateIn: unknow
   const from = addDays(to, -(n - 1));
   return cached(`s:${range}:${to}`, range === 'day' ? 60_000 : 300_000, async () => {
     const [days, reasons, products, hours, sold, pages] = await Promise.all([
-      db.$queryRaw<{ day: Date; total: number; delivered: number; cancelled: number; inDelivery: number; waiting: number; postponed: number }[]>`
-        SELECT (o."confirmedAt" + interval '8 hours')::date AS day, count(*)::int AS total,
+      db.$queryRaw<{ day: Date; total: number; all: number; delivered: number; cancelled: number; inDelivery: number; waiting: number; postponed: number }[]>`
+        SELECT (o."confirmedAt" + interval '8 hours')::date AS day, count(*) FILTER (WHERE o.status <> 'CANCELLED')::int AS total, count(*)::int AS "all",
           count(*) FILTER (WHERE o.status = 'DELIVERED')::int AS delivered,
           count(*) FILTER (WHERE o.status = 'CANCELLED' OR ${POSTPONED})::int AS cancelled,
           count(*) FILTER (WHERE o.status = 'OUT_FOR_DELIVERY')::int AS "inDelivery",
@@ -70,7 +70,7 @@ export async function summary(actor: UserActor, rangeIn: unknown, dateIn: unknow
       // Аудит #162 (эзэн): захиалга орж ирсэн цаг (Улаанбаатар, баталгаажсан мөчөөр)
       db.$queryRaw<{ h: number; n: number }[]>`
         SELECT extract(hour from o."confirmedAt" + interval '8 hours')::int AS h, count(*)::int AS n
-        FROM "Order" o WHERE ${REAL} AND o."confirmedAt" >= ${ubDayStart(from)} AND o."confirmedAt" < ${ubDayStart(addDays(to, 1))}
+        FROM "Order" o WHERE ${REAL} AND o."confirmedAt" >= ${ubDayStart(from)} AND o."confirmedAt" < ${ubDayStart(addDays(to, 1))} AND o.status <> 'CANCELLED'
         GROUP BY 1`,
       // Хамгийн их зарагдсан бараа (цуцлагдаагүй захиалга)
       db.$queryRaw<{ productId: number; code: string; name: string; orders: number; qty: number }[]>`
@@ -80,7 +80,7 @@ export async function summary(actor: UserActor, rangeIn: unknown, dateIn: unknow
         GROUP BY 1, 2, 3 ORDER BY 4 DESC, 5 DESC LIMIT 10`,
       // Пэйж бүрийн захиалга ба хүргэлт
       db.$queryRaw<{ pageId: number; name: string; total: number; delivered: number; cancelled: number }[]>`
-        SELECT o."pageId", pg.name, count(*)::int AS total, count(*) FILTER (WHERE o.status = 'DELIVERED')::int AS delivered,
+        SELECT o."pageId", pg.name, count(*) FILTER (WHERE o.status <> 'CANCELLED')::int AS total, count(*) FILTER (WHERE o.status = 'DELIVERED')::int AS delivered,
           count(*) FILTER (WHERE o.status = 'CANCELLED')::int AS cancelled
         FROM "Order" o JOIN "Page" pg ON pg.id = o."pageId"
         WHERE ${REAL} AND o."confirmedAt" >= ${ubDayStart(from)} AND o."confirmedAt" < ${ubDayStart(addDays(to, 1))}
@@ -90,14 +90,14 @@ export async function summary(actor: UserActor, rangeIn: unknown, dateIn: unknow
     const byDay = new Map(days.map((d) => [ymdOf(d.day), d]));
     const trend = Array.from({ length: n }, (_, i) => addDays(from, i)).map((d) => {
       const r = byDay.get(d);
-      return { date: d, total: r?.total ?? 0, delivered: r?.delivered ?? 0, cancelled: r?.cancelled ?? 0, inDelivery: r?.inDelivery ?? 0, waiting: r?.waiting ?? 0, postponed: r?.postponed ?? 0 };
+      return { date: d, total: r?.total ?? 0, all: r?.all ?? 0, delivered: r?.delivered ?? 0, cancelled: r?.cancelled ?? 0, inDelivery: r?.inDelivery ?? 0, waiting: r?.waiting ?? 0, postponed: r?.postponed ?? 0 };
     });
-    const sum = (k: 'total' | 'delivered' | 'cancelled' | 'inDelivery' | 'waiting' | 'postponed') => trend.reduce((s, x) => s + x[k], 0);
-    const total = sum('total'), delivered = sum('delivered'), cancelled = sum('cancelled');
+    const sum = (k: 'total' | 'all' | 'delivered' | 'cancelled' | 'inDelivery' | 'waiting' | 'postponed') => trend.reduce((s, x) => s + x[k], 0);
+    const total = sum('total'), all = sum('all'), delivered = sum('delivered'), cancelled = sum('cancelled');
     const label = (r: string | null) => (r === 'POSTPONED' ? 'Жолооч хойшлуулсан' : r && r in CANCEL_LABEL ? CANCEL_LABEL[r as keyof typeof CANCEL_LABEL] : 'Шалтгаангүй');
     return {
       range, from, to,
-      kpi: { total, delivered, cancelled, inDelivery: sum('inDelivery'), waiting: sum('waiting'), postponed: sum('postponed'), successRate: rate(delivered, total), cancelRate: rate(cancelled, total) },
+      kpi: { total, all, delivered, cancelled, inDelivery: sum('inDelivery'), waiting: sum('waiting'), postponed: sum('postponed'), successRate: rate(delivered, all), cancelRate: rate(cancelled, all) },
       trend,
       reasons: reasons.map((r) => ({ key: r.reason ?? 'NONE', label: label(r.reason), n: r.n, pct: rate(r.n, cancelled) })),
       cancelledProducts: products,
@@ -105,7 +105,7 @@ export async function summary(actor: UserActor, rangeIn: unknown, dateIn: unknow
       hourly: Array.from({ length: 24 }, (_, h) => ({ h, n: n > 1 ? Math.round(((hm.get(h) ?? 0) / n) * 10) / 10 : hm.get(h) ?? 0 })),
       hourlyAvg: n > 1,
       topSold: sold,
-      pages: pages.map((p) => ({ ...p, rate: rate(p.delivered, p.total) })),
+      pages: pages.map((p) => ({ ...p, rate: rate(p.delivered, p.total + p.cancelled) })),
     };
   });
 }
