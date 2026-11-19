@@ -11,6 +11,8 @@ services:
     logging: *logging
     image: postgres:16-alpine
     restart: unless-stopped
+    # #183: сессийн цагийн бүс UTC (огноо UTC-ээр хадгалагддаг; TZ нь зөвхөн лог). Эс бөгөөс тооллого 8 цагаар зөрнө
+    command: ["postgres", "-c", "timezone=UTC"]
     environment:
       POSTGRES_USER: erp
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?install.sh-ийг ажиллуулна уу}

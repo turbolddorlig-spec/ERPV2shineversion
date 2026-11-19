@@ -56,7 +56,7 @@ case "${1:-}" in
     restore_legacy "${2:-}"; images
     say "Туршилтын database (erp_trial) — одоогийн системийн хуулбар (Супер админ, тохиргоо)"
     docker rm -f erp-trial >/dev/null 2>&1 || true
-    psqlq -d postgres -c 'DROP DATABASE IF EXISTS erp_trial' -c 'CREATE DATABASE erp_trial'
+    psqlq -d postgres -c 'DROP DATABASE IF EXISTS erp_trial' -c 'CREATE DATABASE erp_trial' -c "ALTER DATABASE erp_trial SET timezone TO 'UTC'"
     docker compose exec -T db sh -c 'pg_dump -U erp -d erp --no-owner | psql -U erp -d erp_trial -q' >/dev/null
     # Туршилтаас жинхэнэ мессеж, Meta, банк, Drive руу юу ч явахгүй
     psqlq -d erp_trial -c "DELETE FROM \"AppSetting\" WHERE key IN ('smsConfig','metaPixelId','metaAccessToken','metaTestEventCode','bank.gmail','bank.incoming','driveBackup','driveOauthState')"
