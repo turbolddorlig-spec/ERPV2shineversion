@@ -13,6 +13,9 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1 PRISMA_CLI_BINARY_TARGETS=linux-musl-openssl-3.0.x
 RUN npx prisma generate && npx next build
+# #182 Хуучин ERP-ээс шилжүүлэх програм (нэг файл; @prisma/client, sharp — апп-ын node_modules-аас)
+RUN npx esbuild scripts/legacy/migrate.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/legacy-migrate.mjs \
+    --external:@prisma/client --external:sharp --external:bcryptjs --banner:js="import { createRequire } from 'module'; const require = createRequire(import.meta.url);"
 
 FROM node:20-alpine AS run
 WORKDIR /app
@@ -26,6 +29,7 @@ COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/scripts/create-super-admin.mjs ./scripts/create-super-admin.mjs
+COPY --from=build /app/dist/legacy-migrate.mjs ./dist/legacy-migrate.mjs
 # migrate deploy-д хэрэгтэй Prisma CLI
 COPY --from=build /app/node_modules/prisma ./node_modules/prisma
 COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma

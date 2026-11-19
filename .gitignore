@@ -7,3 +7,4 @@ next-env.d.ts
 /backups
 /test-results
 /data
+/dist
