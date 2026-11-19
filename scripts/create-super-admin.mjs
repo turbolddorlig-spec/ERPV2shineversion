@@ -1,5 +1,6 @@
 // Анхны Супер админыг үүсгэнэ (install.sh дуудна). Аль хэдийн байвал юу ч хийхгүй.
 // Хэрэглээ: ADMIN_PHONE=99112233 ADMIN_NAME="Нэр" ADMIN_PASSWORD="..." node scripts/create-super-admin.mjs
+// ADD=1 (./add-super-admin.sh): Супер админ байсан ч нэмнэ; тэр утас бүртгэлтэй бол нууц үгийг сольж, Супер админ болгож, түгжээг тайлна
 import { PrismaClient } from '@prisma/client';
 import { randomBytes, scrypt } from 'node:crypto';
 
@@ -25,7 +26,16 @@ function hashPassword(pw) {
 const db = new PrismaClient();
 try {
   const existing = await db.user.count({ where: { roles: { has: 'SUPER_ADMIN' } } });
-  if (existing > 0) {
+  const same = process.env.ADD === '1' ? await db.user.findUnique({ where: { phone } }) : null;
+  if (same) {
+    const roles = same.roles.includes('SUPER_ADMIN') ? same.roles : [...same.roles, 'SUPER_ADMIN'];
+    await db.user.update({ where: { id: same.id }, data: { name, roles, passwordHash: await hashPassword(password), isActive: true, failedLoginCount: 0, lockedUntil: null, mustChangePassword: false } });
+    await db.session.deleteMany({ where: { userId: same.id } }).catch(() => null);
+    await db.auditLog.create({
+      data: { actorId: null, actorName: 'СИСТЕМ (сервер, add-super-admin)', action: 'user.super_admin_restored', entityType: 'User', entityId: same.id, details: { phone, name, roles } },
+    });
+    console.log(`Бүртгэлтэй хэрэглэгчийг Супер админ болгож, нууц үгийг шинэчиллээ: ${name} (${phone})`);
+  } else if (existing > 0 && process.env.ADD !== '1') {
     console.log('Супер админ аль хэдийн бий — алгаслаа.');
   } else {
     const u = await db.user.create({ data: { phone, name, roles: ['SUPER_ADMIN'], passwordHash: await hashPassword(password) } });
