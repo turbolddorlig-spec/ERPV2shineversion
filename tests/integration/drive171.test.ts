@@ -43,7 +43,7 @@ beforeEach(async () => {
     calls.push({ url, body: String(init?.body ?? ''), auth: (init?.headers as Record<string, string> | undefined)?.authorization });
     if (url.includes('/token')) {
       const b = new URLSearchParams(String(init?.body));
-      if (b.get('grant_type') === 'authorization_code') return new Response(JSON.stringify({ access_token: 'AT1', refresh_token: b.get('code') === 'code2' ? 'RT2' : 'RT1', expires_in: 3599 }), { status: 200 });
+      if (b.get('grant_type') === 'authorization_code') return new Response(JSON.stringify({ access_token: 'AT1', refresh_token: b.get('code') === 'code2' ? 'RT2' : b.get('code') === 'noscope' ? 'RT9' : 'RT1', expires_in: 3599, scope: b.get('code') === 'noscope' ? 'openid https://www.googleapis.com/auth/userinfo.email' : 'openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.file' }), { status: 200 });
       return new Response(JSON.stringify({ access_token: 'AT-refresh', expires_in: 3599 }), { status: 200 });
     }
     if (url.includes('userinfo')) return new Response(JSON.stringify({ email: calls.some((c) => c.body.includes('code=code2')) ? 'company2.backup@gmail.com' : 'zahialga.backup@gmail.com' }), { status: 200 });
@@ -100,6 +100,10 @@ describe('#171 Google Drive холбох', () => {
     await G.driveAuthUrl(sa, ORIGIN);
     await err(G.driveCallback(sa, { code: 'code1', state: 'хуурамч' }, ORIGIN), 400);
     await err(G.driveCallback(sa, { error: 'access_denied' }, ORIGIN), 400);
+    // Drive-ийн чагтыг тэмдэглээгүй (зөвхөн имэйл эрх) → холбогдохгүй, токен цуцлагдана
+    const u2 = new URL(await G.driveAuthUrl(sa, ORIGIN));
+    await err(G.driveCallback(sa, { code: 'noscope', state: u2.searchParams.get('state') }, ORIGIN), 400);
+    expect(calls.some((c) => c.url.includes('/revoke') && c.body.includes('token=RT9'))).toBe(true);
     expect((await G.getDriveSettings(sa, ORIGIN)).connected).toBe(false);
   });
 

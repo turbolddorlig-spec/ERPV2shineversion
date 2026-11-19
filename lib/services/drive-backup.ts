@@ -131,6 +131,12 @@ export async function driveCallback(actor: UserActor, input: { code?: string | n
   if (!t.ok) throw badRequest(`Google токен өгсөнгүй: ${String(t.j.error_description ?? t.j.error ?? t.status)}`);
   const refresh = String(t.j.refresh_token ?? '');
   const access = String(t.j.access_token ?? '');
+  // Google-ийн зөвшөөрлийн цонхонд эрх бүр тусдаа чагттай — Drive-ийн чагтыг тэмдэглээгүй бол холбогдсон мэт боловч бичиж чадахгүй (insufficientPermissions)
+  const granted = String(t.j.scope ?? '');
+  if (granted && !granted.split(/\s+/).includes('https://www.googleapis.com/auth/drive.file')) {
+    if (refresh) await postForm(REVOKE(), { token: refresh }).catch(() => null);
+    throw badRequest('Google Drive-ийн эрх өгөгдөөгүй байна — дахин «Google Drive холбох» дараад зөвшөөрлийн цонхонд «Google Drive-д…» гэсэн чагтыг заавал тэмдэглээд Continue дарна уу', 'drive_scope_missing');
+  }
   if (!refresh) throw badRequest('Google «refresh token» өгсөнгүй — myaccount.google.com/permissions-оос энэ програмын эрхийг устгаад дахин холбоно уу');
   let email = '';
   try {
