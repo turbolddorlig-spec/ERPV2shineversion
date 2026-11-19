@@ -573,7 +573,12 @@ export async function driverOrders(actor: UserActor, tabIn?: string) {
     SELECT ho."orderId" FROM "HandoverOrder" ho JOIN "Handover" h ON h.id = ho."handoverId"
     WHERE h."driverId" = ${me}::uuid AND h.date = ${dateOnly(ymd)}::date AND ho."removedAt" IS NULL`).map((r) => r.orderId);
   const yday = addDays(today, -1);
-  const [dayIds, yIds] = await Promise.all([padaanIds(today), padaanIds(yday)]);
+  // #168: 12:00-оос хойш хуваарилсан → маргаашийн падаан; агуулах түүнийг өнөөдөр ӨГСӨН бол жолооч өнөөдөр хүргэнэ — «Хүргэлт» табд
+  const aheadIds = async () => (await db.$queryRaw<{ orderId: number }[]>`
+    SELECT ho."orderId" FROM "HandoverOrder" ho JOIN "Handover" h ON h.id = ho."handoverId"
+    WHERE h."driverId" = ${me}::uuid AND h.date > ${dateOnly(today)}::date AND h.status IN ('HANDED_OVER', 'RECEIVED') AND ho."removedAt" IS NULL`).map((r) => r.orderId);
+  const [todayIds, ahead, yIds] = await Promise.all([padaanIds(today), aheadIds(), padaanIds(yday)]);
+  const dayIds = [...todayIds, ...ahead];
   // #169/#170 (эзний шийдвэр): табууд ПАДААНААР — захиалга хэзээ үүссэн нь хамаагүй, өөрийн падаантайгаа хамт харагдана (тооцоо падаанаар).
   // «Хүргэлт» = өнөөдрийн падааны дуусаагүй (+ падаан үүсээгүй, өнөөдөр хүргэх оноосон); «Өчигдөр» = өчигдрийн падааны бүх захиалга;
   // нөгөөдөр апп-аас алга (хуучин систем шиг).
@@ -587,7 +592,7 @@ export async function driverOrders(actor: UserActor, tabIn?: string) {
     delivery: active,
     delivered,
     cancelled,
-    tomorrow: { OR: [postponed, { driverId: me, status: 'ASSIGNED', deliveryDate: dateOnly(addDays(today, 1)) }] },
+    tomorrow: { OR: [postponed, { driverId: me, status: 'ASSIGNED', deliveryDate: dateOnly(addDays(today, 1)), id: { notIn: ahead } }] },
     yesterday: { OR: [{ id: { in: yIds } }, { driverId: me, handoverId: null, deliveryDate: dateOnly(yday) }] },
   };
   const rows = await db.order.findMany({ where: where[tab], include: { lines: { orderBy: { id: 'asc' } } }, take: 300, orderBy: [{ routeNo: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }] });
@@ -595,13 +600,16 @@ export async function driverOrders(actor: UserActor, tabIn?: string) {
     SELECT 'delivery' AS k, count(*)::int AS n FROM "Order" WHERE "driverId" = ${me}::uuid AND status IN ('ASSIGNED','OUT_FOR_DELIVERY')
       AND (id = ANY(${dayIds}::int[]) OR ("handoverId" IS NULL AND "deliveryDate" = ${dateOnly(today)}::date))
     UNION ALL SELECT 'postponed', count(*)::int FROM "Order" WHERE "postponedByDriverId" = ${me}::uuid AND "postponedAt" >= ${t0} AND "postponedAt" < ${t1} AND status = 'NEW' AND "driverId" IS NULL
-    UNION ALL SELECT 'tomorrow', count(*)::int FROM "Order" WHERE "driverId" = ${me}::uuid AND status = 'ASSIGNED' AND "deliveryDate" = ${dateOnly(addDays(today, 1))}::date`;
+    UNION ALL SELECT 'tomorrow', count(*)::int FROM "Order" WHERE "driverId" = ${me}::uuid AND status = 'ASSIGNED' AND "deliveryDate" = ${dateOnly(addDays(today, 1))}::date AND NOT (id = ANY(${ahead}::int[]))`;
   const c = Object.fromEntries(counts.map((x) => [x.k, x.n])) as Record<string, number>;
   // Тоо ба мөнгө — нягтлангийн тооцоотой нэг томьёо (computeDay)
-  const day = (await computeDay(db, today, me))[0];
-  const sums = { cash: day?.cash ?? 0, bank: day?.bank ?? 0, unpaid: day?.unpaid ?? 0, prepaid: day?.prepaidAmount ?? 0 };
-  c.delivered = day?.delivered ?? 0;
-  c.cancelled = (day?.cancelled ?? 0) + (day?.excluded ?? 0);
+  // #168: өнөөдөр өгөгдсөн маргаашийн падаан ч нэмэгдэнэ (тооцоо нь падааныхаа өдрөөр)
+  const aheadDays = ahead.length ? (await db.handover.findMany({ where: { driverId: me, date: { gt: dateOnly(today) }, status: { in: ['HANDED_OVER', 'RECEIVED'] } }, select: { date: true } })).map((h) => ymdOf(h.date)) : [];
+  const days = (await Promise.all([today, ...aheadDays].map((d) => computeDay(db, d, me)))).map((x) => x[0]);
+  const sumOf = (f: (x: NonNullable<(typeof days)[number]>) => number) => days.reduce((n, x) => n + (x ? f(x) : 0), 0);
+  const sums = { cash: sumOf((x) => x.cash), bank: sumOf((x) => x.bank), unpaid: sumOf((x) => x.unpaid), prepaid: sumOf((x) => x.prepaidAmount) };
+  c.delivered = sumOf((x) => x.delivered);
+  c.cancelled = sumOf((x) => x.cancelled + x.excluded);
   return {
     tab, today, nightShift,
     counts: { delivery: c.delivery ?? 0, delivered: c.delivered ?? 0, cancelled: c.cancelled ?? 0, postponed: c.postponed ?? 0, tomorrow: (c.postponed ?? 0) + (c.tomorrow ?? 0) },

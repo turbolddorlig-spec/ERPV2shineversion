@@ -164,6 +164,35 @@ describe('#168 хоцорсон захиалга → жолоочийн дара
   it('ганцаараа, жолоочид өөр захиалга байхгүй: 12:00-оос хойш маргааш, өмнө өнөөдөр', async () => {
     const old = await overdueOrder();
     await L.assignOrders(lead, { ids: [old], driverId: drv.id });
-    expect(await dateOf(old)).toBe(U.ubHour(new Date()) >= 12 ? tomorrow : today);
+    expect(await dateOf(old)).toBe(today); // тест: 10 цаг
+    process.env.TEST_UB_HOUR = '13';
+    try {
+      const old2 = await overdueOrder();
+      await L.assignOrders(lead, { ids: [old2], driverId: drv2.id });
+      expect(await dateOf(old2)).toBe(tomorrow);
+    } finally { process.env.TEST_UB_HOUR = '10'; }
+  });
+
+  it('үдээс хойш маргаашийн падаан өнөөдөр өгөгдвөл жолооч тооцоогоо харж, илгээж чадна (өгөхөөс өмнө — үгүй)', async () => {
+    const S = await import('@/lib/services/accounting/settle');
+    process.env.TEST_UB_HOUR = '13';
+    let old: number;
+    try { old = await overdueOrder(); await L.assignOrders(lead, { ids: [old], driverId: drv.id }); } finally { process.env.TEST_UB_HOUR = '10'; }
+    expect(await dateOf(old)).toBe(tomorrow);
+    await err(S.driverIncome(drv, tomorrow), 400);
+    await handTo(drv, tomorrow, [old]);
+    const inc = await S.driverIncome(drv, today);
+    expect(inc.padaanAhead).toBe(tomorrow);
+    const t = await S.driverIncome(drv, tomorrow);
+    expect(t.day.out).toBe(1);
+    // жолоочийн апп: өнөөдөр өгөгдсөн маргаашийн падаан «Хүргэлт» табд (маргааш табд биш)
+    const dl = await DR.driverOrders(drv, 'delivery');
+    expect([dl.items.map((x) => x.id), dl.counts.delivery, dl.counts.tomorrow]).toEqual([[old], 1, 0]);
+    expect((await DR.driverOrders(drv, 'tomorrow')).items.map((x) => x.id)).not.toContain(old);
+    await DR.deliverOrder(drv, old, { payment: 'CASH' });
+    const day = (await S.driverIncome(drv, tomorrow)).day;
+    const r = await S.submitSettlement(drv, { date: tomorrow, cash: day.toReceive, bank: 0, debt: 0 });
+    expect(r).toBeTruthy();
+    await err(S.driverIncome(drv, U.ubDay(new Date(), 2)), 400);
   });
 });

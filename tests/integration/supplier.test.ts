@@ -181,6 +181,13 @@ describe('гараар суутгал (зөвхөн Супер админ), ши
     expect(t.payable).toBe(33000);
     day = await SP.dayView(adm, shop, today);
     expect([day.status, day.payable, day.transferredByName]).toEqual(['TRANSFERRED', 33000, adm.name]);
+    // #175 C: сүүлийн шилжүүлэг, 7/14 хоногийн график
+    const det = await SP.shopDetail(adm, shop);
+    expect(det.transfers[0]).toMatchObject({ to: today, days: 1, amount: 33000, byName: adm.name });
+    expect([det.spark.length, det.spark[6]!.date, det.spark[6]!.v]).toEqual([7, today, 33000]);
+    SP.bustSupplierOverview();
+    const ovr = (await SP.overview(adm)).shops.find((x) => x.id === shop)!;
+    expect([ovr.spark.length, ovr.spark[13]!.v, ovr.lastTransfer?.amount]).toEqual([14, day.totals.sales, 33000]);
     await err(SP.overrideDay(sa, { shopId: shop, date: today, productId: shoeLine.productId, operatorCost: 0, deliveryCost: 0, marketingCost: 0, otherCost: 0 }), 423);
     await err(SP.transferDay(adm, { shopId: shop, date: today }), 409, 'already_transferred');
     // тохиргоо өөрчилсөн ч шилжүүлсэн өдөр өөрчлөгдөхгүй

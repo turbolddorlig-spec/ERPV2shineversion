@@ -47,6 +47,21 @@ export async function reopenPending(tx: Tx, driverId: string, date: string, acto
   if (n.count) await writeAudit({ id: null, name: actorName }, 'settlement.reopened', 'DriverSettlement', `${driverId}:${date}`, { date, reason }, tx, ['money']);
 }
 
+/**
+ * #168/#175: 12:00-оос хойш хуваарилсан захиалга маргаашийн падаанд ордог — агуулах өнөөдөр өгвөл жолооч өнөөдөр хүргэнэ.
+ * Иймээс «ирээдүйн» өдөр ч тэр өдрийн падаан агуулахаас өгөгдсөн (бараа жолоочид) бол тооцоо харах / илгээх / хаахыг зөвшөөрнө.
+ */
+async function assertDayStarted(driverId: string, date: string, msg: string) {
+  if (date <= ubDay()) return;
+  const h = await db.handover.findUnique({ where: { driverId_date: { driverId, date: dateOnly(date) } }, select: { status: true } });
+  if (!h || (h.status !== 'HANDED_OVER' && h.status !== 'RECEIVED')) throw badRequest(msg);
+}
+/** Өнөөдрөөс хойших өдрийн аль хэдийн өгөгдсөн падаан (жолоочийн «Орлого»-д сонгох) */
+async function padaanAhead(driverId: string) {
+  const h = await db.handover.findFirst({ where: { driverId, date: { gt: dateOnly(ubDay()) }, status: { in: ['HANDED_OVER', 'RECEIVED'] } }, orderBy: { date: 'asc' }, select: { date: true } });
+  return h ? ymdOf(h.date) : null;
+}
+
 // ───────────────────────── Нягтлан: өдрийн самбар ─────────────────────────
 
 export interface BoardFilter { driverId?: string; status?: string; prepaid?: string }
@@ -150,7 +165,7 @@ export async function forceCloseSettlement(actor: UserActor, input: { driverId?:
   assertAccount(actor);
   const driverId = cleanUuid(input.driverId);
   const date = cleanYmd(input.date);
-  if (date > ubDay()) throw badRequest('Ирээдүйн өдрийг хаахгүй');
+  await assertDayStarted(driverId, date, 'Ирээдүйн өдрийг хаахгүй');
   const note = String(input.note ?? '').trim().slice(0, 300);
   if (note.replace(/\s/g, '').length < 3) throw badRequest('Хүчээр хаах шалтгаанаа бичнэ үү', 'reason_required');
   const name = await driverName(db, driverId);
@@ -188,10 +203,13 @@ export async function forceCloseSettlement(actor: UserActor, input: { driverId?:
 export async function driverIncome(actor: UserActor, dateIn?: string) {
   assertDriver(actor);
   const date = dateIn && isYmd(dateIn) ? dateIn : ubDay();
-  if (date > ubDay()) throw badRequest('Ирээдүйн өдөр');
-  const d = await driverDetail(actor.id, date);
-  const debt = await db.companyDebt.aggregate({ where: { driverId: actor.id, status: 'PENDING' }, _sum: { amount: true }, _count: true });
-  return { date, today: ubDay(), ...d, companyDebt: { amount: debt._sum.amount ?? 0, count: debt._count } };
+  await assertDayStarted(actor.id, date, 'Ирээдүйн өдөр');
+  const [d, debt, ahead] = await Promise.all([
+    driverDetail(actor.id, date),
+    db.companyDebt.aggregate({ where: { driverId: actor.id, status: 'PENDING' }, _sum: { amount: true }, _count: true }),
+    padaanAhead(actor.id),
+  ]);
+  return { date, today: ubDay(), padaanAhead: ahead, ...d, companyDebt: { amount: debt._sum.amount ?? 0, count: debt._count } };
 }
 
 /**
@@ -213,7 +231,7 @@ function checkSplit(day: DriverDay, cash: number, bank: number, debt: number) {
 export async function submitSettlement(actor: UserActor, input: { date?: unknown; cash?: unknown; bank?: unknown; debt?: unknown }) {
   assertDriver(actor);
   const date = cleanYmd(input.date);
-  if (date > ubDay()) throw badRequest('Ирээдүйн өдрийн тооцоо илгээхгүй');
+  await assertDayStarted(actor.id, date, 'Ирээдүйн өдрийн тооцоо илгээхгүй');
   const r = await inTx(async (tx) => {
     const s = await lockSettlement(tx, actor.id, date, actor.name);
     if (s.status === 'COMPLETED') throw conflict('Нягтлан баталгаажуулсан тооцоо — өөрчлөх боломжгүй', 'day_locked');

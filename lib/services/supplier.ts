@@ -427,6 +427,32 @@ async function orderStats(tx: Tx | typeof db, shopId: number | null, shops: { id
 }
 
 /** Нийлүүлэгчийн «төлөх үлдэгдэл»: сүүлийн 90 хоногийн шилжүүлээгүй өдрүүд + хасагдаагүй буцаалт/нэмэгдэл */
+/** #175 C: сүүлийн N өдрийн борлуулалт/цэвэр (өдөр бүрээр, хоосон өдөр 0) — жижиг график */
+function sparkOf(days: RangeDay[], n: number, key: 'sales' | 'net') {
+  const m = new Map(days.map((d) => [d.date, d[key]]));
+  const today = ubDay();
+  return Array.from({ length: n }, (_, i) => { const date = addDays(today, i - n + 1); return { date, v: m.get(date) ?? 0 }; });
+}
+/** #175 C: сүүлд шилжүүлсэн (нэг удаагийн шилжүүлэг = ижил цагт тэмдэглэсэн өдрүүд) */
+async function lastTransfers(tx: Tx | typeof db, shopIds: number[], take = 1) {
+  const out = new Map<number, { at: Date; byName: string | null; from: string; to: string; days: number; amount: number }[]>();
+  if (!shopIds.length) return out;
+  const rows = await tx.$queryRaw<{ shopId: number; at: Date; byName: string | null; from: Date; to: Date; days: number; amount: number }[]>`
+    SELECT * FROM (
+      SELECT "shopId", date_trunc('minute', "transferredAt") AS at, max("transferredByName") AS "byName", min(date) AS "from", max(date) AS "to",
+        count(*)::int AS days, COALESCE(sum(payable), 0)::int AS amount,
+        row_number() OVER (PARTITION BY "shopId" ORDER BY date_trunc('minute', "transferredAt") DESC) AS rn
+      FROM "SupplierDay" WHERE status = ${DONE} AND "transferredAt" IS NOT NULL AND "shopId" = ANY(${shopIds}::int[])
+      GROUP BY "shopId", date_trunc('minute', "transferredAt")) t
+    WHERE rn <= ${take} ORDER BY "shopId", at DESC`;
+  for (const r of rows) {
+    const a = out.get(r.shopId) ?? [];
+    a.push({ at: r.at, byName: r.byName, from: ymdOf(r.from), to: ymdOf(r.to), days: r.days, amount: r.amount });
+    out.set(r.shopId, a);
+  }
+  return out;
+}
+
 async function balanceOf(tx: Tx | typeof db, shopId: number) {
   const today = ubDay();
   const days = await rangeDays(tx, shopId, addDays(today, -SYNC_DAYS), today);
@@ -456,6 +482,7 @@ async function overviewRaw() {
   const monthStart = `${today.slice(0, 7)}-01`;
   let monthSales = 0, monthNet = 0, todaySales = 0, todayNet = 0, balance = 0;
   const rows = [];
+  const lt = await lastTransfers(db, shops.map((s) => s.id));
   for (const s of shops) {
     if (s.isActive) await syncIfStale(s.id);
     const b = s.isActive ? await balanceOf(db, s.id) : null;
@@ -466,7 +493,8 @@ async function overviewRaw() {
       todaySales += td?.sales ?? 0; todayNet += td?.net ?? 0; balance += b!.balance;
     }
     rows.push({ id: s.id, name: s.name, contactName: s.contactName, contactPhone: s.contactPhone, isActive: s.isActive, hasLogin: !!s.userId,
-      productCount: cnt.get(s.id) ?? 0, openDays: b?.openDays ?? 0, balance: b?.balance ?? 0, pendingAdj: b?.pendingAdj ?? 0, monthSales: month.reduce((a, d) => a + d.sales, 0) });
+      productCount: cnt.get(s.id) ?? 0, openDays: b?.openDays ?? 0, balance: b?.balance ?? 0, pendingAdj: b?.pendingAdj ?? 0, monthSales: month.reduce((a, d) => a + d.sales, 0),
+      spark: b ? sparkOf(b.days, 14, 'sales') : [], lastTransfer: lt.get(s.id)?.[0] ?? null });
   }
   return {
     stats: { activeShops: shops.filter((s) => s.isActive).length, monthSales, monthNet, todaySales, todayNet, balance },
@@ -504,6 +532,8 @@ export async function shopDetail(actor: UserActor, shopIdIn?: unknown) {
     transferredDays: b.days.filter((d) => d.status === DONE),
     adjustments: adjAll.map((a) => adjView(a, ad)),
     orderDays: await orderStats(db, shop.id),
+    // #175 C: 7 хоногийн цэвэр (график), сүүлийн шилжүүлгүүд
+    spark: sparkOf(b.days, 7, 'net'), transfers: (await lastTransfers(db, [shop.id], 10)).get(shop.id) ?? [],
     login,
   };
 }

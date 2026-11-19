@@ -10,6 +10,8 @@ import { PAGES, accessTo } from '../../lib/permissions';
 const BASE = process.env.E2E_BASE ?? 'http://localhost:3100';
 const PW = 'Test1234';
 let pass = 0;
+/** #168: 12:00-оос хойш хуваарилсан (падаангүй жолоочийн) захиалга маргаашийн падаанд — e2e падааны бодит өдрөөр ажиллана */
+let padDay = '';
 const fails: string[] = [];
 function check(name: string, ok: boolean, info = '') {
   if (ok) pass++; else fails.push(`${name} ${info}`);
@@ -398,15 +400,16 @@ async function main() {
     const o1 = JSON.parse((await mk4(1)).text).order; const o2 = JSON.parse((await mk4(2)).text).order;
     const asg = await req('/api/driver-lead/assign', { cookie: lead4.cookie, method: 'POST', body: { ids: [o1.id, o2.id], driverId: free.id } });
     check('ахлах жолооч 2 захиалга хуваарилав', asg.status === 200 && JSON.parse(asg.text).assigned.length === 2, asg.text.slice(0, 120));
-    const noOk = await req('/api/handover', { cookie: wh4.cookie, method: 'POST', body: { driverId: free.id, date: ubToday, orderIds: [o1.id, o2.id] } });
+    padDay = JSON.parse(asg.text).assigned?.[0]?.date ?? ubToday;
+    const noOk = await req('/api/handover', { cookie: wh4.cookie, method: 'POST', body: { driverId: free.id, date: padDay, orderIds: [o1.id, o2.id] } });
     check('OKEY-гүй жолоочид падаан үүсэхгүй → 409 not_approved', noOk.status === 409 && noOk.text.includes('not_approved'), noOk.text.slice(0, 100));
-    const okA = await req('/api/handover/approvals', { cookie: acc4.cookie, method: 'POST', body: { driverId: free.id, date: ubToday, approved: true } });
+    const okA = await req('/api/handover/approvals', { cookie: acc4.cookie, method: 'POST', body: { driverId: free.id, date: padDay, approved: true } });
     check('нягтлан OKEY өгөв', okA.status === 200, okA.text.slice(0, 80));
-    const okW = await req('/api/handover/approvals', { cookie: wh4.cookie, method: 'POST', body: { driverId: free.id, date: ubToday, approved: true } });
+    const okW = await req('/api/handover/approvals', { cookie: wh4.cookie, method: 'POST', body: { driverId: free.id, date: padDay, approved: true } });
     check('агуулах OKEY өгөхгүй → 403', okW.status === 403, String(okW.status));
-    const part = await req('/api/handover', { cookie: wh4.cookie, method: 'POST', body: { driverId: free.id, date: ubToday, orderIds: [o1.id] } });
+    const part = await req('/api/handover', { cookie: wh4.cookie, method: 'POST', body: { driverId: free.id, date: padDay, orderIds: [o1.id] } });
     check('бүх захиалгыг сонгоогүй → 400 not_all_selected', part.status === 400 && part.text.includes('not_all_selected'), part.text.slice(0, 100));
-    const cr = await Promise.all([1, 2].map(() => req('/api/handover', { cookie: wh4.cookie, method: 'POST', body: { driverId: free.id, date: ubToday, orderIds: [o1.id, o2.id] } })));
+    const cr = await Promise.all([1, 2].map(() => req('/api/handover', { cookie: wh4.cookie, method: 'POST', body: { driverId: free.id, date: padDay, orderIds: [o1.id, o2.id] } })));
     check('зэрэг 2 падаан үүсгэх → нэг л үүснэ', cr.filter((x) => x.status === 201).length === 1 && cr.some((x) => x.status === 409), cr.map((x) => x.status).join(','));
     const created4 = cr.find((x) => x.status === 201);
     if (!created4) { fails.push(`падаан үүсээгүй: ${cr.map((x) => x.text.slice(0, 120)).join(' | ')} · o1=${JSON.stringify(o1)?.slice(0, 80)} · asg=${asg.text.slice(0, 160)}`); }
@@ -480,7 +483,8 @@ async function main() {
     check('оператор асуудал шийдэхгүй → 403', iss.status === 403, String(iss.status));
     const ex = await req('/api/driver/goods', { cookie: d5.cookie, method: 'POST', body: { kind: 'take', idemKey: `e2e-m5-ex-${Date.now()}`, lines: [{ variantId: vv.variantId, qty: 1 }] } });
     const exj = JSON.parse(ex.text);
-    const tomorrow5 = new Date(Date.now() + 8 * 3600_000 + 86_400_000).toISOString().slice(0, 10);
+    // Падаан өнөөдөр өгөгдсөн бол нэмэлт бараа маргаашийн падаанд; падаан маргаашийнх бол өнөөдрийнх нээлттэй
+    const tomorrow5 = padDay === ubToday ? new Date(Date.now() + 8 * 3600_000 + 86_400_000).toISOString().slice(0, 10) : ubToday;
     check('нэмэлт бараа = хүсэлт (бараа хөдлөхгүй), өнөөдрийн падаан өгөгдсөн тул маргаашийн падаанд', ex.status === 200 && exj.doc?.status === 'REQUESTED' && String(exj.doc?.date).slice(0, 10) === tomorrow5, ex.text.slice(0, 120));
     const sl = await req('/api/driver/goods', { cookie: d5.cookie, method: 'POST', body: { kind: 'sale', payment: 'CASH', idemKey: `e2e-m5-sl-${Date.now()}`, lines: [{ variantId: vv.variantId, qty: 1 }] } });
     check('хүлээн аваагүй нэмэлт барааг зарахгүй → 409', sl.status === 409, sl.text.slice(0, 80));
@@ -491,17 +495,17 @@ async function main() {
     check('жолоочийн өрийн дэвтэр өөрт л (оператор 403)', Array.isArray(db5.items) && typeof db5.summary?.amount === 'number' && dbOp.status === 403, `${JSON.stringify(db5.summary)} ${dbOp.status}`);
     const g5 = JSON.parse((await req('/api/driver/goods', { cookie: d5.cookie })).text);
     check('жолоочид бараа үлдээгүй', g5.totals?.balance === 0, JSON.stringify(g5.totals));
-    const ctl = await req('/api/driver-control', { cookie: lead4.cookie });
+    const ctl = await req(`/api/driver-control?date=${padDay}`, { cookie: lead4.cookie });
     const ctlOp = await req('/api/driver-control', { cookie: op4.cookie });
     const me5 = JSON.parse(ctl.text).items?.find((x: { id: string }) => x.id === free.id);
-    check('жолоочийн хяналт: хүргэсэн 1, маргааш 1', ctl.status === 200 && me5?.delivered === 1 && me5?.postponed === 1 && ctlOp.status === 403, JSON.stringify(me5).slice(0, 160));
+    check('жолоочийн хяналт: хүргэсэн 1, маргааш 1', ctl.status === 200 && me5?.delivered === 1 && me5?.postponed === 1 && ctlOp.status === 403, String(JSON.stringify(me5)).slice(0, 160));
     const rec5 = JSON.parse((await req('/api/stock/reconcile?fresh=1', { cookie: adm.cookie })).text);
     check('Модуль 5-ын дараа тулгалт: журнал = үлдэгдэл', rec5.ok === true, JSON.stringify(rec5).slice(0, 120));
 
     // ───── Модуль 6: нягтлан (падааны өдрөөр), тооцоо нийлэх, түгжээ, банк ─────
     const acc6 = await loginAs('80000129');
     const ol6 = await loginAs('80000004');
-    const today6 = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+    const today6 = padDay || new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
     const inc = JSON.parse((await req(`/api/driver/income?date=${today6}`, { cookie: d5.cookie })).text);
     check('жолоочийн «Орлого»: хүргэсэн 1, маргааш 1 (падааны өдөр)', inc.day?.delivered === 1 && inc.day?.postponed === 1 && typeof inc.day?.toReceive === 'number', JSON.stringify(inc.day ?? inc).slice(0, 160));
     const brd = JSON.parse((await req(`/api/accounting?date=${today6}`, { cookie: acc6.cookie })).text);

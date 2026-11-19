@@ -19,3 +19,5 @@ export const isYmd = (s: unknown): s is string => {
 };
 /** UB цаг (0–23) */
 export const ubHour = (d: Date) => new Date(d.getTime() + OFFSET).getUTCHours();
+/** Одоогийн цаг (УБ). Тест л TEST_UB_HOUR-аар тогтооно (үдээс өмнө/хойш дүрмийн тест цагаас хамааралгүй) — production-д тохируулдаггүй */
+export const ubHourNow = () => (process.env.NODE_ENV === 'test' && process.env.TEST_UB_HOUR ? Number(process.env.TEST_UB_HOUR) : ubHour(new Date()));

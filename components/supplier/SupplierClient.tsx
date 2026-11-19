@@ -19,7 +19,9 @@ const digits = (s: string) => s.replace(/\D/g, '').slice(0, 9);
 const inputCls = 'h-10 min-w-0 rounded-[10px] border border-line bg-surface px-2.5 text-[13.5px]';
 
 interface OrderDay { label: string; date: string; total: number; delivered: number; cancelled: number; onRoad: number; pending: number; amount: number; shops?: { id: number; name: string; total: number; amount: number }[] }
-interface ShopRow { id: number; name: string; contactName: string; contactPhone: string; isActive: boolean; hasLogin: boolean; productCount: number; openDays: number; balance: number; pendingAdj: number; monthSales: number }
+interface Spark { date: string; v: number }
+interface Transfer { at: string; byName: string | null; from: string; to: string; days: number; amount: number }
+interface ShopRow { id: number; name: string; contactName: string; contactPhone: string; isActive: boolean; hasLogin: boolean; productCount: number; openDays: number; balance: number; pendingAdj: number; monthSales: number; spark?: Spark[]; lastTransfer?: Transfer | null }
 interface Overview { stats: { activeShops: number; monthSales: number; monthNet: number; todaySales: number; todayNet: number; balance: number }; orderDays: OrderDay[]; shops: ShopRow[]; isSuperAdmin: boolean; defaults: Ded }
 interface Ded { operatorCost: number; deliveryCost: number; marketingCost: number; otherCost: number; otherNote: string }
 interface Prod { id: number; productId: number; code: string; name: string; fromDate: string; toDate: string | null; active: boolean; createdByName: string; endedByName: string | null; deduction: Ded }
@@ -29,7 +31,7 @@ interface Detail {
   shop: { id: number; name: string; contactName: string; contactPhone: string; isActive: boolean; version: number };
   admin: boolean; isSuperAdmin: boolean; today: string; products: Prod[]; defaults: Ded | null;
   balance: { openDays: number; openNet: number; pendingAdj: number; pendingAdjCount: number; balance: number };
-  openDays: RangeDay[]; transferredDays: RangeDay[]; adjustments: Adj[]; orderDays: OrderDay[];
+  openDays: RangeDay[]; transferredDays: RangeDay[]; adjustments: Adj[]; orderDays: OrderDay[]; spark?: Spark[]; transfers?: Transfer[];
   login: { id: string; name: string; phone: string; isActive: boolean; lastLoginAt: string | null } | null;
 }
 interface Line { productId: number; code: string; name: string; qty: number; cancelledQty: number; unitPrice: number; sales: number; operatorCost: number; deliveryCost: number; marketingCost: number; otherCost: number; otherNote: string; deduction: number; net: number; manual: boolean; manualNote: string; manualPerUnit?: { operatorCost: number; deliveryCost: number; marketingCost: number; otherCost: number } | null }
@@ -42,11 +44,48 @@ export function SupplierClient({ admin }: { admin: boolean }) {
   return <AdminOverview onOpen={setOpen} />;
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: 'accent' | 'ok' | 'bad' }) {
+function Stat({ label, value, tone, sub }: { label: string; value: string; tone?: 'accent' | 'ok' | 'bad' | 'warn'; sub?: string }) {
   return (
-    <div className="flex min-w-0 flex-col gap-0.5 rounded-2xl border border-line bg-surface px-4 py-3" style={{ boxShadow: `inset 0 3px 0 ${tone === 'ok' ? 'var(--ok)' : tone === 'bad' ? 'var(--bad)' : 'var(--page)'}` }}>
+    <div className="flex min-w-0 flex-col gap-0.5 rounded-2xl border border-line bg-surface px-4 py-3" style={{ boxShadow: `inset 0 3px 0 ${tone === 'ok' ? 'var(--ok)' : tone === 'bad' ? 'var(--bad)' : tone === 'warn' ? 'var(--warn)' : 'var(--page)'}` }}>
       <span className="text-[12.5px] font-semibold text-muted">{label}</span>
-      <b className={clsx('break-words text-[17px] font-extrabold tracking-tight sm:text-[22px]', tone === 'accent' && 'text-accent', tone === 'ok' && 'text-ok-ink', tone === 'bad' && 'text-bad-ink')}>{value}</b>
+      <b className={clsx('break-words text-[17px] font-extrabold tracking-tight sm:text-[22px]', tone === 'accent' && 'text-accent', tone === 'ok' && 'text-ok-ink', tone === 'bad' && 'text-bad-ink', tone === 'warn' && 'text-warn')}>{value}</b>
+      {sub ? <span className="break-words text-[12px] text-subtle">{sub}</span> : null}
+    </div>
+  );
+}
+
+const md = (ymd: string) => `${ymd.slice(5, 7)}/${ymd.slice(8)}`;
+const initials = (n: string) => n.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('') || '?';
+
+/** #175 C: 14 хоногийн борлуулалтын жижиг график (сүүлийнх = өнөөдөр, тод) */
+function Sparkline({ data }: { data: Spark[] }) {
+  const max = Math.max(1, ...data.map((d) => d.v));
+  return (
+    <div className="flex h-[34px] items-end gap-[3px]" aria-hidden>
+      {data.map((d, i) => <i key={d.date} title={`${md(d.date)} · ${money(d.v)}`} className={clsx('flex-1 rounded-t-[3px]', i === data.length - 1 ? 'bg-[var(--page)]' : 'bg-[color-mix(in_srgb,var(--page)_50%,transparent)]')} style={{ height: `${Math.max(6, (d.v / max) * 100)}%` }} />)}
+    </div>
+  );
+}
+
+/** #175 C: «А − Б = В» томьёо (ойлгомжтой) */
+function Term({ label, value, tone, big }: { label: string; value: string; tone?: 'bad' | 'res'; big?: boolean }) {
+  return (
+    <div className={clsx('min-w-0 rounded-xl px-3 py-2', tone === 'res' ? 'bg-[color-mix(in_srgb,var(--page)_14%,var(--surface))]' : 'bg-surface2')}>
+      <span className="block text-[12px] font-semibold text-muted">{label}</span>
+      <b className={clsx('block break-words font-extrabold tracking-tight', big ? 'text-[22px]' : 'text-[17px]', tone === 'bad' && 'text-bad-ink', tone === 'res' && 'text-[var(--page)]')}>{value}</b>
+    </div>
+  );
+}
+const Op = ({ c }: { c: string }) => <span aria-hidden className="text-[20px] font-extrabold text-subtle">{c}</span>;
+
+/** #175 C: суутгалын 4 төрөл өнгөт зураасаар */
+const DED_COLORS = ['#0EA5E9', '#F59E0B', '#A855F7', '#64748B'];
+function DedStack({ parts }: { parts: [string, number][] }) {
+  const total = parts.reduce((a, [, v]) => a + Math.max(0, v), 0);
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex h-3 overflow-hidden rounded-full bg-line" aria-hidden>{total ? parts.map(([l, v], i) => <i key={l} style={{ width: `${(Math.max(0, v) / total) * 100}%`, background: DED_COLORS[i] }} />) : null}</div>
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[12px] text-muted">{parts.map(([l, v], i) => <span key={l} className="whitespace-nowrap"><i className="mr-1 inline-block h-2.5 w-2.5 rounded-[3px] align-middle" style={{ background: DED_COLORS[i] }} />{l} {money(v)}</span>)}</div>
     </div>
   );
 }
@@ -90,6 +129,9 @@ function AdminOverview({ onOpen }: { onOpen: (id: number) => void }) {
   const [add, setAdd] = useState(false);
   const [defs, setDefs] = useState(false);
   const [ok, setOk] = useState<string | null>(null);
+  const [filterSel, setFilter] = useState<'due' | 'all' | 'inactive' | null>(null);
+  const [q, setQ] = useState('');
+  const [showDays, setShowDays] = useState(false);
   const load = useCallback(async () => { try { setD(await api('/api/supplier')); setErr(null); } catch (e) { setErr(msg(e)); } }, []);
   useEffect(() => { void load(); }, [load]);
   return (
@@ -97,40 +139,71 @@ function AdminOverview({ onOpen }: { onOpen: (id: number) => void }) {
       <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4 flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0"><h1 className="text-[24px] font-extrabold tracking-tight">Нийлүүлэгч</h1><p className="band-sub text-[13.5px]">Гадны дэлгүүрийн бараа · падааны өдрөөр тооцоо · борлуулалт − суутгал = шилжүүлэх дүн</p></div>
         <div className="band-actions flex flex-wrap gap-2">
-          {d?.isSuperAdmin ? <Button size="sm" onClick={() => setDefs(true)}>Анхдагч суутгал</Button> : null}
+          {d?.isSuperAdmin ? <Button size="sm" onClick={() => setDefs(true)}>⚙ Анхдагч суутгал</Button> : null}
           <Button variant="primary" size="sm" onClick={() => setAdd(true)}>+ Дэлгүүр нэмэх</Button>
         </div>
       </div>
-      {d ? <p className="min-w-0 break-words text-[13px] text-muted">Бараа нэмэхэд автоматаар тавигдах суутгал (1 ширхэгээс): {dedText(d.defaults)}</p> : null}
       {ok ? <Notice tone="ok">{ok}</Notice> : null}
       {err ? <Notice>{err}</Notice> : null}
-      {d ? (
-        <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label="Идэвхтэй дэлгүүр" value={String(d.stats.activeShops)} />
-            <Stat label="Энэ сарын борлуулалт" value={money(d.stats.monthSales)} />
-            <Stat label="Өнөөдрийн борлуулалт" value={money(d.stats.todaySales)} />
-            <Stat label="Нийт төлөх үлдэгдэл" value={money(d.stats.balance)} tone="accent" />
-          </div>
-          <OrderDays days={d.orderDays} all />
-          <div className="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface">
-            {d.shops.length === 0 ? <p className="p-6 text-center text-[14px] text-muted">Дэлгүүр бүртгэгдээгүй — «+ Дэлгүүр нэмэх»</p> : null}
-            {d.shops.map((s) => (
-              <button key={s.id} type="button" data-shop-open={s.id} onClick={() => onOpen(s.id)}
-                className="flex min-w-0 flex-col gap-2 border-b border-line px-4 py-3 text-left last:border-b-0 hover:bg-surface2 sm:flex-row sm:items-center sm:gap-4">
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2"><b className="min-w-0 break-words text-[15px]">{s.name}</b>{s.isActive ? null : <Badge tone="bad">Идэвхгүй</Badge>}{s.hasLogin ? <Badge>Нэвтрэх эрхтэй</Badge> : null}</div>
-                  <span className="min-w-0 break-words text-[12.5px] text-muted">{[s.contactName, s.contactPhone].filter(Boolean).join(' · ') || '—'} · {s.productCount} бараа · энэ сар {money(s.monthSales)}</span>
+      {d ? (() => {
+        const dueShops = d.shops.filter((x) => x.isActive && (x.balance !== 0 || x.openDays > 0));
+        const filter = filterSel ?? (dueShops.length ? 'due' : 'all');
+        const sq = q.trim().toLowerCase();
+        const list = d.shops
+          .filter((x) => (filter === 'all' || (filter === 'due' ? x.isActive && (x.balance !== 0 || x.openDays > 0) : !x.isActive)))
+          .filter((x) => !sq || [x.name, x.contactName, x.contactPhone].some((t) => t.toLowerCase().includes(sq)))
+          .sort((a, b) => Number(b.isActive) - Number(a.isActive) || b.balance - a.balance || a.name.localeCompare(b.name, 'mn'));
+        return (
+          <>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <Stat label="Шилжүүлэх нийт үлдэгдэл" value={money(d.stats.balance)} tone="warn" sub={`${dueShops.length} дэлгүүр · ${dueShops.reduce((a, x) => a + x.openDays, 0)} өдөр`} />
+              <Stat label="Өнөөдрийн борлуулалт" value={money(d.stats.todaySales)} sub={`цэвэр ${money(d.stats.todayNet)}`} />
+              <Stat label="Энэ сарын борлуулалт" value={money(d.stats.monthSales)} sub={`цэвэр ${money(d.stats.monthNet)}`} />
+              <Stat label="Идэвхтэй дэлгүүр" value={String(d.stats.activeShops)} sub={d.shops.length > d.stats.activeShops ? `${d.shops.length - d.stats.activeShops} идэвхгүй` : undefined} />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {([['due', `Шилжүүлэх ёстой (${dueShops.length})`], ['all', `Бүгд (${d.shops.length})`], ['inactive', `Идэвхгүй (${d.shops.length - d.stats.activeShops})`]] as const).map(([k, l]) => (
+                <button key={k} type="button" data-shop-filter={k} onClick={() => setFilter(k)} className={clsx('h-9 rounded-full border px-3.5 text-[13px] font-bold', filter === k ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface text-muted')}>{l}</button>
+              ))}
+              <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Дэлгүүр, хариуцагч, утас…" aria-label="Дэлгүүр хайх" className="h-9 min-w-[160px] flex-1 rounded-[10px] border border-line bg-surface px-3 text-[13.5px]" />
+            </div>
+            {d.shops.length === 0 ? <p className="rounded-2xl border border-line bg-surface p-6 text-center text-[14px] text-muted">Дэлгүүр бүртгэгдээгүй — «+ Дэлгүүр нэмэх»</p>
+              : !list.length ? <p className="rounded-2xl border border-line bg-surface p-6 text-center text-[14px] text-muted">{filter === 'due' ? 'Шилжүүлэх дэлгүүр алга ✓' : 'Олдсонгүй'}</p> : null}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {list.map((x) => (
+                <div key={x.id} data-shop-card={x.id} className={clsx('flex min-w-0 flex-col gap-2.5 rounded-[18px] border border-line bg-surface p-3.5 shadow-card', !x.isActive && 'opacity-70')}>
+                  <div className="flex min-w-0 items-start gap-2.5">
+                    <span className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-xl bg-[color-mix(in_srgb,var(--page)_16%,var(--surface))] text-[15px] font-extrabold text-[var(--page)]">{initials(x.name)}</span>
+                    <div className="min-w-0 flex-1">
+                      <b className="line-clamp-2 text-[15px] [overflow-wrap:anywhere]" title={x.name}>{x.name}</b>
+                      <span className="line-clamp-2 text-[12.5px] text-subtle [overflow-wrap:anywhere]">{[x.contactName, x.contactPhone].filter(Boolean).join(' · ') || '—'} · {x.productCount} бараа</span>
+                    </div>
+                    {!x.isActive ? <Badge tone="bad">Идэвхгүй</Badge> : x.hasLogin ? <Badge tone="ok">● Нэвтэрдэг</Badge> : <Badge>Эрхгүй</Badge>}
+                  </div>
+                  <div className="flex min-w-0 items-baseline justify-between gap-2 rounded-xl bg-surface2 px-3 py-2.5">
+                    <span className="text-[13px] font-bold text-muted">Шилжүүлэх</span>
+                    {x.balance === 0 && x.openDays === 0 ? <b className="text-[14.5px] text-ok-ink">✓ Бүгд шилжсэн</b> : <b data-shop-due className={clsx('break-words text-[20px] font-extrabold tracking-tight', x.balance < 0 && 'text-bad-ink')}>{money(x.balance)}</b>}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {x.openDays ? <Badge tone="warn">{x.openDays} өдөр шилжүүлээгүй</Badge> : null}
+                    {x.pendingAdj ? <Badge tone={x.pendingAdj < 0 ? 'bad' : 'ok'}>{x.pendingAdj < 0 ? 'буцаалт' : 'нэмэгдэл'} {money(x.pendingAdj)}</Badge> : null}
+                    {x.lastTransfer ? <Badge>Сүүлд {md(x.lastTransfer.to)} · {money(x.lastTransfer.amount)}</Badge> : null}
+                  </div>
+                  <div className="flex min-w-0 items-end gap-3">
+                    <div className="min-w-0 flex-1"><span className="text-[11.5px] text-subtle">Сүүлийн 14 хоног · энэ сар {money(x.monthSales)}</span>{x.spark?.length ? <Sparkline data={x.spark} /> : <div className="h-[34px]" />}</div>
+                    <Button size="sm" variant={x.balance ? 'primary' : 'secondary'} data-shop-open={x.id} onClick={() => onOpen(x.id)}>{x.balance ? 'Тооцоо →' : 'Нээх →'}</Button>
+                  </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-3 sm:flex-col sm:items-end sm:gap-0.5">
-                  <b className="text-[16px]">{money(s.balance)}</b>
-                  <span className="text-[12px] text-muted">{s.openDays ? `${s.openDays} өдөр шилжүүлээгүй` : 'Бүгд шилжүүлсэн'}{s.pendingAdj ? ` · буцаалт ${money(s.pendingAdj)}` : ''}</span>
-                </div>
-              </button>
-            ))}
-          </div>
-        </>
-      ) : null}
+              ))}
+            </div>
+            <section className="rounded-2xl border border-line bg-surface p-3">
+              <button type="button" aria-expanded={showDays} onClick={() => setShowDays(!showDays)} className="w-full text-left text-[13.5px] font-bold">{showDays ? '▾' : '▸'} Захиалгын тоо (өдрөөр)</button>
+              {showDays ? <div className="mt-2"><OrderDays days={d.orderDays} all /></div> : null}
+            </section>
+            <p className="min-w-0 break-words text-[12.5px] text-subtle">Бараа нэмэхэд автоматаар тавигдах суутгал (1 ширхэгээс): {dedText(d.defaults)}</p>
+          </>
+        );
+      })() : null}
       {add ? <ShopDialog onClose={() => setAdd(false)} onDone={async (id) => { setAdd(false); await load(); onOpen(id); }} /> : null}
       {defs && d ? <DefaultsDialog value={d.defaults} onClose={() => setDefs(false)} onDone={async (m) => { setDefs(false); setOk(m); await load(); }} /> : null}
     </div>
@@ -194,6 +267,7 @@ function ShopPanel({ shopId, onBack }: { shopId: number | null; onBack?: () => v
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [edit, setEdit] = useState(false);
+  const [showDays, setShowDays] = useState(false);
   const q = shopId === null ? 'me=1' : `shop=${shopId}`;
   const load = useCallback(async () => { try { setD(await api(`/api/supplier?${q}`)); setErr(null); } catch (e) { setErr(msg(e)); } }, [q]);
   useEffect(() => { void load(); }, [load]);
@@ -205,9 +279,9 @@ function ShopPanel({ shopId, onBack }: { shopId: number | null; onBack?: () => v
     ['adj', `Буцаалт${d.balance.pendingAdjCount ? ` (${d.balance.pendingAdjCount})` : ''}`], ...(d.admin ? [['login', 'Нэвтрэх эрх'] as [Tab, string]] : [])];
   return (
     <div className="flex flex-col gap-4">
-      {onBack ? <button type="button" onClick={onBack} className="-mb-2 self-start text-[13px] font-semibold text-accent">← Бүх дэлгүүр</button> : null}
       <div data-page-band className="page-band rounded-[16px] px-4 py-3.5 shadow-card md:px-5 md:py-4 flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
+          {onBack ? <button type="button" data-back onClick={onBack} className="band-sub self-start text-[13px] font-bold hover:underline">← Дэлгүүрүүд</button> : null}
           <h1 className="min-w-0 break-words text-[24px] font-extrabold tracking-tight">{d.shop.name}</h1>
           <p className="band-sub min-w-0 break-words text-[13.5px]">{[d.shop.contactName, d.shop.contactPhone].filter(Boolean).join(' · ') || (d.admin ? 'Холбогдох мэдээлэлгүй' : 'Тооцооны самбар')}{d.shop.isActive ? '' : ' · Идэвхгүй'}</p>
         </div>
@@ -220,17 +294,50 @@ function ShopPanel({ shopId, onBack }: { shopId: number | null; onBack?: () => v
       </div>
       {err ? <Notice>{err}</Notice> : null}
       {ok ? <Notice tone="ok">{ok}</Notice> : null}
-      <div className="flex flex-col gap-3 rounded-2xl border border-line bg-surface p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 flex-col">
-          <span className="text-[13px] font-semibold text-muted">{d.admin ? 'Нийлүүлэгчид төлөх үлдэгдэл' : 'Таны авах үлдэгдэл'}</span>
-          <b className="text-[28px] font-extrabold tracking-tight text-accent">{money(d.balance.balance)}</b>
-        </div>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-[13px] text-muted">
-          <span>Шилжүүлээгүй өдөр</span><b className="text-right text-ink">{d.balance.openDays} · {money(d.balance.openNet)}</b>
-          <span>Буцаалт / нэмэгдэл</span><b className={clsx('text-right', d.balance.pendingAdj < 0 ? 'text-bad-ink' : 'text-ink')}>{money(d.balance.pendingAdj)}</b>
-        </div>
+      {/* #175 C: «Одоо шилжүүлэх» томьёогоор + өнөөдөр + 7 хоног */}
+      <div className="grid gap-3 lg:grid-cols-[1.2fr_1fr]">
+        <section data-balance-card className="flex min-w-0 flex-col gap-2 rounded-[18px] border border-line bg-surface p-4 shadow-card">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <b className="text-[15px]">{d.admin ? 'Одоо шилжүүлэх' : 'Танд шилжүүлэх'}</b>
+            {d.balance.openDays ? <Badge tone="warn">{d.balance.openDays} өдөр нээлттэй</Badge> : <Badge tone="ok">Бүгд шилжсэн</Badge>}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Term label={`Нээлттэй ${d.balance.openDays} өдрийн цэвэр`} value={money(d.balance.openNet)} />
+            <Op c={d.balance.pendingAdj < 0 ? '−' : '+'} />
+            <Term label={`Буцаалт / нэмэгдэл${d.balance.pendingAdjCount ? ` (${d.balance.pendingAdjCount})` : ''}`} value={money(Math.abs(d.balance.pendingAdj))} tone={d.balance.pendingAdj < 0 ? 'bad' : undefined} />
+            <Op c="=" />
+            <Term label="Шилжүүлэх" value={money(d.balance.balance)} tone="res" big />
+          </div>
+          <span className="text-[12.5px] text-subtle">{d.transfers?.[0] ? `Сүүлд шилжүүлсэн: ${md(d.transfers[0].to)} · ${money(d.transfers[0].amount)}${d.transfers[0].byName ? ` · ${d.transfers[0].byName}` : ''}` : 'Шилжүүлэг хараахан алга'}</span>
+        </section>
+        <section className="flex min-w-0 flex-col gap-2 rounded-[18px] border border-line bg-surface p-4 shadow-card">
+          {d.orderDays[0] ? (<>
+            <b className="text-[15px]">{d.orderDays[0].label} ({md(d.orderDays[0].date)})</b>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-xl bg-surface2 px-2 py-1.5"><b className="block text-[19px] text-ok-ink">{d.orderDays[0].delivered}</b><span className="text-[11.5px] text-subtle">хүргэсэн</span></div>
+              <div className="rounded-xl bg-surface2 px-2 py-1.5"><b className="block text-[19px] text-info">{d.orderDays[0].onRoad}</b><span className="text-[11.5px] text-subtle">замд</span></div>
+              <div className="rounded-xl bg-surface2 px-2 py-1.5"><b className="block text-[19px] text-bad-ink">{d.orderDays[0].cancelled}</b><span className="text-[11.5px] text-subtle">цуцалсан</span></div>
+            </div>
+          </>) : null}
+          {d.spark?.length ? (
+            <div data-week-bars className="flex flex-col gap-1">
+              <span className="text-[12px] font-semibold text-muted">Сүүлийн 7 хоногийн цэвэр</span>
+              <div className="flex h-[70px] items-end gap-1.5">
+                {(() => { const mx = Math.max(1, ...d.spark!.map((x) => x.v)); return d.spark!.map((x, i) => (
+                  <div key={x.date} className="flex h-full flex-1 flex-col items-center justify-end gap-0.5" title={`${md(x.date)} · ${money(x.v)}`}>
+                    <i className={clsx('w-full rounded-t-md', i === d.spark!.length - 1 ? 'bg-[var(--page)]' : 'bg-[color-mix(in_srgb,var(--page)_50%,transparent)]')} style={{ height: `${Math.max(4, (Math.max(0, x.v) / mx) * 100)}%` }} />
+                    <span className="text-[10px] text-subtle">{i === d.spark!.length - 1 ? 'Өнөөдөр' : md(x.date)}</span>
+                  </div>
+                )); })()}
+              </div>
+            </div>
+          ) : null}
+        </section>
       </div>
-      <OrderDays days={d.orderDays} />
+      <section className="rounded-2xl border border-line bg-surface p-3">
+        <button type="button" aria-expanded={showDays} onClick={() => setShowDays(!showDays)} className="w-full text-left text-[13.5px] font-bold">{showDays ? '▾' : '▸'} Захиалгын тоо (өдрөөр)</button>
+        {showDays ? <div className="mt-2"><OrderDays days={d.orderDays} /></div> : null}
+      </section>
       <div className="flex gap-1 overflow-x-auto rounded-xl bg-surface2 p-1">
         {tabs.map(([k, l]) => (
           <button key={k} type="button" onClick={() => setTab(k)} className={clsx('shrink-0 rounded-lg px-3.5 py-2 text-[13.5px] font-semibold', tab === k ? 'bg-surface text-ink shadow-sm' : 'text-muted')}>{l}</button>
@@ -323,6 +430,16 @@ function DayTab({ detail, date, setDate, q, post }: { detail: Detail; date: stri
             <div className="flex flex-col gap-2"><b className="text-[14px]">Шилжүүлсний дараа илэрсэн өөрчлөлт</b><AdjList list={day.laterChanges} empty="" /></div>
           ) : null}
           <div className="flex flex-col gap-3 rounded-2xl border border-line bg-surface p-4">
+            {day.lines.length ? (
+              <div data-day-formula className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Term label={`Борлуулалт (${day.totals.qty}ш)`} value={money(day.totals.sales)} /><Op c="−" />
+                  <Term label="Суутгал" value={money(day.totals.deductions)} tone="bad" /><Op c="=" />
+                  <Term label="Цэвэр" value={money(day.totals.net)} tone="res" big />
+                </div>
+                <DedStack parts={[['Опп', day.lines.reduce((a, l) => a + l.operatorCost, 0)], ['Хүргэлт', day.lines.reduce((a, l) => a + l.deliveryCost, 0)], ['Маркетинг', day.lines.reduce((a, l) => a + l.marketingCost, 0)], ['Бусад', day.lines.reduce((a, l) => a + l.otherCost, 0)]]} />
+              </div>
+            ) : null}
             <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-[13.5px] sm:grid-cols-5">
               <div className="flex flex-col"><span className="text-muted">Хүргэсэн</span><b>{day.totals.qty} ш</b></div>
               <div className="flex flex-col"><span className="text-muted">Борлуулалт</span><b>{money(day.totals.sales)}</b></div>

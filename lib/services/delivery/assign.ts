@@ -4,7 +4,7 @@ import { badRequest, forbidden, notFound } from '../../errors';
 import { writeAudit } from '../../audit';
 import { canAssignDrivers, canView } from '../../permissions';
 import { RURAL, UB_DISTRICTS } from '../../geo';
-import { dateOnly, ubDay, ubDayStart, ubHour, ymdOf, isYmd } from '../../ubdate';
+import { dateOnly, ubDay, ubDayStart, ubHour, ubHourNow, ymdOf, isYmd } from '../../ubdate';
 import { inTx, orderSettings, type UserActor } from '../orders/core';
 import { bustCounts, searchIds, serializeOrder } from '../orders/queries';
 import { addDays, addToHandover, assertLockedDrivers, cleanYmd, isGiven, lockDrivers, lockOrders, removeFromHandover, type Tx } from './core';
@@ -227,7 +227,7 @@ async function nextOpenDay(tx: Tx, driverId: string, today: string, tomorrow: st
   const pend = await tx.order.groupBy({ by: ['deliveryDate'], where: { driverId, status: 'ASSIGNED', handoverId: null, deliveryDate: { in: [dateOnly(today), dateOnly(tomorrow)] } }, _count: true });
   if (pend.some((p) => ymdOf(p.deliveryDate) === tomorrow)) return r(tomorrow);
   if (pend.some((p) => ymdOf(p.deliveryDate) === today)) return r(today);
-  return r(ubHour(new Date()) >= 12 ? tomorrow : today);
+  return r(ubHourNow() >= 12 ? tomorrow : today);
 }
 
 /** Агуулахаас өгөгдсөн (өөрчлөх боломжгүй) падаанууд: id → дугаар */

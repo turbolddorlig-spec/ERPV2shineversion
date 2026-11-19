@@ -16,7 +16,7 @@ import { LedgerList, type Ledger } from './AccountingDialogs';
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа гарлаа');
 const ubToday = (add = 0) => new Date(Date.now() + 8 * 3600_000 + add * 86_400_000).toISOString().slice(0, 10);
 const newKey = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `k-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-type Income = Detail & { date: string; today: string; companyDebt: { amount: number; count: number } };
+type Income = Detail & { date: string; today: string; padaanAhead?: string | null; companyDebt: { amount: number; count: number } };
 const digits = (s: string) => s.replace(/[^\d]/g, '');
 
 export function IncomeTab() {
@@ -57,7 +57,8 @@ export function IncomeTab() {
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         {[[-2, null], [-1, 'Өчигдөр'], [0, 'Өнөөдөр']].map(([a, l]) => { const x = ubToday(Number(a)); return <button key={String(a)} onClick={() => setDate(x)} className={clsx('h-10 rounded-full border px-3.5 text-[13px] font-bold', date === x ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface')}>{l ?? x.slice(5).replace('-', '.')}</button>; })}
-        <input type="date" max={ubToday()} value={date} onChange={(e) => e.target.value && setDate(e.target.value)} className="h-10 rounded-[10px] border border-line bg-surface px-2 text-[14px]" aria-label="Огноо" />
+        {d?.padaanAhead ? <button onClick={() => setDate(d!.padaanAhead!)} data-padaan-ahead className={clsx('h-10 rounded-full border px-3.5 text-[13px] font-bold', date === d?.padaanAhead ? 'border-ink bg-ink text-on-ink' : 'border-warn bg-warn-soft text-warn')}>Падаан {d.padaanAhead.slice(5).replace('-', '.')}</button> : null}
+        <input type="date" max={d?.padaanAhead ?? ubToday()} value={date} onChange={(e) => e.target.value && setDate(e.target.value)} className="h-10 rounded-[10px] border border-line bg-surface px-2 text-[14px]" aria-label="Огноо" />
       </div>
       {err ? <Notice>{err}</Notice> : null}
       {ok ? <Notice tone="ok">{ok}</Notice> : null}
