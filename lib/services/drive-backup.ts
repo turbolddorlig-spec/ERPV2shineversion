@@ -143,9 +143,11 @@ export async function driveCallback(actor: UserActor, input: { code?: string | n
     const u = await fetch(USERINFO(), { headers: { authorization: `Bearer ${access}` }, signal: AbortSignal.timeout(10_000) });
     email = String(((await u.json()) as { email?: string }).email ?? '');
   } catch { /* имэйлгүй ч холбогдоно */ }
-  // Өмнөх бүртгэлийн токеныг цуцална (өөр Drive руу шилжихэд)
+  // Өмнөх бүртгэлийн токеныг цуцална — ЗӨВХӨН өөр Google бүртгэл рүү шилжихэд.
+  // #180: ижил бүртгэлийг дахин холбоход Google нэг зөвшөөрлийн БҮХ токеныг (шинийг ч) цуцалдаг тул цуцлахгүй (401 алдаа гардаг байв).
   const old = dec(s.refreshToken);
-  if (old && old !== refresh) await postForm(REVOKE(), { token: old }).catch(() => null);
+  const sameAccount = !!email && !!s.email && email.toLowerCase() === s.email.toLowerCase();
+  if (old && old !== refresh && !sameAccount) await postForm(REVOKE(), { token: old }).catch(() => null);
   await writeConf(s.clientId, secret, refresh, access, Number(t.j.expires_in ?? 3600));
   const prevEmail = s.email ?? null;
   await save(actor, { ...s, refreshToken: encrypt(refresh), email, connectedAt: new Date().toISOString(), connectedBy: actor.name }, 'settings.drive_connected', { email, previous: prevEmail });

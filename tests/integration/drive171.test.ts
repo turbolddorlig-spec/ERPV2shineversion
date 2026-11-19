@@ -43,7 +43,7 @@ beforeEach(async () => {
     calls.push({ url, body: String(init?.body ?? ''), auth: (init?.headers as Record<string, string> | undefined)?.authorization });
     if (url.includes('/token')) {
       const b = new URLSearchParams(String(init?.body));
-      if (b.get('grant_type') === 'authorization_code') return new Response(JSON.stringify({ access_token: 'AT1', refresh_token: b.get('code') === 'code2' ? 'RT2' : b.get('code') === 'noscope' ? 'RT9' : 'RT1', expires_in: 3599, scope: b.get('code') === 'noscope' ? 'openid https://www.googleapis.com/auth/userinfo.email' : 'openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.file' }), { status: 200 });
+      if (b.get('grant_type') === 'authorization_code') return new Response(JSON.stringify({ access_token: 'AT1', refresh_token: b.get('code') === 'code2' ? 'RT2' : b.get('code') === 'noscope' ? 'RT9' : b.get('code') === 'code3' ? 'RT3' : 'RT1', expires_in: 3599, scope: b.get('code') === 'noscope' ? 'openid https://www.googleapis.com/auth/userinfo.email' : 'openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.file' }), { status: 200 });
       return new Response(JSON.stringify({ access_token: 'AT-refresh', expires_in: 3599 }), { status: 200 });
     }
     if (url.includes('userinfo')) return new Response(JSON.stringify({ email: calls.some((c) => c.body.includes('code=code2')) ? 'company2.backup@gmail.com' : 'zahialga.backup@gmail.com' }), { status: 200 });
@@ -110,9 +110,12 @@ describe('#171 Google Drive холбох', () => {
   it('өөр Drive холбох: шинэ бүртгэл, хуучин токен цуцлагдана; шалгах; одоо хуулбар; салгах', async () => {
     await G.saveDriveClient(sa, { clientId: CID, clientSecret: SECRET });
     await connect('code1');
+    // #180: ижил бүртгэлийг дахин холбоход хуучин токеныг цуцлахгүй (Google шинийг ч хамт цуцалдаг)
+    await connect('code3');
+    expect(calls.some((c) => c.url.includes('/revoke'))).toBe(false);
     await connect('code2');
     expect((await G.getDriveSettings(sa, ORIGIN)).email).toBe('company2.backup@gmail.com');
-    expect(calls.some((c) => c.url.includes('/revoke') && c.body.includes('token=RT1'))).toBe(true);
+    expect(calls.some((c) => c.url.includes('/revoke') && c.body.includes('token=RT3'))).toBe(true);
     expect(await readFile(path.join(dir, 'rclone.conf'), 'utf8')).toContain('"refresh_token":"RT2"');
     const t = await G.testDrive(sa);
     expect(t.ok).toBe(true); expect(t.info).toContain('3.0 / 15.0 GB');
