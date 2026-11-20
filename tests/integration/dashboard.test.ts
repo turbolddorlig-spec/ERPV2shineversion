@@ -56,7 +56,7 @@ describe('Хянах самбар (#123)', () => {
     await order({ status: 'DELIVERED' }, new Date(U.ubDayStart(U.ubDay()).getTime() + 0.5 * H));
     await order({ status: 'DELIVERED' }, new Date(U.ubDayStart(U.ubDay()).getTime() - 0.5 * H));
     const s = await DB.summary(adm, 'day', undefined);
-    expect(s.kpi).toEqual({ total: 9, all: 11, delivered: 7, cancelled: 3, inDelivery: 1, waiting: 0, postponed: 1, successRate: 63.6, cancelRate: 27.3 });
+    expect(s.kpi).toEqual({ total: 9, all: 11, scheduled: 0, delivered: 7, cancelled: 3, inDelivery: 1, waiting: 0, postponed: 1, successRate: 63.6, cancelRate: 27.3 });
     expect(s.reasons.map((r) => [r.key, r.n])).toEqual([['NO_ANSWER', 2], ['POSTPONED', 1]]);
     expect(s.reasons[1]!.label).toBe('Жолооч хойшлуулсан');
     expect(s.cancelledProducts[0]).toMatchObject({ name: 'Самбарын бараа', orders: 3, qty: 3 });
@@ -71,6 +71,21 @@ describe('Хянах самбар (#123)', () => {
     await db.order.updateMany({ where: { postponedByDriverId: drv.id }, data: { status: 'DELIVERED' } });
     DB.bustDashboard();
     expect((await DB.summary(adm, 'day', undefined)).kpi).toMatchObject({ delivered: 8, cancelled: 2, postponed: 0 });
+  });
+
+  it('#190 «Он сар өдөртэй» нийт, хүлээгдэж, цаг, пэйжид орохгүй — тусдаа; ойртоход буцаж орно', async () => {
+    const t0 = U.ubDayStart(U.ubDay()).getTime();
+    await order({ status: 'NEW' }, new Date(t0 + 10 * H));
+    await order({ status: 'NEW', deliveryDate: new Date(`${U.ubDay(new Date(), 5)}T00:00:00Z`) }, new Date(t0 + 10 * H));
+    let s = await DB.summary(adm, 'day', undefined);
+    expect(s.kpi).toMatchObject({ total: 1, scheduled: 1, waiting: 1, all: 1 });
+    expect(s.hourly[10]!.n).toBe(1);
+    expect(s.pages[0]).toMatchObject({ total: 1 });
+    // хүргэх өдөр маргааш болоход «Нийт»-д буцаж орно
+    await db.order.updateMany({ where: { status: 'NEW' }, data: { deliveryDate: new Date(`${U.ubDay(new Date(), 1)}T00:00:00Z`) } });
+    DB.bustDashboard();
+    s = await DB.summary(adm, 'day', undefined);
+    expect(s.kpi).toMatchObject({ total: 2, scheduled: 0, waiting: 2 });
   });
 
   it('#162 цагийн график (УБ), хамгийн их зарагдсан бараа, пэйжээр; өдрийн эцсийн хяналт', async () => {

@@ -16,7 +16,7 @@ type Range = 'day' | 'week' | 'month';
 interface Day { date: string; total: number; delivered: number; cancelled: number; inDelivery: number; waiting: number; postponed: number }
 interface Summary {
   range: Range; from: string; to: string;
-  kpi: { total: number; all?: number; delivered: number; cancelled: number; inDelivery: number; waiting: number; postponed: number; successRate: number; cancelRate: number };
+  kpi: { total: number; all?: number; scheduled?: number; delivered: number; cancelled: number; inDelivery: number; waiting: number; postponed: number; successRate: number; cancelRate: number };
   trend: Day[];
   reasons: { key: string; label: string; n: number; pct: number }[];
   cancelledProducts: { productId: number; code: string; name: string; orders: number; qty: number }[];
@@ -110,7 +110,7 @@ export function DashboardClient() {
         {eod ? <EndOfDay e={eod} /> : null}
         {s ? (<>
           <section aria-label={`Захиалга · ${period}`} className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
-            <Kpi label="Нийт захиалга" value={num(s.kpi.total)} sub={`${period}${s.kpi.waiting ? ` · хүлээгдэж ${num(s.kpi.waiting)}` : ''}`} />
+            <Kpi label="Нийт захиалга" value={num(s.kpi.total)} sub={`${period}${s.kpi.waiting ? ` · хүлээгдэж ${num(s.kpi.waiting)}` : ''}${s.kpi.scheduled ? ` · он сар өдөртэй ${num(s.kpi.scheduled)} (тусдаа)` : ''}`} />
             <Kpi label="Хүргэсэн" value={num(s.kpi.delivered)} tone="ok" />
             <Kpi label="Цуцлагдсан" value={num(s.kpi.cancelled)} tone="bad" sub={s.kpi.postponed ? `үүнээс хойшлуулсан ${num(s.kpi.postponed)}` : undefined} />
             <Kpi label="Хүргэлтэд" value={num(s.kpi.inDelivery)} tone="warn" />

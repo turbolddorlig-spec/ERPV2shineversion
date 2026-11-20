@@ -17,12 +17,17 @@ import type { UserActor } from './users';
  *  • өдөр = ЗАХИАЛГЫН өдөр (баталгаажсан, Улаанбаатар; урьдчилж төлсөн — мөнгө орсон өдөр, #102), төлбөр хүлээж буй орохгүй;
  *  • Нийт = бүх бодит захиалга (цуцлагдсан орно) — хуучинд цуцлагдсаныг хасаад хувь буруу гардаг байсан;
  *  • Цуцлагдсан = цуцлагдсан + жолооч хойшлуулаад дахин хуваарилагдаагүй (хуучин шиг); хүргэгдвэл Хүргэсэн;
+ *  • #190 (эзэн): «Он сар өдөртэй» (хүргэх өдөр нөгөөдөр+) «Нийт», «хүлээгдэж», цаг, пэйжид орохгүй — тусдаа тоо (kpi.scheduled); ойртоход буцаж орно.
  *  • #186 (эзэн): «Нийт» = цуцлагдаагүй захиалга (цагийн график, пэйжийн «нийт» ч мөн). Амжилт % = хүргэсэн ÷ орж ирсэн бүх, Цуцлалт % = цуцлагдсан ÷ орж ирсэн бүх; чиг хандлага картуудтай яг ижил өдрөөр (хуучны UTC зөрүү засагдсан).
  * Зөвхөн уншина. 60 сек кэш.
  */
 const RANGE: Record<string, number> = { day: 1, week: 7, month: 30 };
 const POSTPONED = Prisma.sql`(o.status = 'NEW' AND o."postponedByDriverId" IS NOT NULL)`;
 const REAL = Prisma.sql`o.status <> 'PENDING_PAYMENT' AND o."confirmedAt" IS NOT NULL`;
+/** #190 (эзэн): «Он сар өдөртэй» (хүргэх өдөр нөгөөдөр+) — захиалгын хуудас шиг «Нийт»-д тоолохгүй, тусад нь; ойртоход буцаж орно */
+const sched = () => Prisma.sql`(o.status = 'NEW' AND o."deliveryDate" > ${dateOnly(ubDay(new Date(), 1))}::date)`;
+/** «Нийт»-д тоологдох: цуцлагдаагүй, товлосон биш */
+const live = () => Prisma.sql`(o.status <> 'CANCELLED' AND NOT ${sched()})`;
 
 const cache = new Map<string, { at: number; v: unknown }>();
 async function cached<T>(key: string, ttl: number, fn: () => Promise<T>): Promise<T> {
@@ -47,12 +52,12 @@ export async function summary(actor: UserActor, rangeIn: unknown, dateIn: unknow
   const from = addDays(to, -(n - 1));
   return cached(`s:${range}:${to}`, range === 'day' ? 60_000 : 300_000, async () => {
     const [days, reasons, products, hours, sold, pages] = await Promise.all([
-      db.$queryRaw<{ day: Date; total: number; all: number; delivered: number; cancelled: number; inDelivery: number; waiting: number; postponed: number }[]>`
-        SELECT (o."confirmedAt" + interval '8 hours')::date AS day, count(*) FILTER (WHERE o.status <> 'CANCELLED')::int AS total, count(*)::int AS "all",
+      db.$queryRaw<{ day: Date; total: number; all: number; scheduled: number; delivered: number; cancelled: number; inDelivery: number; waiting: number; postponed: number }[]>`
+        SELECT (o."confirmedAt" + interval '8 hours')::date AS day, count(*) FILTER (WHERE ${live()})::int AS total, count(*) FILTER (WHERE NOT ${sched()})::int AS "all", count(*) FILTER (WHERE ${sched()})::int AS scheduled,
           count(*) FILTER (WHERE o.status = 'DELIVERED')::int AS delivered,
           count(*) FILTER (WHERE o.status = 'CANCELLED' OR ${POSTPONED})::int AS cancelled,
           count(*) FILTER (WHERE o.status = 'OUT_FOR_DELIVERY')::int AS "inDelivery",
-          count(*) FILTER (WHERE o.status IN ('NEW', 'ASSIGNED') AND NOT ${POSTPONED})::int AS waiting,
+          count(*) FILTER (WHERE o.status IN ('NEW', 'ASSIGNED') AND NOT ${POSTPONED} AND NOT ${sched()})::int AS waiting,
           count(*) FILTER (WHERE ${POSTPONED})::int AS postponed
         FROM "Order" o WHERE ${REAL} AND o."confirmedAt" >= ${ubDayStart(from)} AND o."confirmedAt" < ${ubDayStart(addDays(to, 1))}
         GROUP BY 1`,
@@ -70,7 +75,7 @@ export async function summary(actor: UserActor, rangeIn: unknown, dateIn: unknow
       // Аудит #162 (эзэн): захиалга орж ирсэн цаг (Улаанбаатар, баталгаажсан мөчөөр)
       db.$queryRaw<{ h: number; n: number }[]>`
         SELECT extract(hour from o."confirmedAt" + interval '8 hours')::int AS h, count(*)::int AS n
-        FROM "Order" o WHERE ${REAL} AND o."confirmedAt" >= ${ubDayStart(from)} AND o."confirmedAt" < ${ubDayStart(addDays(to, 1))} AND o.status <> 'CANCELLED'
+        FROM "Order" o WHERE ${REAL} AND o."confirmedAt" >= ${ubDayStart(from)} AND o."confirmedAt" < ${ubDayStart(addDays(to, 1))} AND ${live()}
         GROUP BY 1`,
       // Хамгийн их зарагдсан бараа (цуцлагдаагүй захиалга)
       db.$queryRaw<{ productId: number; code: string; name: string; orders: number; qty: number }[]>`
@@ -80,7 +85,7 @@ export async function summary(actor: UserActor, rangeIn: unknown, dateIn: unknow
         GROUP BY 1, 2, 3 ORDER BY 4 DESC, 5 DESC LIMIT 10`,
       // Пэйж бүрийн захиалга ба хүргэлт
       db.$queryRaw<{ pageId: number; name: string; total: number; delivered: number; cancelled: number }[]>`
-        SELECT o."pageId", pg.name, count(*) FILTER (WHERE o.status <> 'CANCELLED')::int AS total, count(*) FILTER (WHERE o.status = 'DELIVERED')::int AS delivered,
+        SELECT o."pageId", pg.name, count(*) FILTER (WHERE ${live()})::int AS total, count(*) FILTER (WHERE o.status = 'DELIVERED')::int AS delivered,
           count(*) FILTER (WHERE o.status = 'CANCELLED')::int AS cancelled
         FROM "Order" o JOIN "Page" pg ON pg.id = o."pageId"
         WHERE ${REAL} AND o."confirmedAt" >= ${ubDayStart(from)} AND o."confirmedAt" < ${ubDayStart(addDays(to, 1))}
@@ -90,14 +95,14 @@ export async function summary(actor: UserActor, rangeIn: unknown, dateIn: unknow
     const byDay = new Map(days.map((d) => [ymdOf(d.day), d]));
     const trend = Array.from({ length: n }, (_, i) => addDays(from, i)).map((d) => {
       const r = byDay.get(d);
-      return { date: d, total: r?.total ?? 0, all: r?.all ?? 0, delivered: r?.delivered ?? 0, cancelled: r?.cancelled ?? 0, inDelivery: r?.inDelivery ?? 0, waiting: r?.waiting ?? 0, postponed: r?.postponed ?? 0 };
+      return { date: d, total: r?.total ?? 0, all: r?.all ?? 0, scheduled: r?.scheduled ?? 0, delivered: r?.delivered ?? 0, cancelled: r?.cancelled ?? 0, inDelivery: r?.inDelivery ?? 0, waiting: r?.waiting ?? 0, postponed: r?.postponed ?? 0 };
     });
-    const sum = (k: 'total' | 'all' | 'delivered' | 'cancelled' | 'inDelivery' | 'waiting' | 'postponed') => trend.reduce((s, x) => s + x[k], 0);
+    const sum = (k: 'total' | 'all' | 'scheduled' | 'delivered' | 'cancelled' | 'inDelivery' | 'waiting' | 'postponed') => trend.reduce((s, x) => s + x[k], 0);
     const total = sum('total'), all = sum('all'), delivered = sum('delivered'), cancelled = sum('cancelled');
     const label = (r: string | null) => (r === 'POSTPONED' ? 'Жолооч хойшлуулсан' : r && r in CANCEL_LABEL ? CANCEL_LABEL[r as keyof typeof CANCEL_LABEL] : 'Шалтгаангүй');
     return {
       range, from, to,
-      kpi: { total, all, delivered, cancelled, inDelivery: sum('inDelivery'), waiting: sum('waiting'), postponed: sum('postponed'), successRate: rate(delivered, all), cancelRate: rate(cancelled, all) },
+      kpi: { total, all, scheduled: sum('scheduled'), delivered, cancelled, inDelivery: sum('inDelivery'), waiting: sum('waiting'), postponed: sum('postponed'), successRate: rate(delivered, all), cancelRate: rate(cancelled, all) },
       trend,
       reasons: reasons.map((r) => ({ key: r.reason ?? 'NONE', label: label(r.reason), n: r.n, pct: rate(r.n, cancelled) })),
       cancelledProducts: products,
