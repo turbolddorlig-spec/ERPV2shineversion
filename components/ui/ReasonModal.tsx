@@ -11,8 +11,8 @@ export const reasonOk = (s: string) => s.replace(/\s/g, '').length >= REASON_MIN
  * Засварын тайлбар асуух цонх (шийдвэр #29).
  * Тайлбаргүй хадгалахыг оролдоход гарч ирнэ; хийсэн өөрчлөлт алдагдахгүй.
  */
-export function ReasonModal({ open, title = 'Засварын тайлбар бичнэ үү', label = 'Яагаад өөрчилж байгаа вэ?', confirmText = 'Хадгалах', summary, onCancel, onConfirm, busy, error }: {
-  open: boolean; title?: string; label?: string; confirmText?: string; summary?: React.ReactNode; busy?: boolean; error?: string | null;
+export function ReasonModal({ open, title = 'Засварын тайлбар бичнэ үү', label = 'Яагаад өөрчилж байгаа вэ?', confirmText = 'Хадгалах', summary, onCancel, onConfirm, busy, error, hint = 'Тайлбар таны нэртэй хамт «Барааны засвар» хуудсанд бүгдэд харагдана.' }: {
+  open: boolean; title?: string; label?: string; confirmText?: string; summary?: React.ReactNode; busy?: boolean; error?: string | null; hint?: string;
   onCancel: () => void; onConfirm: (reason: string) => void;
 }) {
   const [reason, setReason] = useState('');
@@ -35,7 +35,7 @@ export function ReasonModal({ open, title = 'Засварын тайлбар б�
           className={`rounded-xl border bg-surface px-3.5 py-3 text-ink outline-none focus:border-accent ${touched && !ok ? 'border-bad' : 'border-line'}`} />
         {touched && !ok ? <p className="text-[12.5px] font-medium text-bad-ink">Тайлбар дор хаяж {REASON_MIN} тэмдэгт байх ёстой</p> : null}
         {error ? <Notice>{error}</Notice> : null}
-        <p className="text-[12px] text-subtle">Тайлбар таны нэртэй хамт «Барааны засвар» хуудсанд бүгдэд харагдана.</p>
+        <p className="text-[12px] text-subtle">{hint}</p>
       </div>
     </Modal>
   );

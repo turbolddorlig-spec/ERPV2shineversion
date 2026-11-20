@@ -174,7 +174,7 @@ export async function listOrders(actor: UserActor, p: ListParams) {
   return {
     tab, page, pageSize: ORDER_PAGE_SIZE, hasMore, matched, matchedCapped: matched !== null && matched > RESULT_CAP,
     counts: await tabCounts(),
-    can: { edit: canEditOrders(actor.roles), markPaid: canMarkPaid(actor.roles), supervise: canSuperviseOperators(actor.roles), review: canReviewDiscounts(actor.roles) },
+    can: { edit: canEditOrders(actor.roles), markPaid: canMarkPaid(actor.roles), supervise: canSuperviseOperators(actor.roles), review: canReviewDiscounts(actor.roles), saPaid: actor.roles.includes('SUPER_ADMIN') },
     items: list.map((o) => serializeOrder(o, pn.get(o.pageId))),
   };
 }

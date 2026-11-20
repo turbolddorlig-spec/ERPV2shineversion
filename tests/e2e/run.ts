@@ -361,6 +361,18 @@ async function main() {
   // #142: гараар «Мөнгө орсон» хэн ч дарахгүй (админ ч) — зөвхөн банкны импортоор; цуцлахад хувилбар заавал
   const paidAdm = await req(`/api/orders/${oid}/paid`, { cookie: adm.cookie, method: 'POST', body: {} });
   check('#142 админ ч гараар «Мөнгө орсон» → 403 bank_only', paidAdm.status === 403 && paidAdm.text.includes('bank_only'), paidAdm.text.slice(0, 80));
+  // #188/#192: Супер админ гараар «Мөнгө орсон» (шалтгаантай) — «Төлбөр хүлээж буй» → «Шинэ»
+  {
+    const saP = await loginAs('80000001');
+    const pre = JSON.parse((await req('/api/orders', { cookie: opA.cookie, method: 'POST', body: body({ phone: '6' + ph.slice(1), idemKey: `${ik}-sa`, prepaidWait: true }) })).text).order;
+    check('#188 урьдчилгаа хүлээх захиалга үүссэн', pre?.status === 'PENDING_PAYMENT', String(pre?.status));
+    const noNote = await req(`/api/orders/${pre.id}/paid`, { cookie: saP.cookie, method: 'POST', body: {} });
+    check('#188 СА шалтгаангүй → 400', noNote.status === 400, String(noNote.status));
+    const okP = await req(`/api/orders/${pre.id}/paid`, { cookie: saP.cookie, method: 'POST', body: { note: 'E2E хуучин дансанд орсон', version: pre.version } });
+    check('#188 СА шалтгаантай → «Шинэ», урьдчилж төлсөн', okP.status === 200 && JSON.parse(okP.text).order?.status === 'NEW' && JSON.parse(okP.text).order?.prepaid === true, okP.text.slice(0, 80));
+    const after = JSON.parse((await req(`/api/orders/${pre.id}`, { cookie: opA.cookie })).text).order;
+    await req(`/api/orders/${pre.id}/cancel`, { cookie: opA.cookie, method: 'POST', body: { reason: 'CUSTOMER_CANCELLED', note: 'E2E цэвэрлэгээ', version: after.version } });
+  }
   const cnNoVer = await req(`/api/orders/${oid}/cancel`, { cookie: opB.cookie, method: 'POST', body: { reason: 'CUSTOMER_CANCELLED', note: 'E2E хувилбаргүй' } });
   check('#142 хувилбаргүй цуцлалт → 400 version_required', cnNoVer.status === 400 && cnNoVer.text.includes('version_required'), cnNoVer.text.slice(0, 80));
   const st = await req('/api/settings/orders', { cookie: adm.cookie });

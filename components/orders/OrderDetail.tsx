@@ -148,10 +148,10 @@ export function OrderDetail({ id }: { id: number }) {
       <OrderModal open={!!editing} edit={editing} onClose={() => setEditing(null)}
         onDone={(m) => { setEditing(null); setFlash(m); load(); router.refresh(); }}
         onAddToExisting={() => undefined} />
-      <ReasonModal open={saPaid} title={`№${o.number} — «Мөнгө орсон» болгох`} label="Шалтгаан (жишээ: хуучин дансанд орсон, бэлэг)" confirmText="Мөнгө орсон" busy={busy} onCancel={() => setSaPaid(false)}
+      <ReasonModal open={saPaid} title={`№${o.number} — «Мөнгө орсон» болгох`} label="Шалтгаан (жишээ: хуучин дансанд орсон, бэлэг)" confirmText="Мөнгө орсон" busy={busy} hint="Тайлбар таны нэртэй хамт захиалгын түүхэнд хадгалагдана." onCancel={() => setSaPaid(false)}
         summary={<>Захиалга <b>«Шинэ»</b> болж, бүтэн дүн ({money(o.total)}) <b>төлөгдсөн</b> гэж бүртгэгдэнэ — жолооч мөнгө авахгүй. Meta-д борлуулалт илгээгдэнэ. Түүхэнд таны нэр, шалтгаантай үлдэнэ.</>}
         onConfirm={async (note) => { if (await act('paid', { note, version: o.version }, 'Мөнгө орсон — «Шинэ» боллоо')) setSaPaid(false); }} />
-      <ReasonModal open={undo} title="«Мөнгө орсон» буцаах" label="Шалтгаан" confirmText="Буцаах" busy={busy} onCancel={() => setUndo(false)}
+      <ReasonModal open={undo} title="«Мөнгө орсон» буцаах" label="Шалтгаан" confirmText="Буцаах" busy={busy} hint="Тайлбар таны нэртэй хамт захиалгын түүхэнд хадгалагдана." onCancel={() => setUndo(false)}
         onConfirm={async (note) => { if (await act('unpaid', { note }, 'Буцаалаа — «Төлбөр хүлээж буй»')) setUndo(false); }} />
     </div>
   );

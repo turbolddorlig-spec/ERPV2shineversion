@@ -9,6 +9,7 @@ import { OrderModal, type EditOrder, type FormLine, type OrderPrefill } from './
 import { CallsModal } from './CallsClient';
 import { HourlyModal } from './HourlyModal';
 import { CancelOrderModal, HistoryDrawer } from './OrderActions';
+import { ReasonModal } from '@/components/ui/ReasonModal';
 import { Icon } from '@/components/icons';
 import { api, ApiError } from '@/components/ui/api';
 import { Thumb } from '@/components/products/ProductsClient';
@@ -26,7 +27,7 @@ export interface OItem {
   note: string | null; pageName: string | null; operatorName: string; deliveryDate: string; isToday: boolean; prepaid: boolean; createdAt: string;
   total: number; discount: number; deliveryFee: number; postponeCount: number; lines: OLine[]; cancelLabel: string | null; inHandover: boolean; version: number; driverName?: string | null;
 }
-interface ListResp { items: OItem[]; hasMore: boolean; matched: number | null; matchedCapped: boolean; counts: Record<string, number>; can: { edit: boolean; markPaid: boolean; supervise: boolean; review: boolean } }
+interface ListResp { items: OItem[]; hasMore: boolean; matched: number | null; matchedCapped: boolean; counts: Record<string, number>; can: { edit: boolean; markPaid: boolean; supervise: boolean; review: boolean; saPaid?: boolean } }
 
 
 export function StatusChip({ o }: { o: Pick<OItem, 'displayStatus' | 'statusLabel' | 'deliveryDate' | 'isToday' | 'prepaid' | 'postponeCount' | 'noKhoroo'> & { overpaid?: number; issueStatus?: string | null; deliveryPayment?: string | null; originalTotal?: number | null; total?: number } }) {
@@ -157,6 +158,10 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
   const [hourlyOpen, setHourlyOpen] = useState(false);
   const [historyId, setHistoryId] = useState<number | null>(null);
   const [cancelling, setCancelling] = useState<OItem | null>(null);
+  // #188/#192: Супер админ «Төлбөр хүлээж буй»-г гараар «Мөнгө орсон» болгох (жагсаалтаас шууд)
+  const [paying, setPaying] = useState<OItem | null>(null);
+  const [payBusy, setPayBusy] = useState(false);
+  const [payErr, setPayErr] = useState<string | null>(null);
   const reqId = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -320,6 +325,7 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
                       {active && can?.edit ? (o.inHandover
                         ? <IconBtn tone="muted" icon="edit" label="Падаан үүссэн — засах боломжгүй" disabled />
                         : <IconBtn tone="info" icon="edit" label="Засах" onClick={() => openEdit(o.id)} />) : null}
+                      {o.status === 'PENDING_PAYMENT' && can?.saPaid ? <IconBtn tone="ok" icon="cash" label="Мөнгө орсон (Супер админ)" onClick={() => { setPayErr(null); setPaying(o); }} /> : null}
                       <IconBtn tone="muted" icon="history" label="Түүх" onClick={() => setHistoryId(o.id)} />
                       {(active || o.status === 'OUT_FOR_DELIVERY') && can?.edit ? <IconBtn tone="warn" icon="xcircle" label={o.status === 'OUT_FOR_DELIVERY' ? 'Цуцлах (бараа жолоочид — агуулахад буцна)' : 'Цуцлах'} onClick={() => setCancelling(o)} /> : null}
                     </div>
@@ -343,6 +349,15 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
       ) : null}
 
       <HistoryDrawer orderId={historyId} onClose={() => setHistoryId(null)} />
+      <ReasonModal open={!!paying} title={paying ? `№${paying.number} — «Мөнгө орсон» болгох` : ''} label="Шалтгаан (жишээ: хуучин дансанд орсон, бэлэг)" confirmText="Мөнгө орсон" busy={payBusy} error={payErr} hint="Тайлбар таны нэртэй хамт захиалгын түүхэнд хадгалагдана."
+        summary={paying ? <>Захиалга <b>«Шинэ»</b> болж, бүтэн дүн ({money(paying.total)}) <b>төлөгдсөн</b> гэж бүртгэгдэнэ — жолооч мөнгө авахгүй. Meta-д борлуулалт илгээгдэнэ. Түүхэнд таны нэр, шалтгаантай үлдэнэ.</> : null}
+        onCancel={() => setPaying(null)}
+        onConfirm={async (note) => {
+          if (!paying) return;
+          setPayBusy(true); setPayErr(null);
+          try { await api(`/api/orders/${paying.id}/paid`, { method: 'POST', json: { note, version: paying.version } }); setFlash(`№${paying.number} — мөнгө орсон, «Шинэ» боллоо`); setPaying(null); load(); }
+          catch (e) { setPayErr(e instanceof ApiError ? e.message : 'Алдаа гарлаа'); } finally { setPayBusy(false); }
+        }} />
       <CancelOrderModal order={cancelling} onClose={() => setCancelling(null)} onDone={(m) => { setCancelling(null); setFlash(m); load(); }} />
       <HourlyModal open={hourlyOpen} onClose={() => setHourlyOpen(false)} />
       <CallsModal key={callsKey} open={callsOpen} onClose={() => { setCallsOpen(false); resetUrl(); }}
