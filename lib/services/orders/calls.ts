@@ -60,13 +60,16 @@ export async function listCallNotes(actor: UserActor, p: { status?: string; owne
   const q = (p.q ?? '').replace(/\D/g, '');
   if (q) base.push({ phone: { contains: q } });
   const and = [...base];
-  if (p.status === 'open' || !p.status) and.push({ status: { in: ['PENDING', 'CONTACTED'] } });
+  const open = p.status === 'open' || !p.status;
+  if (open) and.push({ status: { in: ['PENDING', 'CONTACTED'] } });
   else if (p.status !== 'all') and.push({ status: p.status as CallStatus });
   const page = Math.max(1, Math.floor(p.page ?? 1));
   const where = { AND: and };
   const [total, rows, incoming, grouped] = await Promise.all([
     db.callNote.count({ where }),
-    db.callNote.findMany({ where, orderBy: [{ status: 'asc' }, { id: 'desc' }], skip: (page - 1) * 50, take: 50 }),
+    // #191 (эзэн): идэвхтэй (залгах) жагсаалт — ЭХЭЛЖ бүртгэсэн дугаар хамгийн дээр, сүүлд бүртгэсэн нь доор (дарааллаар нь залгана).
+    // Хаагдсан / «Бүгд» түүх — шинэ нь дээр хэвээр (олон хуудастай түүхэнд сүүлийнх нь эхэнд хэрэгтэй)
+    db.callNote.findMany({ where, orderBy: [{ status: 'asc' }, { id: open ? 'asc' : 'desc' }], skip: (page - 1) * 50, take: 50 }),
     db.callNoteTransfer.findMany({ where: { toId: actor.id, status: 'PENDING' }, include: { note: true }, orderBy: { id: 'desc' }, take: 100 }),
     db.callNote.groupBy({ by: ['status'], where: { AND: base }, _count: true }),
   ]);

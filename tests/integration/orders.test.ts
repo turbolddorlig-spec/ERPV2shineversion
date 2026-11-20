@@ -368,6 +368,8 @@ describe('дуудлагын бүртгэл (хуучин логик + #54)', ()
     expect(r.created).toBe(3);
     await err(C.createCallNotes(op, { phones: '123' }), 400, 'bad_phone');
     const [n1, n2, n3] = (await C.listCallNotes(op, {})).items.sort((a, b) => a.id - b.id);
+    // #191: залгах жагсаалт — эхэлж бүртгэсэн нь дээр
+    expect((await C.listCallNotes(op, {})).items.map((x) => x.phone)).toEqual(['99112233', '88001122', '80001133']);
     await C.attemptCall(op, n2!.id);
     await err(C.attemptCall(op, n2!.id), 409, 'too_soon');
     await db.callNote.update({ where: { id: n3!.id }, data: { attempts: 5 } });
