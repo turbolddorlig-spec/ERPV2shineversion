@@ -53,7 +53,7 @@ export type Tab = 'today' | 'PENDING_PAYMENT' | 'SCHEDULED' | 'NEW' | 'ASSIGNED'
 export interface ListParams {
   tab?: string; q?: string; from?: string; to?: string; operatorId?: string; pageId?: number; province?: string; district?: string;
   prepaid?: boolean; overpaid?: boolean; noKhoroo?: boolean; postponed?: boolean; todayDelivery?: boolean; page?: number; driverId?: string;
-  /** Хуучин ERP шиг «Төлөв» олон сонголт (таслалаар): PENDING_PAYMENT, NEW, SCHEDULED, ASSIGNED, OUT_FOR_DELIVERY, DELIVERED, CANCELLED */
+  /** Хуучин ERP шиг «Төлөв» олон сонголт (таслалаар): PENDING_PAYMENT, NEW, SCHEDULED, ASSIGNED, OUT_FOR_DELIVERY, DELIVERED, CANCELLED, DRIVER_CANCELLED */
   statuses?: string;
 }
 
@@ -119,6 +119,8 @@ export async function listOrders(actor: UserActor, p: ListParams) {
     for (const st of [...new Set(p.statuses.split(',').map((x) => x.trim()).filter(Boolean))]) {
       if (st === 'SCHEDULED') or.push({ status: 'NEW', deliveryDate: { gt: dateOnly(tomorrow) } });
       else if (st === 'NEW') or.push({ status: 'NEW', deliveryDate: { lte: dateOnly(tomorrow) } });
+      // #188 (эзэн): «Жолооч цуцалсан» — жолооч (эсвэл нягтлан жолоочийн өмнөөс) цуцалсан
+      else if (st === 'DRIVER_CANCELLED') or.push({ status: 'CANCELLED', cancelReason: 'DRIVER_CANCELLED' });
       else if (['PENDING_PAYMENT', 'ASSIGNED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED'].includes(st)) or.push({ status: st as OrderStatus });
       else throw badRequest('Төлөв буруу');
     }
@@ -214,7 +216,7 @@ export async function getOrder(actor: UserActor, idInput: unknown) {
     ...serializeOrder(o, pn.get(o.pageId)),
     history: history.map((h) => ({ id: h.id.toString(), at: h.at, actorName: h.actorName, action: h.action, details: h.details, tags: h.tags })),
     meta: meta ? { status: meta.status, sentAt: meta.sentAt, attempts: meta.attempts } : null,
-    can: { edit: canEditOrders(actor.roles), markPaid: canMarkPaid(actor.roles), saCancel: actor.roles.includes('SUPER_ADMIN') },
+    can: { edit: canEditOrders(actor.roles), markPaid: canMarkPaid(actor.roles), saCancel: actor.roles.includes('SUPER_ADMIN'), saPaid: actor.roles.includes('SUPER_ADMIN') },
   };
 }
 
@@ -281,18 +283,6 @@ export async function hourlyReport(actor: UserActor, dateInput?: string) {
   }
   const list = [...by.values()].map((e) => { let run = 0; return { ...e, cum: e.per.map((n) => (run += n)) }; }).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
   return { date, cuts: CUTS, rows: list.map((e, i) => ({ rank: i + 1, operatorId: e.operatorId, name: e.name, cum: e.cum, total: e.total, me: e.operatorId === actor.id })), total: list.reduce((a, e) => a + e.total, 0) };
-}
-
-/** Пэйжийн түгээмэл бараа (#50, туршилт): сүүлийн 7 хоногийн баталгаажсан захиалгаар хамгийн их зарагдсан 8 хувилбар */
-export async function popularForPage(actor: UserActor, pageId: number) {
-  assertView(actor);
-  if (!Number.isInteger(pageId) || pageId <= 0) return [];
-  const since = new Date(Date.now() - 7 * 86_400_000);
-  const rows = await db.$queryRaw<{ variantId: number; qty: number }[]>`
-    SELECT l."variantId", sum(l.qty)::int AS qty FROM "OrderLine" l JOIN "Order" o ON o.id = l."orderId"
-    WHERE o."pageId" = ${pageId} AND o."confirmedAt" >= ${since} AND o.status <> 'CANCELLED'
-    GROUP BY l."variantId" ORDER BY qty DESC LIMIT 8`;
-  return rows;
 }
 
 // ───────────────────────── хөнгөлөлтийн хяналт (Супер админ, #43 2) ─────────────────────────

@@ -130,7 +130,6 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<Hit[]>([]);
   const [searching, setSearching] = useState(false);
-  const [popular, setPopular] = useState<Hit[]>([]);
   const [busy, setBusyState] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [idemKey, setIdemKey] = useState(() => draft?.idemKey ?? newKey());
@@ -169,11 +168,6 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
     const t = setTimeout(() => api<{ items: typeof addrDup }>(`/api/orders/address-check?${sp}`).then((r) => setAddrDup(r.items)).catch(() => undefined), 400);
     return () => clearTimeout(t);
   }, [edit, phone, extraPhone, province, district, khoroo, detail]);
-
-  useEffect(() => {
-    if (!pageId || edit) return;
-    api<{ items: Hit[] }>(`/api/orders/popular?pageId=${pageId}`).then((r) => setPopular(r.items)).catch(() => setPopular([]));
-  }, [pageId, edit]);
 
   useEffect(() => {
     const term = q.trim();
@@ -381,19 +375,6 @@ function OrderForm({ edit, addLines, prefill, onClose, onDone, onAddToExisting, 
                   </div>
                 );
               }) : <p className="py-4 text-center text-[13px] text-muted">{searching ? 'Хайж байна…' : 'Бараа олдсонгүй'}</p>}
-            </div>
-          ) : popular.length && !edit ? (
-            <div className="flex flex-col gap-1">
-              <span className="text-[11.5px] text-subtle">Энэ пэйжийн түгээмэл (7 хоног)</span>
-              <div className="flex gap-1.5 overflow-x-auto pb-1">
-                {popular.map((h) => (
-                  <button key={h.variantId} type="button" disabled={h.available <= 0} onClick={() => addHit(h)} title={h.fullName} className="flex w-[96px] shrink-0 flex-col items-center gap-0.5 overflow-hidden rounded-lg border border-line bg-surface p-1.5 text-center text-[11px] hover:bg-surface2 disabled:opacity-50">
-                    <Thumb src={h.thumb} alt={h.fullName} size={40} />
-                    <span className="line-clamp-2 w-full min-w-0 font-semibold leading-tight [overflow-wrap:anywhere]">{h.fullName}</span>
-                    <span className="text-subtle">{h.available}ш</span>
-                  </button>
-                ))}
-              </div>
             </div>
           ) : null}
           {lines.length ? (

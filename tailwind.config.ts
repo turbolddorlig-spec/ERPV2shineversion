@@ -11,6 +11,7 @@ export default {
         ink: v('ink'), 'on-ink': v('on-ink'), muted: v('muted'), subtle: v('subtle'),
         accent: v('accent'), 'on-accent': v('on-accent'), 'accent-soft': v('accent-soft'), 'accent-ink': v('accent-ink'),
         ok: v('ok'), 'ok-soft': v('ok-soft'), 'ok-ink': v('ok-ink'),
+        fresh: v('fresh'), 'fresh-ink': v('fresh-ink'), 'teal-soft': v('teal-soft'), 'teal-ink': v('teal-ink'),
         bad: v('bad'), 'bad-soft': v('bad-soft'), 'bad-ink': v('bad-ink'),
         warn: v('warn-ink'), 'warn-soft': v('warn-soft'),
         info: v('info-ink'), 'info-soft': v('info-soft'),

@@ -17,7 +17,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
       case 'sa-cancel':
         if (body?.version === undefined || body?.version === null) throw badRequest('Хуудсаа шинэчлээд дахин цуцална уу', 'version_required');
         return json(await saCancelOrder(ctx.actor, params.id, body));
-      case 'paid': return json(await markPaid(ctx.actor, params.id));
+      case 'paid': return json(await markPaid(ctx.actor, params.id, body));
       case 'unpaid': return json(await undoPaid(ctx.actor, params.id, body));
       case 'extend': return json(await extendDeadline(ctx.actor, params.id, body));
       default: throw notFound();

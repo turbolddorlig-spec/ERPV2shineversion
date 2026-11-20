@@ -21,7 +21,7 @@ interface Detail extends OItem {
   paymentDeadline: string | null; confirmedAt: string | null; cancelNote: string | null; cancelledAt: string | null; cancelledByName: string | null;
   history: { id: string; at: string; actorName: string; action: string; details: Record<string, unknown> | null; tags: string[] }[];
   meta: { status: string; sentAt: string | null; attempts: number } | null;
-  can: { edit: boolean; markPaid: boolean; saCancel?: boolean };
+  can: { edit: boolean; markPaid: boolean; saCancel?: boolean; saPaid?: boolean };
 }
 const ACTION: Record<string, string> = {
   'order.created': 'Үүсгэсэн', 'order.sms_sent': 'SMS илгээсэн', 'order.sms_failed': 'SMS явсангүй', 'order.updated': 'Засварласан', 'order.cancelled': 'Цуцалсан', 'order.paid': 'Мөнгө орсон', 'order.paid_undone': '«Мөнгө орсон» буцаасан', 'order.deadline_extended': 'Төлбөрийн хугацаа сунгасан', 'order.assigned': 'Жолоочид оноосон', 'order.picked_up': 'Жолооч өөрөө авсан', 'order.delivered': 'Хүргэсэн', 'order.redelivered': 'Хүргэсэн болгосон', 'order.delivery_undone': 'Хүргэсний дараа буцаасан', 'order.driver_cancelled': 'Жолооч цуцалсан', 'order.postponed': 'Маргааш (жолооч)', 'order.postpone_undone': '«Маргааш»-ийг буцаасан', 'order.issue_reported': 'Опп-руу явуулсан (асуудал)', 'order.issue_fixed': 'Асуудал зассан', 'order.issue_cancelled': 'Асуудлаар цуцалсан',
@@ -39,6 +39,7 @@ export function OrderDetail({ id }: { id: number }) {
   const [reason, setReason] = useState('');
   const [cnote, setCnote] = useState('');
   const [undo, setUndo] = useState(false);
+  const [saPaid, setSaPaid] = useState(false);
   const [editing, setEditing] = useState<EditOrder | null>(null);
   const load = useCallback(() => api<{ order: Detail }>(`/api/orders/${id}`).then((r) => setO(r.order)), [id]);
   useEffect(() => {
@@ -125,6 +126,7 @@ export function OrderDetail({ id }: { id: number }) {
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-end gap-2">
           <Link href="/orders" className="mr-auto inline-flex h-11 items-center gap-1 rounded-[11px] border border-line bg-surface px-4 font-semibold"><Icon name="left" size={16} />Жагсаалт</Link>
           {o.can.markPaid && o.status === 'PENDING_PAYMENT' ? <Button loading={busy} onClick={() => act('extend', { days: 3 }, 'Хугацааг 3 хоногоор сунгалаа')}>+3 хоног</Button> : null}
+          {o.can.saPaid && o.status === 'PENDING_PAYMENT' ? <Button variant="primary" data-sa-paid onClick={() => setSaPaid(true)}>Мөнгө орсон (СА)</Button> : null}
           {o.can.markPaid && o.status === 'NEW' && o.prepaid ? <Button onClick={() => setUndo(true)}>«Мөнгө орсон» буцаах</Button> : null}
           {(o.can.edit && (active || o.status === 'OUT_FOR_DELIVERY')) || (o.can.saCancel && o.status === 'DELIVERED') ? <Button variant="danger" onClick={() => { setReason(''); setCnote(''); setCancelOpen(true); }}>{o.status === 'DELIVERED' ? 'Цуцлах (СА)' : 'Цуцлах'}</Button> : null}
           {o.can.edit && active ? <Button variant="primary" onClick={() => api<{ order: EditOrder }>(`/api/orders/${o.id}`).then((r) => setEditing(r.order)).catch((e) => setError(e instanceof ApiError ? e.message : 'Алдаа'))}><Icon name="edit" size={16} />Засах</Button> : null}
@@ -146,6 +148,9 @@ export function OrderDetail({ id }: { id: number }) {
       <OrderModal open={!!editing} edit={editing} onClose={() => setEditing(null)}
         onDone={(m) => { setEditing(null); setFlash(m); load(); router.refresh(); }}
         onAddToExisting={() => undefined} />
+      <ReasonModal open={saPaid} title={`№${o.number} — «Мөнгө орсон» болгох`} label="Шалтгаан (жишээ: хуучин дансанд орсон, бэлэг)" confirmText="Мөнгө орсон" busy={busy} onCancel={() => setSaPaid(false)}
+        summary={<>Захиалга <b>«Шинэ»</b> болж, бүтэн дүн ({money(o.total)}) <b>төлөгдсөн</b> гэж бүртгэгдэнэ — жолооч мөнгө авахгүй. Meta-д борлуулалт илгээгдэнэ. Түүхэнд таны нэр, шалтгаантай үлдэнэ.</>}
+        onConfirm={async (note) => { if (await act('paid', { note, version: o.version }, 'Мөнгө орсон — «Шинэ» боллоо')) setSaPaid(false); }} />
       <ReasonModal open={undo} title="«Мөнгө орсон» буцаах" label="Шалтгаан" confirmText="Буцаах" busy={busy} onCancel={() => setUndo(false)}
         onConfirm={async (note) => { if (await act('unpaid', { note }, 'Буцаалаа — «Төлбөр хүлээж буй»')) setUndo(false); }} />
     </div>

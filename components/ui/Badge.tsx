@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
 
-type Tone = 'neutral' | 'ok' | 'bad' | 'warn' | 'info' | 'accent';
+type Tone = 'neutral' | 'ok' | 'bad' | 'warn' | 'info' | 'accent' | 'fresh' | 'teal';
 const tones: Record<Tone, string> = {
   neutral: 'bg-surface2 text-muted border border-line',
   ok: 'bg-ok-soft text-ok-ink',
@@ -9,6 +9,8 @@ const tones: Record<Tone, string> = {
   warn: 'bg-warn-soft text-warn',
   info: 'bg-info-soft text-info',
   accent: 'bg-accent-soft text-accent-ink',
+  fresh: 'bg-fresh text-fresh-ink',
+  teal: 'bg-teal-soft text-teal-ink',
 };
 
 export function Badge({ tone = 'neutral', children, className }: { tone?: Tone; children: ReactNode; className?: string }) {

@@ -77,10 +77,28 @@ afterEach(() => { vi.unstubAllGlobals(); });
 
 /** Аудит #142 — захиалгын хуудасны эрсдэлүүдийн засвар */
 describe('#142 захиалга: банкаар л төлсөн, утас шалгах, зээл, хүргэлтийн төлбөр, товлосон давхардал, хайлт', () => {
-  it('«Мөнгө орсон» гараар хэн ч болохгүй (Супер админ ч) — зөвхөн банкны гүйлгээгээр', async () => {
+  it('«Мөнгө орсон» гараар ажилчид болохгүй — банкны гүйлгээгээр; #188: зөвхөн Супер админ шалтгаантай гараар', async () => {
     const { order } = await O.createOrder(op, ub({ prepaidWait: true }));
-    await err(O.markPaid(sa, order.id), 403, 'bank_only');
-    await err(O.markPaid(lead, order.id), 403, 'bank_only');
+    await err(O.markPaid(lead, order.id, { note: 'Хуучин дансанд орсон' }), 403, 'bank_only');
+    const adm = await actor(['ADMIN']);
+    await err(O.markPaid(adm, order.id, { note: 'Хуучин дансанд орсон' }), 403, 'bank_only');
+    await err(O.markPaid(sa, order.id, {}), 400);
+    await err(O.markPaid(sa, order.id, { note: 'Хуучин дансанд орсон', version: order.version + 5 }), 409, 'stale');
+    await O.markPaid(sa, order.id, { note: 'Хуучин дансанд орсон', version: order.version });
+    expect(await db.order.findUniqueOrThrow({ where: { id: order.id } })).toMatchObject({ status: 'NEW', prepaid: true, paidAmount: order.total, paymentDeadline: null });
+    expect((await db.order.findUniqueOrThrow({ where: { id: order.id } })).confirmedAt).not.toBeNull();
+    // банкны импорттой ижил Meta дараалалд орно (энэ тестэд Meta тохируулаагүй → «алгассан»)
+    expect(await db.metaEvent.count({ where: { orderId: order.id } })).toBe(1);
+    const h = await db.auditLog.findFirstOrThrow({ where: { action: 'order.paid', entityId: String(order.id) } });
+    expect(h).toMatchObject({ actorName: sa.name, details: expect.objectContaining({ note: 'Хуучин дансанд орсон', by: 'Супер админ гараар' }) });
+    await err(O.markPaid(sa, order.id, { note: 'Дахин дарав' }), 409, 'not_pending');
+    // «Мөнгө орсон» буцаах боломжтой (банкны гүйлгээгүй)
+    await O.undoPaid(lead, order.id, { note: 'Андуурч дарсан' });
+    expect((await db.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe('PENDING_PAYMENT');
+  });
+
+  it('«Мөнгө орсон» банкны гүйлгээгээр', async () => {
+    const { order } = await O.createOrder(op, ub({ prepaidWait: true }));
     const B = await import('@/lib/services/accounting/bank');
     await B.importTransactions({ id: null, name: 'т' }, [{ date: new Date(), description: `${order.phone} төлбөр`, amount: order.total, phone: order.phone }], 'CSV');
     expect((await db.order.findUniqueOrThrow({ where: { id: order.id } }))).toMatchObject({ status: 'NEW', prepaid: true, paidAmount: order.total });

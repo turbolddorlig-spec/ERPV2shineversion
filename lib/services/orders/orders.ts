@@ -461,12 +461,28 @@ export async function cancelOrder(actor: UserActor | typeof SYSTEM_ACTOR & { rol
   return res;
 }
 
-/** «Мөнгө орсон» (#43 9): Төлбөр хүлээж буй → Шинэ; баталгаажсан өдөр = одоо (үүссэн огноо хэвээр); Meta илгээнэ */
-export async function markPaid(actor: UserActor, idInput: unknown): Promise<never> {
-  // Аудит #142 (эзний шийдвэр): «Мөнгө орсон» зөвхөн «Банкны импорт»-оор (автомат эсвэл гараар тааруулах) — мөнгө ороогүй
-  // захиалгыг гараар төлсөн болгож жолооч 0₮ авах, байхгүй мөнгийг «илүү төлөлт» болгож буцаах эрсдэлийг хаана
-  void actor; void idInput;
-  throw new AppError(403, '«Мөнгө орсон»-ыг зөвхөн «Банкны импорт» хуудсанд гүйлгээгээр тааруулна', 'bank_only');
+/**
+ * «Мөнгө орсон» (#43 9): Төлбөр хүлээж буй → Шинэ; баталгаажсан өдөр = одоо (үүссэн огноо хэвээр); Meta илгээнэ.
+ * Аудит #142: ажилчид зөвхөн «Банкны импорт»-оор. #188 (эзний шийдвэр): Супер админ гараар болгож чадна (хуучин дансанд орсон,
+ * бэлэг г.м.) — шалтгаан заавал, түүхэнд; төлсөн дүн = захиалгын дүн (жолооч мөнгө авахгүй); банкны импорттой ижил Meta илгээнэ.
+ */
+export async function markPaid(actor: UserActor, idInput: unknown, input: { note?: unknown; version?: unknown } = {}) {
+  if (!actor.roles.includes('SUPER_ADMIN')) throw new AppError(403, '«Мөнгө орсон»-ыг зөвхөн «Банкны импорт» хуудсанд гүйлгээгээр тааруулна (гараар — зөвхөн Супер админ)', 'bank_only');
+  const id = Number(idInput);
+  if (!Number.isInteger(id) || id <= 0) throw notFound('Захиалга олдсонгүй');
+  const note = requireReason(input.note);
+  const res = await inTx(async (tx) => {
+    if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
+    const o = await tx.order.findUniqueOrThrow({ where: { id } });
+    if (o.status !== 'PENDING_PAYMENT') throw conflict(`№${o.number} «Төлбөр хүлээж буй» биш`, 'not_pending');
+    if (input.version !== undefined && input.version !== null && Number(input.version) !== o.version) throw staleError();
+    const pd = paidOrderData(o);
+    const u = await tx.order.update({ where: { id }, data: { ...pd.data, paidAmount: o.total } });
+    await enqueueMeta(tx, id);
+    await writeAudit(actor, 'order.paid', 'Order', String(id), { number: o.number, total: o.total, paid: o.total, by: 'Супер админ гараар', note, ...(pd.deliveryChange ? { deliveryDate: pd.deliveryChange } : {}) }, tx, ['order', 'money']);
+    return { order: u };
+  });
+  return res; // табын тоо 5 сек кэштэй
 }
 
 /** Алдаатай «Мөнгө орсон»-ыг буцаах — жолоочид оноогоогүй үед */

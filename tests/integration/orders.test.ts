@@ -112,6 +112,9 @@ describe('захиалга үүсгэх', () => {
     // УБ «Урьдчилгаа хүлээх»
     const { order: u } = await O.createOrder(op, ub({ phone: '88001122', prepaidWait: true }));
     expect(u.status).toBe('PENDING_PAYMENT');
+    // #188: Супер админ гараар «Мөнгө орсон» → Meta-д борлуулалт илгээгдэнэ (банкны импорттой ижил)
+    await O.markPaid(sa, u.id, { note: 'Бэлэг явуулсан', version: u.version });
+    expect((await db.metaEvent.findUniqueOrThrow({ where: { orderId: u.id } })).status).toBe('PENDING');
   });
 
   it('пэйж сонгоогүй (#58) → «Пэйж сонгоогүй» нэрээр хадгална; сонгох жагсаалт, тохиргоонд харагдахгүй; сүүлийн пэйж өөрчлөгдөхгүй', async () => {

@@ -185,6 +185,13 @@ describe('цуцлах, маргааш', () => {
     expect([oa.status, oa.cancelReason, oa.driverId]).toEqual(['CANCELLED', 'DRIVER_CANCELLED', drv.id]);
     expect(await db.blacklistEntry.count({ where: { phone: oa.phone, isActive: true } })).toBe(1);
     expect(await goods(drv)).toEqual({ [v1]: [2, 0, 2], [v2]: [1, 0, 1] });
+    // #188: захиалгын хуудасны «Жолооч цуцалсан» төлөв — операторын цуцалсан орохгүй
+    const Q = await import('@/lib/services/orders/queries');
+    const c = (await O.createOrder(op, ub({}))).order;
+    await O.cancelOrder(op, c.id, { reason: 'DUPLICATE', version: c.version });
+    const ids = async (statuses: string) => ((await Q.listOrders(op, { statuses })).items as { id: number }[]).map((x) => x.id);
+    expect(await ids('DRIVER_CANCELLED')).toEqual([a]);
+    expect((await ids('CANCELLED')).sort()).toEqual([a!, c.id].sort());
     // Падаан өгөөгүй (Бэлдэж байна)
     const b = (await O.createOrder(op, ub({ deliveryDate: tomorrow }))).order.id;
     await L.assignOrders(lead, { ids: [b], driverId: drv.id });

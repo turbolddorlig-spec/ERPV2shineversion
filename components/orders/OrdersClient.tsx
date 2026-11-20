@@ -16,8 +16,9 @@ import { money, ubDateTime } from '@/lib/format';
 import { formatPhone } from '@/lib/phone';
 
 export type DStatus = 'PENDING_PAYMENT' | 'SCHEDULED' | 'NEW' | 'ASSIGNED' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELLED';
-export const STATUS_TONE: Record<DStatus, 'warn' | 'info' | 'accent' | 'neutral' | 'ok' | 'bad'> = {
-  PENDING_PAYMENT: 'warn', SCHEDULED: 'info', NEW: 'accent', ASSIGNED: 'neutral', OUT_FOR_DELIVERY: 'info', DELIVERED: 'ok', CANCELLED: 'bad',
+// #188 (эзэн): «Шинэ» тод ногоон (ялгахад амар), «Хүргэсэн» цэнхэр-ногоон
+export const STATUS_TONE: Record<DStatus, 'warn' | 'info' | 'accent' | 'neutral' | 'ok' | 'bad' | 'fresh' | 'teal'> = {
+  PENDING_PAYMENT: 'warn', SCHEDULED: 'info', NEW: 'fresh', ASSIGNED: 'neutral', OUT_FOR_DELIVERY: 'info', DELIVERED: 'teal', CANCELLED: 'bad',
 };
 export interface OLine { id: number; variantId: number; code: string; name: string; label: string; thumb: string | null; image: string | null; listPrice: number; unitPrice: number; qty: number; discountReason: string | null }
 export interface OItem {
@@ -79,8 +80,9 @@ const activeCount = (f: Filters, advOnly = false) => [!advOnly && f.statuses.len
 const fsel = 'h-9 w-full rounded-lg border border-line bg-surface2/60 px-2.5 text-[13px] text-ink outline-none focus:border-accent disabled:opacity-50';
 /** Хуучин ERP-ийн «Төлөв» товч: олон төлөв чагтлан сонгоно */
 const STATUS_OPTIONS: { v: string; l: string; dot: string }[] = [
-  { v: 'NEW', l: 'Шинэ', dot: 'bg-accent' }, { v: 'PENDING_PAYMENT', l: 'Төлбөр хүлээж буй', dot: 'bg-warn' }, { v: 'SCHEDULED', l: 'Он сар өдөртэй', dot: 'bg-info' },
-  { v: 'ASSIGNED', l: 'Жолоочид оноосон', dot: 'bg-subtle' }, { v: 'OUT_FOR_DELIVERY', l: 'Хүргэлтэд гарсан', dot: 'bg-info' }, { v: 'DELIVERED', l: 'Хүргэсэн', dot: 'bg-ok' }, { v: 'CANCELLED', l: 'Цуцлагдсан', dot: 'bg-bad' },
+  { v: 'NEW', l: 'Шинэ', dot: 'bg-fresh' }, { v: 'PENDING_PAYMENT', l: 'Төлбөр хүлээж буй', dot: 'bg-warn' }, { v: 'SCHEDULED', l: 'Он сар өдөртэй', dot: 'bg-info' },
+  { v: 'ASSIGNED', l: 'Жолоочид оноосон', dot: 'bg-subtle' }, { v: 'OUT_FOR_DELIVERY', l: 'Хүргэлтэд гарсан', dot: 'bg-info' }, { v: 'DELIVERED', l: 'Хүргэсэн', dot: 'bg-teal-ink' }, { v: 'CANCELLED', l: 'Цуцлагдсан', dot: 'bg-bad' },
+  { v: 'DRIVER_CANCELLED', l: 'Жолооч цуцалсан', dot: 'bg-bad-ink' },
 ];
 function StatusPicker({ value, onChange, counts }: { value: string[]; onChange: (v: string[]) => void; counts?: Record<string, number> }) {
   const [open, setOpen] = useState(false);
@@ -98,7 +100,7 @@ function StatusPicker({ value, onChange, counts }: { value: string[]; onChange: 
         {value.length ? <span className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full bg-accent text-[11px] text-on-accent">{value.length}</span> : null}
       </button>
       {open ? (
-        <div className="absolute left-0 top-full z-40 mt-1.5 w-60 rounded-xl border border-line bg-surface p-2 shadow-pop">
+        <div className="absolute right-0 top-full z-40 mt-1.5 w-60 max-w-[calc(100vw-32px)] rounded-xl border border-line bg-surface p-2 shadow-pop">
           <p className="mb-1 border-b border-line px-1.5 pb-1.5 text-[12.5px] font-semibold text-muted">Төлөв сонгох</p>
           {STATUS_OPTIONS.map((s) => (
             <label key={s.v} className="flex cursor-pointer items-center gap-2.5 rounded-md px-1.5 py-1.5 text-[13px] hover:bg-surface2">
