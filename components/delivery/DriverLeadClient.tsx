@@ -193,8 +193,9 @@ function AssignView() {
                   <td className="px-2.5 py-2"><StatusChip o={o} /></td>
                   <td className="min-w-[240px] max-w-[300px] select-text px-2.5 py-2">
                     <div className="font-semibold">{o.phone}{o.extraPhone ? <span className="font-normal text-muted"> · {o.extraPhone}</span> : null}</div>
-                    <div className="line-clamp-2 text-[12.5px]" title={o.fullAddress}>{o.fullAddress}</div>
-                    {o.note ? <OperatorNote text={o.note} className="!line-clamp-3" /> : null}
+                    {/* #189 (эзэн): хаяг, санамж бүтэн харагдана (таслахгүй) */}
+                    <div className="whitespace-pre-line text-[12.5px] [overflow-wrap:anywhere]">{o.fullAddress}</div>
+                    {o.note ? <OperatorNote text={o.note} className="!line-clamp-none" /> : null}
                   </td>
                   <td className="px-2.5 py-2">
                     {editable(o) ? <DriverSelect drivers={drivers} value={o.driverId ?? ''} onChange={(v) => { if (v) assign([o.id], v); }} disabled={busy} />

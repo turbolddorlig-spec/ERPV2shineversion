@@ -50,10 +50,12 @@ interface Table {
 function cellCls(v0: number, r: Row, i = -1) {
   // Бөөний захиалгыг өнгөнд тооцохгүй (#117)
   const v = i >= 0 ? v0 - (r.bulk?.[i]?.qty ?? 0) : v0;
-  if (r.zones > 0) { const t = r.zones * (r.dollar || 5); return v >= t ? 'bg-ok-soft text-ok-ink' : v === 0 ? 'text-subtle' : 'bg-bad-soft text-bad-ink'; }
+  // #189 (эзэн): хуучин шиг битүү, арай шахуу өнгө — нүдээр шууд ялгагдана (дүрэм өөрчлөгдөөгүй)
+  const G = 'bg-cell-good text-cell-ink', M = 'bg-cell-mid text-cell-ink', B = 'bg-cell-bad text-cell-ink';
+  if (r.zones > 0) { const t = r.zones * (r.dollar || 5); return v >= t ? G : v === 0 ? 'text-subtle' : B; }
   if (v === 0) return 'text-subtle';
   const k = r.avg > 0 ? v / r.avg : 0;
-  return k >= 2 ? 'bg-ok-soft text-ok-ink font-bold' : k >= 1 ? 'bg-ok-soft text-ok-ink' : k >= 0.7 ? 'bg-warn-soft text-warn' : k >= 0.4 ? 'bg-warn-soft text-warn' : 'bg-bad-soft text-bad-ink';
+  return k >= 2 ? `${G} font-extrabold` : k >= 1 ? G : k >= 0.4 ? M : B;
 }
 
 export function OutflowClient() {
@@ -175,7 +177,7 @@ export function OutflowClient() {
                     <BoostCell row={r} field="zones" post={post} />
                     <BoostCell row={r} field="adNumber" post={post} />
                     {r.daily.map((v, i) => (
-                      <td key={i} className="px-0.5 py-1 text-center"><div className={clsx('mx-auto w-9 rounded-md py-0.5 font-semibold', cellCls(v, r, i))}>{v}</div>{r.bulk[i]?.n ? <div className="text-[10.5px] font-semibold text-info" title={`Бөөний захиалга: ${r.bulk[i]!.n} захиалга, ${r.bulk[i]!.qty} ширхэг — өнгө, дунджид тооцохгүй`}>📦{r.bulk[i]!.n}×{r.bulk[i]!.qty}</div> : null}{r.phones[i] ? <div className="text-[10.5px] text-warn">☎{r.phones[i]}</div> : null}</td>
+                      <td key={i} className={clsx('h-px p-0 text-center align-middle', cellCls(v, r, i), cellCls(v, r, i).startsWith('bg-') && 'border-2 border-surface')}><div className="flex h-full min-w-[42px] flex-col items-center justify-center px-1 py-2 text-[14px] font-bold tabular-nums">{v}{r.bulk[i]?.n ? <div className="text-[10.5px] font-semibold text-info" title={`Бөөний захиалга: ${r.bulk[i]!.n} захиалга, ${r.bulk[i]!.qty} ширхэг — өнгө, дунджид тооцохгүй`}>📦{r.bulk[i]!.n}×{r.bulk[i]!.qty}</div> : null}{r.phones[i] ? <div className="text-[10.5px] font-semibold">☎{r.phones[i]}</div> : null}</div></td>
                     ))}
                     <td className="px-1 py-1 text-center font-bold">{r.weekTotal}{r.phoneWeek ? <div className="text-[10.5px] font-normal text-warn">☎{r.phoneWeek}</div> : null}</td>
                     <td className="hidden px-2 py-1 text-right min-[1360px]:table-cell">{r.avg}</td>
@@ -200,7 +202,7 @@ export function OutflowClient() {
                   <div className="shrink-0 text-right"><b className="text-[18px]">{r.weekTotal}</b><div className="text-[11px] text-muted">7 хоног · ⌀{r.avg}</div></div>
                 </div>
                 <div className="grid grid-cols-7 gap-1 text-center text-[12px]">
-                  {r.daily.map((v, i) => <div key={i} className={clsx('rounded-md py-1 font-semibold', cellCls(v, r, i))}><div className="text-[10px] font-normal text-muted">{i === 0 ? 'Өнөө' : md(d.days[i]!)}</div>{v}{r.bulk[i]?.n ? <div className="text-[9.5px] text-info">📦{r.bulk[i]!.qty}</div> : null}</div>)}
+                  {r.daily.map((v, i) => <div key={i} className={clsx('rounded-md py-1.5 font-bold', cellCls(v, r, i))}><div className="text-[10px] font-normal opacity-75">{i === 0 ? 'Өнөө' : md(d.days[i]!)}</div>{v}{r.bulk[i]?.n ? <div className="text-[9.5px] text-info">📦{r.bulk[i]!.qty}</div> : null}</div>)}
                 </div>
                 {r.variantCount > 1 ? <button type="button" onClick={() => toggle(r.id)} className="self-start text-[12.5px] font-semibold text-accent">{open.has(r.id) ? '▾ Өнгө, хэмжээ нуух' : `▸ Өнгө, хэмжээгээр (${r.variantCount})`}</button> : null}
                 {open.has(r.id) ? <VariantCards id={r.id} days={d.days} /> : null}
