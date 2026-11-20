@@ -151,8 +151,8 @@ export function OutflowClient() {
                 {d.isLead ? <th className="w-8 px-2"><input type="checkbox" aria-label="Бүгдийг сонгох" checked={d.rows.length > 0 && d.rows.every((r) => sel.has(r.id))} onChange={(e) => setSel(e.target.checked ? new Set(d.rows.map((r) => r.id)) : new Set())} /></th> : null}
                 <th className="cursor-pointer px-2 py-2 text-left" onClick={() => sortBy('name')}>Бараа{sort === 'name' ? (dir === 'desc' ? ' ↓' : ' ↑') : ''}</th>
                 <th className="px-1 py-2">$</th>{th('zones', 'Бүүст', 'text-center')}<th className="px-1 py-2">AD</th>
-                {d.days.map((day, i) => th(`d${i}`, i === 0 ? 'Өнөөдөр' : md(day), 'text-center'))}
-                {th('week', '7 хоног', 'text-center')}{th('avg', 'Дундаж', 'hidden min-[1360px]:table-cell')}
+                {d.days.map((day, i) => th(`d${i}`, i === 0 ? 'Өнөөдөр' : md(day), clsx('text-center', i === 0 && 'border-l-[3px] border-l-divider')))}
+                {th('week', '7 хоног', 'text-center border-l-[3px] border-l-divider')}{th('avg', 'Дундаж', 'hidden min-[1360px]:table-cell')}
                 <th className="px-2 py-2 text-right">Боломжтой</th>
                 {d.isSA ? th('profit', 'Зорилт (өчигдөр)') : null}
                 <th className="px-1.5 py-2 text-left">Хариуцагч</th><th className="px-2 py-2 text-right">⚠</th>
@@ -160,9 +160,9 @@ export function OutflowClient() {
               </tr></thead>
               <tbody>
                 {d.rows.map((r) => (<Fragment key={r.id}>
-                  <tr className={clsx('border-t border-line', r.alert === 'RED' && 'shadow-[inset_3px_0_0_var(--bad)]', r.alert === 'ORANGE' && 'shadow-[inset_3px_0_0_var(--warn-ink)]')}>
-                    {d.isLead ? <td className="px-2"><input type="checkbox" aria-label={`${r.name} сонгох`} checked={sel.has(r.id)} onChange={(e) => { const n = new Set(sel); if (e.target.checked) n.add(r.id); else n.delete(r.id); setSel(n); }} /></td> : null}
-                    <td className="w-[210px] min-w-[210px] max-w-[210px] px-2 py-1.5" onMouseEnter={(e) => setHover({ id: r.id, x: e.clientX, y: e.clientY })} onMouseLeave={() => setHover(null)}>
+                  <tr className={clsx('group border-t border-line', r.alert === 'RED' && 'shadow-[inset_3px_0_0_var(--bad)]', r.alert === 'ORANGE' && 'shadow-[inset_3px_0_0_var(--warn-ink)]')}>
+                    {d.isLead ? <td className="bg-surface2 group-hover:bg-lane px-2"><input type="checkbox" aria-label={`${r.name} сонгох`} checked={sel.has(r.id)} onChange={(e) => { const n = new Set(sel); if (e.target.checked) n.add(r.id); else n.delete(r.id); setSel(n); }} /></td> : null}
+                    <td className="bg-surface2 group-hover:bg-lane w-[210px] min-w-[210px] max-w-[210px] px-2 py-1.5" onMouseEnter={(e) => setHover({ id: r.id, x: e.clientX, y: e.clientY })} onMouseLeave={() => setHover(null)}>
                       <div className="flex items-start gap-1.5">
                         {r.variantCount > 1 ? <button type="button" data-variants={r.id} aria-label={`${r.name} өнгө, хэмжээгээр`} aria-expanded={open.has(r.id)} onClick={() => toggle(r.id)} className="mt-0.5 h-5 w-5 shrink-0 rounded text-[12px] text-muted hover:bg-surface2">{open.has(r.id) ? '▾' : '▸'}</button> : null}
                         {/* Хуучин ERP шиг барааны зураг (томруулж харна) */}
@@ -177,9 +177,9 @@ export function OutflowClient() {
                     <BoostCell row={r} field="zones" post={post} />
                     <BoostCell row={r} field="adNumber" post={post} />
                     {r.daily.map((v, i) => (
-                      <td key={i} className={clsx('h-px p-0 text-center align-middle', cellCls(v, r, i), cellCls(v, r, i).startsWith('bg-') && 'border-2 border-surface')}><div className="flex h-full min-w-[42px] flex-col items-center justify-center px-1 py-2 text-[14px] font-bold tabular-nums">{v}{r.bulk[i]?.n ? <div className="text-[10.5px] font-semibold text-info" title={`Бөөний захиалга: ${r.bulk[i]!.n} захиалга, ${r.bulk[i]!.qty} ширхэг — өнгө, дунджид тооцохгүй`}>📦{r.bulk[i]!.n}×{r.bulk[i]!.qty}</div> : null}{r.phones[i] ? <div className="text-[10.5px] font-semibold">☎{r.phones[i]}</div> : null}</div></td>
+                      <td key={i} className={clsx('h-px p-0 text-center align-middle', cellCls(v, r, i), cellCls(v, r, i).startsWith('bg-') && 'border-2 border-surface', i === 0 && '!border-l-[3px] !border-l-divider')}><div className="flex h-full min-w-[42px] flex-col items-center justify-center px-1 py-2 text-[14px] font-bold tabular-nums">{v}{r.bulk[i]?.n ? <div className="text-[10.5px] font-semibold text-info" title={`Бөөний захиалга: ${r.bulk[i]!.n} захиалга, ${r.bulk[i]!.qty} ширхэг — өнгө, дунджид тооцохгүй`}>📦{r.bulk[i]!.n}×{r.bulk[i]!.qty}</div> : null}{r.phones[i] ? <div className="text-[10.5px] font-semibold">☎{r.phones[i]}</div> : null}</div></td>
                     ))}
-                    <td className="px-1 py-1 text-center font-bold">{r.weekTotal}{r.phoneWeek ? <div className="text-[10.5px] font-normal text-warn">☎{r.phoneWeek}</div> : null}</td>
+                    <td className="border-l-[3px] border-l-divider px-1 py-1 text-center font-bold group-hover:bg-surface2">{r.weekTotal}{r.phoneWeek ? <div className="text-[10.5px] font-normal text-warn">☎{r.phoneWeek}</div> : null}</td>
                     <td className="hidden px-2 py-1 text-right min-[1360px]:table-cell">{r.avg}</td>
                     <td className={clsx('px-2 py-1 text-right', (r.stock?.available ?? 0) < r.avg && 'font-bold text-bad-ink')}>{r.stock?.available ?? 0}</td>
                     {d.isSA ? <td className="px-2 py-1 text-right">{r.profit?.status ? <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className={clsx('font-bold underline', STATUS[r.profit.status].cls)}>{STATUS[r.profit.status].icon} {r.profit.orders}/{r.profit.target}</button> : <button type="button" onClick={() => setDlg({ k: 'profit', id: r.id })} className="text-subtle underline">задаргаа</button>}</td> : null}
@@ -465,7 +465,7 @@ function BoostCell({ row, field, post }: { row: Row; field: 'dollar' | 'zones' |
   useEffect(() => setV(init), [init]);
   const label = field === 'dollar' ? '$' : field === 'zones' ? 'Бүүст' : 'AD';
   return (
-    <td className="px-0.5 py-1 text-center">
+    <td className="bg-surface2 group-hover:bg-lane px-0.5 py-1 text-center">
       <input value={v} inputMode="numeric" aria-label={`${row.name} ${label}`} onChange={(e) => setV(digits(e.target.value))}
         onBlur={() => { if (v !== init && !(field !== 'adNumber' && v === '')) void post({ action: 'boost', productId: row.id, [field]: v === '' ? null : Number(v) }, field === 'zones' ? (Number(v) > 0 ? `«${row.name}» бүүст ${v} — ажиглалт эхэллээ` : `«${row.name}» бүүст унтарлаа`) : undefined); }}
         className={clsx('h-8 w-10 rounded-md border border-line bg-surface text-center text-[13px]', field === 'zones' && row.zones > 0 && 'border-accent font-bold text-accent')} />

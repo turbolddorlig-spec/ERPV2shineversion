@@ -672,16 +672,17 @@ export async function pickupList(actor: UserActor, p: { page?: number; district?
     db.order.findMany({ where, orderBy: [{ deliveryDate: 'asc' }, { id: 'asc' }], skip: (page - 1) * 50, take: 51, include: { lines: true } }),
     db.order.groupBy({ by: ['province', 'district'], where: base, _count: { _all: true } }),
   ]);
-  const districts: Record<string, number> = {}; const provinces: Record<string, number> = {}; let total = 0;
+  // #193 (эзэн): нийт тоо жолоочид харагдахгүй (илгээхгүй) — зөвхөн дүүрэг / аймаг тус бүрийн тоо
+  const districts: Record<string, number> = {}; const provinces: Record<string, number> = {};
   for (const g of groups) {
-    const n = g._count._all; total += n;
+    const n = g._count._all;
     if (g.province === UB) { if (g.district) districts[g.district] = (districts[g.district] ?? 0) + n; }
     else provinces[g.province] = (provinces[g.province] ?? 0) + n;
   }
   // Падаанаа хүлээн авахаас өмнөх карт шиг: зөвхөн дугаар, огноо, хаяг, санамж — бараа, дүн, утас харагдахгүй (#77)
   return {
     page, hasMore: rows.length > 50,
-    areas: { total, districts, provinces },
+    areas: { districts, provinces },
     items: rows.slice(0, 50).map((o) => {
       const s = serializeOrder(o);
       return { id: s.id, number: s.number, deliveryDate: s.deliveryDate, fullAddress: s.fullAddress, district: s.district, note: s.note, postponeCount: s.postponeCount };

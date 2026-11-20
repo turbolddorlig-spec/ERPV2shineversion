@@ -448,13 +448,14 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     await db.order.update({ where: { id: c }, data: { province: 'Налайх', district: null } }); // алслагдсан дүүрэг
     const all = await DR.pickupList(drv, {});
     expect(all.items.map((x) => x.id).sort()).toEqual([a, b, c].sort());
-    expect(all.areas).toMatchObject({ total: 3, districts: { 'Баянзүрх': 1, 'Хан-Уул': 1 }, provinces: { 'Налайх': 1 } });
+    expect(all.areas).not.toHaveProperty('total'); // #193: нийт тоо жолоочид очихгүй
+    expect(all.areas).toMatchObject({ districts: { 'Баянзүрх': 1, 'Хан-Уул': 1 }, provinces: { 'Налайх': 1 } });
     expect((await DR.pickupList(drv, { district: 'Хан-Уул' })).items.map((x) => x.id)).toEqual([b]);
     expect((await DR.pickupList(drv, { province: 'Налайх' })).items.map((x) => x.id)).toEqual([c]);
     // үл мэдэгдэх утга → шүүлтгүй (алдаа өгөхгүй); тоо шүүлтээс үл хамаарна
     const bad = await DR.pickupList(drv, { district: 'X', province: 'Y' });
-    expect([bad.items.length, bad.areas.total]).toEqual([3, 3]);
-    expect((await DR.pickupList(drv, { district: 'Хан-Уул' })).areas.total).toBe(3);
+    expect(bad.items.length).toBe(3);
+    expect((await DR.pickupList(drv, { district: 'Хан-Уул' })).areas.districts).toMatchObject({ 'Баянзүрх': 1, 'Хан-Уул': 1 });
   });
 
   it('аудит Б2: жолоочийн апп, «Жолооч хяналт», «Тооцоо» — бүгд ПАДААНЫ өдрөөр, ижил тоо', async () => {
