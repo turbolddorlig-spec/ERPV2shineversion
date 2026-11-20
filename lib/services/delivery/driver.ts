@@ -1,3 +1,4 @@
+import { RURAL, UB, UB_DISTRICTS } from '../../geo';
 import type { DeliveryPayment, IssueFault, IssueType, Order, OrderLine, Prisma } from '@prisma/client';
 import { db } from '../../db';
 import { badRequest, conflict, forbidden, notFound } from '../../errors';
@@ -656,15 +657,31 @@ export async function setRouteNo(actor: UserActor, idIn: unknown, input: { route
 
 // ───────────────────────── Pickup («Авах») ─────────────────────────
 
-/** Хуваарилаагүй «Шинэ» захиалга (өнөөдөр, маргааш) — жолооч өөрөө авна (хуучин шиг) */
-export async function pickupList(actor: UserActor, p: { page?: number; district?: string }) {
+/**
+ * Хуваарилаагүй «Шинэ» захиалга (өнөөдөр, маргааш) — жолооч өөрөө авна (хуучин шиг).
+ * #187: хуучин шиг «Дүүрэг» (УБ-ын 6 дүүрэг) ба «Аймаг / Алслагдмал дүүрэг» (province) шүүлт; сонголт бүрийн тоо (areas).
+ */
+export async function pickupList(actor: UserActor, p: { page?: number; district?: string; province?: string }) {
   assertDriver(actor);
   const page = Math.max(1, Math.min(200, Math.floor(p.page ?? 1)));
-  const where: Prisma.OrderWhereInput = { status: 'NEW', driverId: null, deliveryDate: { lte: dateOnly(ubDay(new Date(), 1)) }, ...(p.district ? { district: p.district } : {}) };
-  const rows = await db.order.findMany({ where, orderBy: [{ deliveryDate: 'asc' }, { id: 'asc' }], skip: (page - 1) * 50, take: 51, include: { lines: true } });
+  const base: Prisma.OrderWhereInput = { status: 'NEW', driverId: null, deliveryDate: { lte: dateOnly(ubDay(new Date(), 1)) } };
+  const district = p.district && p.district in UB_DISTRICTS ? p.district : undefined;
+  const province = p.province && RURAL.includes(p.province) ? p.province : undefined;
+  const where: Prisma.OrderWhereInput = { ...base, ...(district ? { province: UB, district } : province ? { province } : {}) };
+  const [rows, groups] = await Promise.all([
+    db.order.findMany({ where, orderBy: [{ deliveryDate: 'asc' }, { id: 'asc' }], skip: (page - 1) * 50, take: 51, include: { lines: true } }),
+    db.order.groupBy({ by: ['province', 'district'], where: base, _count: { _all: true } }),
+  ]);
+  const districts: Record<string, number> = {}; const provinces: Record<string, number> = {}; let total = 0;
+  for (const g of groups) {
+    const n = g._count._all; total += n;
+    if (g.province === UB) { if (g.district) districts[g.district] = (districts[g.district] ?? 0) + n; }
+    else provinces[g.province] = (provinces[g.province] ?? 0) + n;
+  }
   // Падаанаа хүлээн авахаас өмнөх карт шиг: зөвхөн дугаар, огноо, хаяг, санамж — бараа, дүн, утас харагдахгүй (#77)
   return {
     page, hasMore: rows.length > 50,
+    areas: { total, districts, provinces },
     items: rows.slice(0, 50).map((o) => {
       const s = serializeOrder(o);
       return { id: s.id, number: s.number, deliveryDate: s.deliveryDate, fullAddress: s.fullAddress, district: s.district, note: s.note, postponeCount: s.postponeCount };

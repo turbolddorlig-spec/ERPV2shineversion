@@ -504,6 +504,70 @@ export async function setProductStatus(actor: UserActor, id: number, input: { st
   return serializeProduct(updated, actor.roles);
 }
 
+// ───────────────────────── #187 олноор архивлах (зөвхөн зогсоосон, үлдэгдэлгүй) ─────────────────────────
+
+/** Баталгаажуулах үг (5 үсэг) — санамсаргүй дарахаас хамгаална */
+export const ARCHIVE_WORD = 'АРХИВ';
+const OPEN_ORDER = Prisma.sql`('NEW','PENDING_PAYMENT','ASSIGNED','OUT_FOR_DELIVERY')`;
+/** Архивлаж болох зогсоосон бараа: аль ч байршилд (агуулах, жолооч, ажилтан, замд) үлдэгдэлгүй, нээлттэй захиалгагүй (Аудит Б11-тэй ижил) */
+async function archivableIds(ids?: number[]): Promise<number[]> {
+  const only = ids ? (ids.length ? Prisma.sql`AND p.id IN (${Prisma.join(ids)})` : Prisma.sql`AND false`) : Prisma.empty;
+  const rows = await db.$queryRaw<{ id: number }[]>`
+    SELECT p.id FROM "Product" p
+    WHERE p.status = 'DISCONTINUED' ${only}
+      AND NOT EXISTS (SELECT 1 FROM "ProductVariant" v JOIN "StockBalance" b ON b."variantId" = v.id WHERE v."productId" = p.id AND b.qty > 0)
+      AND NOT EXISTS (SELECT 1 FROM "ProductVariant" v JOIN "OrderLine" l ON l."variantId" = v.id JOIN "Order" o ON o.id = l."orderId"
+                      WHERE v."productId" = p.id AND o.status::text IN ${OPEN_ORDER})
+    ORDER BY p.id`;
+  return rows.map((r) => r.id);
+}
+
+/** «Зогсоосон» табд: хэдэн барааг нэг товшилтоор архивлаж болох вэ */
+export async function archivableCount(actor: UserActor) {
+  if (!canChangeProductStatus(actor.roles)) throw forbidden('Төлөвийг Супер админ, Админ, Ахлах маркетинг солино');
+  const [n, total] = await Promise.all([archivableIds(), db.product.count({ where: { status: 'DISCONTINUED' } })]);
+  return { archivable: n.length, discontinued: total, word: ARCHIVE_WORD };
+}
+
+/**
+ * Зогсоосон, үлдэгдэлгүй, нээлттэй захиалгагүй барааг олноор архивлана (сонгосныг эсвэл бүгдийг).
+ * Бусдыг (идэвхтэй, үлдэгдэлтэй, захиалгатай) алгасна — алдаа өгөхгүй, тоог буцаана. Бараа бүр тусдаа гүйлгээ, түгжээтэй дахин шалгалттай, түүхэнд бичигдэнэ.
+ */
+export async function bulkArchive(actor: UserActor, input: { productIds?: unknown; all?: unknown; confirm?: unknown }) {
+  if (!canChangeProductStatus(actor.roles)) throw forbidden('Төлөвийг Супер админ, Админ, Ахлах маркетинг солино');
+  if (String(input.confirm ?? '').trim().toUpperCase() !== ARCHIVE_WORD) throw badRequest(`Баталгаажуулахын тулд «${ARCHIVE_WORD}» гэж бичнэ үү`, 'confirm_required');
+  let asked: number[] | undefined;
+  if (input.all !== true) {
+    if (!Array.isArray(input.productIds) || !input.productIds.length) throw badRequest('Бараа сонгоно уу');
+    if (input.productIds.length > 2000) throw badRequest('Нэг удаад 2000 хүртэл бараа');
+    asked = [...new Set(input.productIds.map(Number))].filter((n) => Number.isInteger(n) && n > 0);
+  }
+  const ids = (await archivableIds(asked)).slice(0, 5000);
+  const reason = 'Олноор архивласан: зогсоосон, үлдэгдэлгүй, нээлттэй захиалгагүй';
+  let archived = 0;
+  for (const id of ids) {
+    const done = await db.$transaction(async (tx) => {
+      const vs = await tx.productVariant.findMany({ where: { productId: id }, select: { id: true }, orderBy: { id: 'asc' } });
+      for (const v of vs) await tx.$executeRaw`SELECT pg_advisory_xact_lock(2::int4, ${v.id}::int4)`;
+      const vids = vs.map((v) => v.id);
+      const [bal, open] = await Promise.all([
+        tx.stockBalance.count({ where: { variantId: { in: vids }, qty: { gt: 0 } } }),
+        tx.orderLine.count({ where: { variantId: { in: vids }, order: { status: { in: ['NEW', 'PENDING_PAYMENT', 'ASSIGNED', 'OUT_FOR_DELIVERY'] } } } }),
+      ]);
+      if (bal || open) return false; // энэ хооронд орлого / захиалга орсон — алгасна
+      const p = await tx.product.findUnique({ where: { id }, select: { code: true, name: true, status: true } });
+      if (!p || p.status !== 'DISCONTINUED') return false;
+      await tx.product.update({ where: { id }, data: { status: 'ARCHIVED', statusNote: reason, version: { increment: 1 }, updatedById: actor.id } });
+      await writeAudit(actor, 'product.status', 'Product', String(id), {
+        reason, code: p.code, name: p.name, bulk: true, changes: { status: { from: STATUS_LABEL.DISCONTINUED, to: STATUS_LABEL.ARCHIVED } },
+      }, tx, ['status']);
+      return true;
+    });
+    if (done) archived++;
+  }
+  return { archived, skipped: (asked ? asked.length : ids.length) - archived };
+}
+
 // ───────────────────────── олноор ангилал оноох ─────────────────────────
 
 export async function bulkAssignCategory(actor: UserActor, input: { productIds: unknown; categoryId: unknown; reason: unknown }) {

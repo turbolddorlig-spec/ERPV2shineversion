@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   try {
     const ctx = await requireApiUser(req, { page: 'driver', need: 'edit' });
     const sp = req.nextUrl.searchParams;
-    return json(await pickupList(ctx.actor, { page: Number(sp.get('page')) || 1, district: sp.get('district') ?? undefined }));
+    return json(await pickupList(ctx.actor, { page: Number(sp.get('page')) || 1, district: sp.get('district') ?? undefined, province: sp.get('province') ?? undefined }));
   } catch (e) { return errorResponse(e); }
 }
 export async function POST(req: NextRequest) {

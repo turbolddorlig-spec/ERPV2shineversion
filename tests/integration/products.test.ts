@@ -214,6 +214,34 @@ describe('аудит Б11, Б12: үлдэгдэлтэй бараа / хувил�
     const q = await P.createProduct(adm, { code: 'AR2', name: 'Үлдэгдэлгүй', price: 10000 });
     expect((await P.setProductStatus(adm, q.id, { status: 'ARCHIVED', reason: R, version: q.version })).status).toBe('ARCHIVED');
   });
+  it('#187 олноор архивлах: зөвхөн зогсоосон, үлдэгдэлгүй; «АРХИВ» үгтэй; бусдыг алгасна; түүхэнд бичигдэнэ', async () => {
+    const adm = await actor(['ADMIN']); const mk = await actor(['MARKETING']);
+    const mkP = async (code: string, status: 'ACTIVE' | 'DISCONTINUED') => {
+      const p = await P.createProduct(adm, { code, name: `Бараа ${code}`, price: 10000 });
+      if (status === 'DISCONTINUED') await P.setProductStatus(adm, p.id, { status, reason: R, version: p.version });
+      return p;
+    };
+    const a = await mkP('BA1', 'DISCONTINUED'); const b = await mkP('BA2', 'DISCONTINUED');
+    const c = await mkP('BA3', 'DISCONTINUED'); await stockFor(c.variants[0]!.id, 3); // үлдэгдэлтэй
+    const d = await mkP('BA4', 'ACTIVE'); // идэвхтэй
+    expect(await P.archivableCount(adm)).toMatchObject({ archivable: 2, discontinued: 3, word: 'АРХИВ' });
+    await err(P.archivableCount(mk), 403);
+    await err(P.bulkArchive(mk, { all: true, confirm: 'АРХИВ' }), 403);
+    await err(P.bulkArchive(adm, { all: true, confirm: 'архи' }), 400, 'confirm_required');
+    await err(P.bulkArchive(adm, { productIds: [], confirm: 'АРХИВ' }), 400);
+    // сонгосноор: идэвхтэй, үлдэгдэлтэй нь алгасагдана
+    expect(await P.bulkArchive(adm, { productIds: [a.id, c.id, d.id], confirm: 'архив' })).toEqual({ archived: 1, skipped: 2 });
+    const st = async (id: number) => (await db.product.findUniqueOrThrow({ where: { id } })).status;
+    expect([await st(a.id), await st(c.id), await st(d.id)]).toEqual(['ARCHIVED', 'DISCONTINUED', 'ACTIVE']);
+    // бүгдийг: үлдсэн нэг үлдэгдэлгүй зогсоосон
+    expect(await P.bulkArchive(adm, { all: true, confirm: 'АРХИВ' })).toEqual({ archived: 1, skipped: 0 });
+    expect([await st(b.id), await st(c.id)]).toEqual(['ARCHIVED', 'DISCONTINUED']);
+    expect(await db.auditLog.count({ where: { action: 'product.status', entityId: { in: [String(a.id), String(b.id)] }, details: { path: ['bulk'], equals: true } } })).toBe(2);
+    expect(await P.archivableCount(adm)).toMatchObject({ archivable: 0, discontinued: 1 });
+    // архиваас сэргээж болно
+    const bb = await db.product.findUniqueOrThrow({ where: { id: b.id } });
+    expect((await P.setProductStatus(adm, b.id, { status: 'DISCONTINUED', reason: R, version: bb.version })).status).toBe('DISCONTINUED');
+  });
   it('Б13: Excel — өнгө / хэмжээ бүрээр, үлдэгдэлтэй; өртөг зөвхөн СА / Админд', async () => {
     const adm = await actor(['ADMIN']); const mk = await actor(['MARKETING']);
     const p = await P.createProduct(adm, { code: 'EX1', name: 'Цамц', price: 20000, colors: ['Хар', 'Цагаан'], sizes: ['M'] });

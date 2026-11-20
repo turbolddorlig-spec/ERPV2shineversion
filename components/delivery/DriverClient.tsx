@@ -10,6 +10,8 @@ import { Thumb } from '@/components/products/ProductsClient';
 import { OperatorNote } from '@/components/orders/OrdersClient';
 import { money, ubDateTime } from '@/lib/format';
 import { CompanyDebtTab, IncomeTab } from '@/components/accounting/DriverIncome';
+import { Select } from '@/components/ui/Select';
+import { RURAL, UB_DISTRICTS } from '@/lib/geo';
 
 /**
  * Жолоочийн апп (Модуль 5, хуучин ERP-ийн урсгал): табууд Бүгд · Хүргэлт · Хүргэсэн · Цуцласан · Маргааш · Өчигдөр,
@@ -29,6 +31,8 @@ interface ListResp { tab: string; today: string; nightShift?: boolean; counts: {
 interface GItem { variantId: number; code: string; name: string; label: string; thumb: string | null; balance: number; held: number; returnable: number; extra?: number; sold?: number }
 interface GDoc { id: number; kind: string; status: string; date: string | null; kindLabel: string; at: string; byName: string; note: string | null; total: number; paymentLabel: string | null; fee?: number | null; lines: { variantId: number; name: string; label: string; qty: number; expected: number; unitPrice: number }[] }
 interface GoodsResp { items: GItem[]; totals: { balance: number; returnable: number }; docs: GDoc[] }
+interface PickAreas { total: number; districts: Record<string, number>; provinces: Record<string, number> }
+const AREA_KEY = 'driver.pickupArea';
 interface PickOrder { id: number; number: string; fullAddress: string; deliveryDate: string; postponeCount: number; note: string | null }
 
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа гарлаа');
@@ -524,9 +528,22 @@ function PickupTab({ onTaken }: { onTaken: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [res, setRes] = useState<string | null>(null);
+  // #187 (хуучин шиг): «Дүүрэг» эсвэл «Аймаг / Алслагдмал дүүрэг» — нэгийг сонгоход нөгөө нь «Бүгд»; сүүлийн сонголт утсанд хадгалагдана
+  const [area, setArea] = useState<{ district: string; province: string } | null>(null);
+  useEffect(() => {
+    try { const v = JSON.parse(localStorage.getItem(AREA_KEY) ?? '{}') as { district?: string; province?: string }; setArea({ district: v.district ?? '', province: v.province ?? '' }); } catch { setArea({ district: '', province: '' }); }
+  }, []);
+  const [areas, setAreas] = useState<PickAreas | null>(null);
+  const pickArea = (a: { district: string; province: string }) => {
+    setArea(a); setPage(1); setSel(new Set());
+    try { localStorage.setItem(AREA_KEY, JSON.stringify(a)); } catch { /* хадгалахгүй ч ажиллана */ }
+  };
   const load = useCallback(async () => {
-    try { const r = await api<{ items: PickOrder[]; hasMore: boolean }>(`/api/driver/pickup?page=${page}`); setItems(r.items); setMore(r.hasMore); setErr(null); } catch (e) { setErr(msg(e)); }
-  }, [page]);
+    if (!area) return;
+    const q = new URLSearchParams({ page: String(page) });
+    if (area.district) q.set('district', area.district); else if (area.province) q.set('province', area.province);
+    try { const r = await api<{ items: PickOrder[]; hasMore: boolean; areas: PickAreas }>(`/api/driver/pickup?${q}`); setItems(r.items); setMore(r.hasMore); setAreas(r.areas); setErr(null); } catch (e) { setErr(msg(e)); }
+  }, [page, area]);
   useEffect(() => { void load(); }, [load]);
   async function take() {
     setBusy(true); setErr(null);
@@ -540,9 +557,19 @@ function PickupTab({ onTaken }: { onTaken: () => void }) {
   return (
     <>
       <p className="text-[13px] text-muted">Хуваарилаагүй захиалга (өнөөдөр, маргааш). Сонгоод «Авах» — ахлах жолоочид харагдана.</p>
+      <div data-pickup-area className="grid grid-cols-1 gap-2 rounded-[14px] border border-line bg-surface p-3 sm:grid-cols-2">
+        <Select id="pickup-district" label="Дүүрэг" value={area?.district ?? ''} onChange={(e) => pickArea({ district: e.target.value, province: '' })}>
+          <option value="">Бүгд{areas ? ` (${areas.total})` : ''}</option>
+          {Object.keys(UB_DISTRICTS).map((d) => <option key={d} value={d}>{d} ({areas?.districts[d] ?? 0})</option>)}
+        </Select>
+        <Select id="pickup-province" label="Аймаг / Алслагдмал дүүрэг" value={area?.province ?? ''} onChange={(e) => pickArea({ district: '', province: e.target.value })}>
+          <option value="">Бүгд</option>
+          {RURAL.map((p) => <option key={p} value={p}>{p} ({areas?.provinces[p] ?? 0})</option>)}
+        </Select>
+      </div>
       {res ? <div role="status" className="rounded-[12px] bg-ok-soft px-3 py-2 text-[14px] font-semibold text-ok-ink [overflow-wrap:anywhere]">{res}</div> : null}
       {err ? <Notice>{err}</Notice> : null}
-      {items && !items.length ? <p className="rounded-[14px] border border-dashed border-line px-4 py-10 text-center text-muted">Хуваарилаагүй захиалга алга</p> : null}
+      {items && !items.length ? <p className="rounded-[14px] border border-dashed border-line px-4 py-10 text-center text-muted">{area?.district || area?.province ? `${area.district || area.province}-д хуваарилаагүй захиалга алга` : 'Хуваарилаагүй захиалга алга'}</p> : null}
       <ul className="flex flex-col gap-2">
         {items?.map((o) => (
           <li key={o.id}>

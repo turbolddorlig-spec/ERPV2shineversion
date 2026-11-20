@@ -1,5 +1,5 @@
 import { requirePage } from '@/lib/current-user';
-import { canManageCatalogLists, canSeeCost, canView } from '@/lib/permissions';
+import { canChangeProductStatus, canManageCatalogLists, canSeeCost, canView } from '@/lib/permissions';
 import { PageHeader } from '@/components/shell/AppShell';
 import { ProductsClient } from '@/components/products/ProductsClient';
 
@@ -16,6 +16,7 @@ export default async function ProductsPage() {
         showCost={canSeeCost(user.roles)}
         canManageLists={canManageCatalogLists(user.roles)}
         canSeeHistory={canView(user.roles, 'product-history')}
+        canChangeStatus={access === 'edit' && canChangeProductStatus(user.roles)}
       />
     </>
   );

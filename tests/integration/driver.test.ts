@@ -434,6 +434,22 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     await err(G.driverControl(op), 403);
   });
 
+  it('#187 «Авах»: хуучин шиг дүүрэг / аймгаар шүүнэ, сонголт бүрийн тоо', async () => {
+    const a = (await O.createOrder(op, ub({ deliveryDate: today }))).order.id; // Баянзүрх
+    const b = (await O.createOrder(op, ub({ deliveryDate: today, district: 'Хан-Уул' }))).order.id;
+    const c = (await O.createOrder(op, ub({ deliveryDate: today }))).order.id;
+    await db.order.update({ where: { id: c }, data: { province: 'Налайх', district: null } }); // алслагдсан дүүрэг
+    const all = await DR.pickupList(drv, {});
+    expect(all.items.map((x) => x.id).sort()).toEqual([a, b, c].sort());
+    expect(all.areas).toMatchObject({ total: 3, districts: { 'Баянзүрх': 1, 'Хан-Уул': 1 }, provinces: { 'Налайх': 1 } });
+    expect((await DR.pickupList(drv, { district: 'Хан-Уул' })).items.map((x) => x.id)).toEqual([b]);
+    expect((await DR.pickupList(drv, { province: 'Налайх' })).items.map((x) => x.id)).toEqual([c]);
+    // үл мэдэгдэх утга → шүүлтгүй (алдаа өгөхгүй); тоо шүүлтээс үл хамаарна
+    const bad = await DR.pickupList(drv, { district: 'X', province: 'Y' });
+    expect([bad.items.length, bad.areas.total]).toEqual([3, 3]);
+    expect((await DR.pickupList(drv, { district: 'Хан-Уул' })).areas.total).toBe(3);
+  });
+
   it('аудит Б2: жолоочийн апп, «Жолооч хяналт», «Тооцоо» — бүгд ПАДААНЫ өдрөөр, ижил тоо', async () => {
     const [a, b] = await outFor(drv, 2);
     await DR.deliverOrder(drv, a!, { payment: 'CASH' });

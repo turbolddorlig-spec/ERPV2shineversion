@@ -59,7 +59,7 @@ function OpenBtn({ id, code, canEdit, mobile }: { id: number; code: string; canE
   );
 }
 
-export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistory }: { canEdit: boolean; showCost: boolean; canManageLists: boolean; canSeeHistory: boolean }) {
+export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistory, canChangeStatus = false }: { canEdit: boolean; showCost: boolean; canManageLists: boolean; canSeeHistory: boolean; canChangeStatus?: boolean }) {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('live');
   const [categoryId, setCategoryId] = useState('');
@@ -77,6 +77,11 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const reqId = useRef(0);
+  // #187: зогсоосон, үлдэгдэлгүй барааг олноор архивлах («АРХИВ» гэж бичээд нэг товшилт)
+  const [arch, setArch] = useState<{ archivable: number; discontinued: number; word: string } | null>(null);
+  const [archMode, setArchMode] = useState<'all' | 'selected' | null>(null);
+  const [archWord, setArchWord] = useState('');
+  const archTab = canChangeStatus && status === 'discontinued';
   // Хувилбарыг бараа бүрийн доор догол мөрөөр харуулна; хүсвэл хураана
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const toggleOpen = (id: number) => setCollapsed((c) => { const n = new Set(c); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -103,6 +108,21 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
     }
   }, [q, status, categoryId, seasonId, page]);
   useEffect(() => { const t = setTimeout(load, q ? 250 : 0); return () => clearTimeout(t); }, [load, q]);
+  const loadArch = useCallback(async () => {
+    if (!archTab) { setArch(null); return; }
+    try { setArch(await api<{ archivable: number; discontinued: number; word: string }>('/api/products/bulk-archive')); } catch { setArch(null); }
+  }, [archTab]);
+  useEffect(() => { void loadArch(); }, [loadArch]);
+  async function doArchive() {
+    if (!archMode) return;
+    setBusy(true);
+    try {
+      const r = await api<{ archived: number; skipped: number }>('/api/products/bulk-archive', { method: 'POST', json: archMode === 'all' ? { all: true, confirm: archWord } : { productIds: [...selected], confirm: archWord } });
+      setFlash(`${r.archived} бараа архивлагдлаа${r.skipped ? ` · ${r.skipped} алгассан (үлдэгдэлтэй, нээлттэй захиалгатай эсвэл зогсоосон биш)` : ''}`);
+      setSelected(new Set()); setArchMode(null); setArchWord('');
+      await Promise.all([load(), loadArch()]);
+    } catch (e) { setError(e instanceof ApiError ? e.message : 'Алдаа гарлаа'); setArchMode(null); } finally { setBusy(false); }
+  }
   useEffect(() => { if (!flash) return; const t = setTimeout(() => setFlash(null), 4000); return () => clearTimeout(t); }, [flash]);
 
   const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
@@ -159,10 +179,18 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
       {flash ? <Notice tone="ok">{flash}</Notice> : null}
       {error ? <Notice>{error}</Notice> : null}
 
+      {archTab && arch ? (
+        <div data-bulk-archive className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2.5">
+          <span className="min-w-0 flex-1 text-[13.5px] [overflow-wrap:anywhere]">Зогсоосон <b>{arch.discontinued}</b> бараанаас үлдэгдэлгүй, нээлттэй захиалгагүй нь <b>{arch.archivable}</b> — архивлаж болно.</span>
+          <Button size="sm" variant="primary" disabled={!arch.archivable} onClick={() => { setArchWord(''); setArchMode('all'); }}>Үлдэгдэлгүй бүгдийг архивлах ({arch.archivable})</Button>
+        </div>
+      ) : null}
+
       {canEdit && selected.size > 0 ? (
         <div className="flex flex-wrap items-center gap-2 rounded-xl bg-accent-soft px-3 py-2.5">
           <span className="text-[13.5px] font-bold text-accent-ink">{selected.size} бараа сонгосон</span>
           <span className="flex-1" />
+          {archTab ? <Button size="sm" onClick={() => { setArchWord(''); setArchMode('selected'); }}>Сонгосныг архивлах</Button> : null}
           <Button size="sm" onClick={() => setBulkOpen(true)}>Ангилал оноох</Button>
           <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Болих</Button>
         </div>
@@ -173,7 +201,11 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
           <table className="w-full min-w-[860px] border-collapse text-[13.5px]">
             <thead>
               <tr className="bg-surface2 text-left text-[12px] text-muted">
-                {canEdit ? <th scope="col" className="w-11 border-b border-line py-2.5 pl-4"><span className="sr-only">Сонгох</span></th> : null}
+                {canEdit ? <th scope="col" className="w-11 border-b border-line py-2.5 pl-4">
+                  <input type="checkbox" aria-label="Энэ хуудсын бүгдийг сонгох" className="h-[18px] w-[18px] accent-[var(--accent)]"
+                    checked={!!data?.items.length && data.items.every((p) => selected.has(p.id))}
+                    onChange={(e) => { const on = e.target.checked; setSelected((s) => { const n = new Set(s); for (const p of data?.items ?? []) { if (on) n.add(p.id); else n.delete(p.id); } return n; }); }} />
+                </th> : null}
                 <th scope="col" className="border-b border-line px-3 py-2.5 font-bold">Бараа</th>
                 <th scope="col" className="border-b border-line px-3 py-2.5 font-bold">Ангилал</th>
                 <th scope="col" className="border-b border-line px-3 py-2.5 text-right font-bold">Үнэ</th>
@@ -290,6 +322,13 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
         </div>
       ) : null}
 
+      <Modal open={archMode !== null} onClose={() => setArchMode(null)} title={archMode === 'all' ? `Үлдэгдэлгүй ${arch?.archivable ?? 0} барааг архивлах` : `Сонгосон ${selected.size} барааг архивлах`}
+        footer={<><Button onClick={() => setArchMode(null)}>Болих</Button><Button variant="primary" data-archive-confirm loading={busy} disabled={archWord.trim().toUpperCase() !== (arch?.word ?? 'АРХИВ')} onClick={() => void doArchive()}>Архивлах</Button></>}>
+        <p className="text-[14px]">Зөвхөн <b>зогсоосон</b>, аль ч байршилд <b>үлдэгдэлгүй</b>, нээлттэй захиалгагүй бараа архивлагдана. Бусад нь алгасагдана. Архивласан барааг «Архив» табаас буцааж сэргээж болно.</p>
+        <label className="mt-3 flex flex-col gap-1.5 text-[13px] font-semibold text-muted">Баталгаажуулахын тулд <span className="text-ink">«{arch?.word ?? 'АРХИВ'}»</span> гэж бичнэ үү
+          <input data-archive-word value={archWord} onChange={(e) => setArchWord(e.target.value)} autoComplete="off" className="h-12 rounded-xl border border-line bg-surface px-3 text-[16px] text-ink outline-none focus:border-accent" />
+        </label>
+      </Modal>
       <Modal open={bulkOpen} onClose={() => setBulkOpen(false)} title={`${selected.size} бараанд ангилал оноох`}
         footer={<><Button onClick={() => setBulkOpen(false)}>Болих</Button><Button variant="primary" onClick={() => setReasonOpen(true)}>Үргэлжлүүлэх</Button></>}>
         <Select id="bulk-cat" label="Ангилал" value={bulkCat} onChange={(e) => setBulkCat(e.target.value)}>
