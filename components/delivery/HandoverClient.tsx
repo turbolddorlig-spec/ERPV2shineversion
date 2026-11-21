@@ -238,25 +238,26 @@ function HandoverView({ h, short, canOperate, onCheck, busy }: { h: Detail; shor
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-line bg-surface">
-        <table className="w-full min-w-[640px] text-[14px]">
-          <thead className="border-b border-line bg-surface2/70 text-[11.5px] uppercase text-muted">
-            <tr><th className="px-3 py-2 text-left font-semibold">Бараа</th><th className="w-20 px-3 py-2 text-center font-semibold">Тоо</th><th className="w-40 px-3 py-2 text-center font-semibold">Check · Жолооч</th></tr>
+        {/* #196 (эзэн): утсанд Check багана багтана — хажуу тийш гүйлгэхгүй (зураг, нүд жижиг, нэр мөр шилжинэ) */}
+        <table className="w-full table-fixed text-[13px] sm:text-[14px]">
+          <thead className="border-b border-line bg-surface2/70 text-[11px] uppercase text-muted sm:text-[11.5px]">
+            <tr><th className="px-2 py-2 text-left font-semibold sm:px-3">Бараа</th><th className="w-11 px-1 py-2 text-center font-semibold sm:w-20 sm:px-3">Тоо</th><th className="w-[52px] px-1 py-2 text-center font-semibold sm:w-40 sm:px-3"><span className="sm:hidden">✓</span><span className="hidden sm:inline">Check · Жолооч</span></th></tr>
           </thead>
           <tbody className="divide-y divide-line">
             {items.map((i) => (
               <tr key={i.variantId} onClick={() => { if (!locked && !busy) onCheck(i.variantId, !i.checked); }} className={clsx(!locked && 'cursor-pointer', i.checked ? 'bg-ok-soft/40' : 'hover:bg-surface2/50')}>
-                <td className="px-3 py-2">
-                  <span className="flex items-center gap-3">
-                    <span onClick={(e) => e.stopPropagation()}>{i.thumb ? <ZoomButton images={[{ src: i.image ?? i.thumb, alt: i.name, name: i.code }]} label={`${i.name} — томруулах`}><Thumb src={i.thumb} alt={i.name} size={52} /></ZoomButton> : <Thumb src={null} alt={i.name} size={52} />}</span>
+                <td className="px-2 py-2 sm:px-3">
+                  <span className="flex items-center gap-2 sm:gap-3">
+                    <span className="shrink-0" onClick={(e) => e.stopPropagation()}>{i.thumb ? <ZoomButton images={[{ src: i.image ?? i.thumb, alt: i.name, name: i.code }]} label={`${i.name} — томруулах`}><Thumb src={i.thumb} alt={i.name} size={40} /></ZoomButton> : <Thumb src={null} alt={i.name} size={40} />}</span>
                     <span className="flex min-w-0 flex-col">
-                      <span className="font-semibold">{i.name}{i.label ? <span className="text-muted"> · {i.label}</span> : null}</span>
+                      <span className="font-semibold [overflow-wrap:anywhere]">{i.name}{i.label ? <span className="text-muted"> · {i.label}</span> : null}</span>
                       <span className="flex flex-wrap items-center gap-1.5 text-[12px] text-subtle">{i.code}{i.shelfCode ? <span className="rounded bg-ink px-1.5 font-bold text-on-ink">🗄 {i.shelfCode}</span> : null}<span>{money(i.amount)}</span></span>
                     </span>
                   </span>
                 </td>
-                <td className="px-3 py-2 text-center text-[18px] font-extrabold">{i.qty}</td>
-                <td className="px-3 py-2 text-center">
-                  <span className={clsx('inline-grid h-9 w-9 place-items-center rounded-lg border-2', i.checked ? 'border-ok bg-ok text-white' : 'border-line bg-surface')} title={i.checkedBy ? `Check: ${i.checkedBy}` : undefined}>{i.checked ? <Icon name="check" size={20} strokeWidth={3} /> : null}</span>{h.status === 'HANDED_OVER' || h.status === 'RECEIVED' ? <span className={clsx('ml-1 inline-flex h-9 items-center rounded-lg px-2 text-[11.5px] font-bold', i.driverChecked ? 'bg-ok-soft text-ok-ink' : 'bg-warn-soft text-warn')} title="Жолоочийн чагт">{i.driverChecked ? 'Жол. ✓' : 'Жол. —'}</span> : null}
+                <td className="px-1 py-2 text-center text-[16px] font-extrabold sm:px-3 sm:text-[18px]">{i.qty}</td>
+                <td className="px-1 py-2 text-center sm:px-3">
+                  <span className={clsx('inline-grid h-8 w-8 place-items-center rounded-lg border-2 sm:h-9 sm:w-9', i.checked ? 'border-ok bg-ok text-white' : 'border-line bg-surface')} title={i.checkedBy ? `Check: ${i.checkedBy}` : undefined}>{i.checked ? <Icon name="check" size={18} strokeWidth={3} /> : null}</span>{h.status === 'HANDED_OVER' || h.status === 'RECEIVED' ? <span className={clsx('mt-1 inline-flex h-7 items-center rounded-lg px-1 text-[10.5px] font-bold sm:ml-1 sm:mt-0 sm:h-9 sm:px-2 sm:text-[11.5px]', i.driverChecked ? 'bg-ok-soft text-ok-ink' : 'bg-warn-soft text-warn')} title="Жолоочийн чагт">{i.driverChecked ? 'Жол. ✓' : 'Жол. —'}</span> : null}
                 </td>
                 
               </tr>
@@ -270,15 +271,15 @@ function HandoverView({ h, short, canOperate, onCheck, busy }: { h: Detail; shor
         <div className="overflow-x-auto rounded-xl border-2 border-dashed border-info/50 bg-info-soft/30">
           <p className="px-3 pt-2.5 font-bold text-info">➕ Нэмэлт бараа — жолоочийн хүсэлт ({h.totals.extraRequests} хүсэлт · {h.totals.extraPieces}ш · {money(h.totals.extraAmount)})</p>
           <p className="px-3 text-[12px] text-muted">Захиалгаас гадна. Захиалгын бараатай хамт Check хийж өгнө; жолооч хүлээн авахад агуулахаас хасагдана.</p>
-          <table className="mt-1 w-full min-w-[520px] text-[13.5px]">
+          <table className="mt-1 w-full table-fixed text-[13px] sm:text-[13.5px]">
             <tbody className="divide-y divide-line">
               {h.extras.map((i) => (
                 <tr key={`x${i.variantId}`} onClick={() => { if (!locked && !busy) onCheck(i.variantId, !i.checked, 'EXTRA'); }} className={clsx(!locked && 'cursor-pointer', i.checked ? 'bg-ok-soft/40' : 'hover:bg-surface2/50')}>
-                  <td className="px-3 py-2"><span className="flex items-center gap-3"><Thumb src={i.thumb} alt={i.name} size={44} /><span className="flex min-w-0 flex-col"><span className="font-semibold [overflow-wrap:anywhere]">{i.name}{i.label ? <span className="text-muted"> · {i.label}</span> : null}</span><span className="text-[12px] text-subtle">{i.code}{i.shelfCode ? ` · 🗄 ${i.shelfCode}` : ''}</span></span></span></td>
-                  <td className="px-3 py-2 text-center text-[18px] font-extrabold">{i.qty}</td>
-                  <td className="px-3 py-2 text-center">
-                    <span className={clsx('inline-grid h-9 w-9 place-items-center rounded-lg border-2', i.checked ? 'border-ok bg-ok text-white' : 'border-line bg-surface')}>{i.checked ? <Icon name="check" size={20} strokeWidth={3} /> : null}</span>
-                    {h.status === 'HANDED_OVER' || h.status === 'RECEIVED' ? <span className={clsx('ml-1 inline-flex h-9 items-center rounded-lg px-2 text-[11.5px] font-bold', i.driverChecked ? 'bg-ok-soft text-ok-ink' : 'bg-warn-soft text-warn')}>{i.driverChecked ? 'Жол. ✓' : 'Жол. —'}</span> : null}
+                  <td className="px-2 py-2 sm:px-3"><span className="flex items-center gap-2 sm:gap-3"><span className="shrink-0"><Thumb src={i.thumb} alt={i.name} size={40} /></span><span className="flex min-w-0 flex-col"><span className="font-semibold [overflow-wrap:anywhere]">{i.name}{i.label ? <span className="text-muted"> · {i.label}</span> : null}</span><span className="text-[12px] text-subtle">{i.code}{i.shelfCode ? ` · 🗄 ${i.shelfCode}` : ''}</span></span></span></td>
+                  <td className="w-11 px-1 py-2 text-center text-[16px] font-extrabold sm:w-20 sm:px-3 sm:text-[18px]">{i.qty}</td>
+                  <td className="w-[52px] px-1 py-2 text-center sm:w-40 sm:px-3">
+                    <span className={clsx('inline-grid h-8 w-8 place-items-center rounded-lg border-2 sm:h-9 sm:w-9', i.checked ? 'border-ok bg-ok text-white' : 'border-line bg-surface')}>{i.checked ? <Icon name="check" size={18} strokeWidth={3} /> : null}</span>
+                    {h.status === 'HANDED_OVER' || h.status === 'RECEIVED' ? <span className={clsx('mt-1 inline-flex h-7 items-center rounded-lg px-1 text-[10.5px] font-bold sm:ml-1 sm:mt-0 sm:h-9 sm:px-2 sm:text-[11.5px]', i.driverChecked ? 'bg-ok-soft text-ok-ink' : 'bg-warn-soft text-warn')}>{i.driverChecked ? 'Жол. ✓' : 'Жол. —'}</span> : null}
                   </td>
                 </tr>
               ))}
