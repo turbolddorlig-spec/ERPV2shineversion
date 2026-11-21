@@ -235,8 +235,16 @@ describe('цуцлах, маргааш', () => {
 
   it('маргааш 2 удаа, дараа нь цоож; андуурсан бол өнөөдөр буцаах (бараа жолоочид, падааны мөр сэргэнэ)', async () => {
     const [id] = await outFor(drv);
+    // #195: «Маргааш» → үүссэн огноо = дарсан мөч (хуучин ERP шиг), хуучин огноо түүхэнд; буцаахад сэргэнэ
+    const oldCreated = new Date(Date.now() - 2 * 86_400_000);
+    await db.order.update({ where: { id }, data: { createdAt: oldCreated } });
+    const t0 = Date.now();
     await DR.postponeOrder(drv, id, {});
+    const pp = await db.order.findUniqueOrThrow({ where: { id } });
+    expect(pp.createdAt.getTime()).toBeGreaterThanOrEqual(t0 - 1000);
+    expect((await db.auditLog.findFirstOrThrow({ where: { action: 'order.postponed', entityId: String(id) }, orderBy: { id: 'desc' } })).details).toMatchObject({ prevCreatedAt: oldCreated.toISOString(), note: expect.stringContaining('үүссэн огноо') });
     await DR.undoPostpone(drv, id);
+    expect((await db.order.findUniqueOrThrow({ where: { id } })).createdAt.getTime()).toBe(oldCreated.getTime());
     let o = await db.order.findUniqueOrThrow({ where: { id } });
     expect([o.status, o.driverId, o.postponeCount, U.ymdOf(o.deliveryDate), o.handoverId !== null]).toEqual(['OUT_FOR_DELIVERY', drv.id, 0, today, true]);
     expect(await db.stockReservation.count({ where: { orderId: id } })).toBe(0);

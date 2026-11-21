@@ -137,7 +137,7 @@ async function markPaidByBank(tx: Tx, actor: Actor, orderId: number, paid: numbe
   const pd = paidOrderData(o);
   await tx.order.update({ where: { id: orderId }, data: { ...pd.data, paidAmount: paid } });
   await enqueueMeta(tx, orderId);
-  await writeAudit(actor, 'order.paid', 'Order', String(orderId), { number: o.number, total: o.total, paid, by: how, ...(pd.deliveryChange ? { deliveryDate: pd.deliveryChange } : {}) }, tx, ['order', 'money', 'bank']);
+  await writeAudit(actor, 'order.paid', 'Order', String(orderId), { number: o.number, total: o.total, paid, by: how, ...(pd.deliveryChange ? { deliveryDate: pd.deliveryChange } : {}), ...(pd.createdChange ? { createdAt: pd.createdChange } : {}), ...(pd.note ? { note: pd.note } : {}) }, tx, ['order', 'money', 'bank']);
   return true;
 }
 

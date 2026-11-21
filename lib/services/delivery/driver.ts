@@ -410,9 +410,14 @@ export async function postponeOrder(actor: UserActor, idIn: unknown, input: { ve
       if (o.handoverId) await tx.handoverOrder.updateMany({ where: { handoverId: o.handoverId, orderId: id, removedAt: null }, data: { removedAt: new Date(), removeReason: 'Маргааш (бараа жолоочид)' } });
       await tx.stockReservation.createMany({ data: o.lines.map((l) => ({ ref: `order:${id}`, orderId: id, variantId: l.variantId, qty: l.qty })) });
     } else if (o.handoverId) await removeFromHandover(tx, id, 'Маргааш');
+    // #195 (эзний шийдвэр, хуучин ERP шиг «Маргааш»-аас шинэ захиалга): үүссэн огноо = дарсан мөч — операторын цалин, жагсаалт энэ өдрөөр.
+    // Дугаар, бусад нь хэвээр; хуучин огноо түүхэнд (буцаахад сэргээнэ)
+    const now = new Date();
+    const fmt = (d: Date) => new Date(d.getTime() + 8 * 3600_000).toISOString().slice(0, 16).replace('T', ' ');
     const u = await tx.order.update({
       where: { id },
       data: {
+        createdAt: now,
         status: 'NEW', deliveryDate: dateOnly(ubDay(new Date(), 1)), driverId: null, driverName: null, assignedAt: null, handoverId: null,
         // Бараа жолоочид өгөгдсөн эсэхийг «буцаах»-д ашиглана (өгөөгүй бол хоосон)
         outForDeliveryAt: o.status === 'OUT_FOR_DELIVERY' ? o.outForDeliveryAt : null,
@@ -420,7 +425,11 @@ export async function postponeOrder(actor: UserActor, idIn: unknown, input: { ve
         version: { increment: 1 },
       },
     });
-    await writeAudit(actor, 'order.postponed', 'Order', String(id), { number: o.number, count: o.postponeCount + 1, from: o.status, goodsWithDriver: o.status === 'OUT_FOR_DELIVERY' }, tx, ['order', 'delivery']);
+    await writeAudit(actor, 'order.postponed', 'Order', String(id), {
+      number: o.number, count: o.postponeCount + 1, from: o.status, goodsWithDriver: o.status === 'OUT_FOR_DELIVERY',
+      createdAt: { from: o.createdAt, to: now }, prevCreatedAt: o.createdAt.toISOString(),
+      note: `Жолооч «Маргааш» дарсан тул (хуучин ERP шиг шинэ захиалга): үүссэн огноо ${fmt(o.createdAt)} → ${fmt(now)}, хүргэх өдөр ${ubDay(now, 1)}. Дугаар, бусад нь хэвээр; операторын цалин шинэ огноогоор.`,
+    }, tx, ['order', 'delivery']);
     return { order: u, duplicate: false };
   });
   bust();
@@ -437,6 +446,10 @@ export async function undoPostpone(actor: UserActor, idIn: unknown) {
     if (!o.postponedAt || ymdOf(new Date(o.postponedAt.getTime() + 8 * 3600_000)) !== ubDay()) throw conflict('Зөвхөн өнөөдөр хойшлуулсныг буцаана', 'too_old');
     const today = ubDay();
     const hadGoods = !!o.outForDeliveryAt;
+    // #195: «Маргааш»-аар солигдсон үүссэн огноог сэргээнэ
+    const lastP = await tx.auditLog.findFirst({ where: { entityType: 'Order', entityId: String(id), action: 'order.postponed' }, orderBy: { id: 'desc' }, select: { details: true } });
+    const prevC = (lastP?.details as { prevCreatedAt?: string } | null)?.prevCreatedAt;
+    const restoreCreated = prevC && !Number.isNaN(Date.parse(prevC)) ? { createdAt: new Date(prevC) } : {};
     const hoP = await tx.handoverOrder.findFirst({ where: { orderId: id, removeReason: 'Маргааш (бараа жолоочид)' }, orderBy: { id: 'desc' }, select: { handoverId: true } });
     await assertDayOpen(tx, hoP?.handoverId);
     // Падаан буцаагдсан бол (бараа агуулахад буцсан) «Маргааш»-ыг буцаахгүй (#124-Д) — захиалга «Шинэ» хэвээр, ахлах дахин хуваарилна
@@ -455,13 +468,13 @@ export async function undoPostpone(actor: UserActor, idIn: unknown) {
       await tx.order.update({
         where: { id },
         data: { status: 'OUT_FOR_DELIVERY', driverId: actor.id, driverName: actor.name, assignedAt: new Date(), deliveryDate: dateOnly(today), handoverId: ho?.handoverId ?? null,
-          postponeCount: { decrement: 1 }, postponedAt: null, postponedByDriverId: null, postponedByName: null, version: { increment: 1 } },
+          postponeCount: { decrement: 1 }, postponedAt: null, postponedByDriverId: null, postponedByName: null, ...restoreCreated, version: { increment: 1 } },
       });
       await syncShortageDebts(tx, actor.id);
     } else {
-      await tx.order.update({ where: { id }, data: { postponeCount: { decrement: 1 }, postponedAt: null, postponedByDriverId: null, postponedByName: null, deliveryDate: dateOnly(today) } });
+      await tx.order.update({ where: { id }, data: { postponeCount: { decrement: 1 }, postponedAt: null, postponedByDriverId: null, postponedByName: null, deliveryDate: dateOnly(today), ...restoreCreated } });
     }
-    await writeAudit(actor, 'order.postpone_undone', 'Order', String(id), { number: o.number }, tx, ['order', 'delivery']);
+    await writeAudit(actor, 'order.postpone_undone', 'Order', String(id), { number: o.number, ...(prevC ? { note: `Үүссэн огноо сэргээгдэв (${prevC})` } : {}) }, tx, ['order', 'delivery']);
     return { hadGoods };
   });
   // Бараа аваагүй байсан бол ердийн хуваарилалтаар буцааж авна (падааны дүрэм хэвээр)

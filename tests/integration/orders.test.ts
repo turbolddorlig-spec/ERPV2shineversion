@@ -107,7 +107,9 @@ describe('захиалга үүсгэх', () => {
     await bankPay(order.id);
     const paid = await db.order.findUniqueOrThrow({ where: { id: order.id } });
     expect(paid).toMatchObject({ status: 'NEW', prepaid: true });
-    expect(paid.createdAt.getTime()).toBe(order.createdAt.getTime());
+    // #195: анх мөнгө орсон мөч = үүссэн огноо (хуучин ERP шиг); хуучин огноо түүхэнд
+    expect(paid.createdAt.getTime()).toBeGreaterThanOrEqual(order.createdAt.getTime());
+    expect((await db.auditLog.findFirstOrThrow({ where: { action: 'order.paid', entityId: String(order.id) } })).details).toMatchObject({ note: expect.stringContaining('үүссэн огноо') });
     expect((await db.metaEvent.findUniqueOrThrow({ where: { orderId: order.id } })).status).toBe('PENDING');
     // УБ «Урьдчилгаа хүлээх»
     const { order: u } = await O.createOrder(op, ub({ phone: '88001122', prepaidWait: true }));

@@ -306,7 +306,9 @@ describe('мөнгө орсон захиалга (#102) — хуучин лог�
     expect([ov.orderDays[0]!.total, ov.orderDays[1]!.total]).toEqual([0, 0]);
     await bankPay(p.id);
     const r = { order: await db.order.findUniqueOrThrow({ where: { id: p.id } }) };
-    expect([r.order.number, r.order.status, U.ymdOf(r.order.deliveryDate), r.order.prepaid]).toEqual([p.number, 'NEW', today, true]);
+    // #195: мөнгө орсон мөч = үүссэн огноо, хүргэх өдөр = маргааш (шинэ захиалга шиг); дугаар хэвээр
+    expect([r.order.number, r.order.status, U.ymdOf(r.order.deliveryDate), r.order.prepaid]).toEqual([p.number, 'NEW', U.ubDay(new Date(), 1), true]);
+    expect(U.ubDay(r.order.createdAt)).toBe(today);
     expect(await db.order.count()).toBe(1); // цуцалж дахин үүсгээгүй
     // «Шинэ» байгаад цуцлагдсан, он сар өдөртэй — тоологдохгүй
     const c = (await O.createOrder(op, ub([{ variantId: shoe, qty: 1 }]))).order;

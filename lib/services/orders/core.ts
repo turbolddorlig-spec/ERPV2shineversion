@@ -182,17 +182,33 @@ export async function noPageId(tx: Tx | typeof db): Promise<number> {
 
 /**
  * Мөнгө орсон «Төлбөр хүлээж буй» захиалга (#102, хуучин ERP-ийн логик, цуцалж дахин үүсгэхгүй):
- * хуучинд өмнөх өдөр үүссэн бол цуцлаад МӨНГӨ ОРСОН өдөр шинэ захиалга үүсгэж, хуваарилах өдрийг тэр өдөр болгодог байв.
- * Одоо: ижил захиалга (дугаар хэвээр) «Шинэ»; баталгаажсан мөч = одоо (захиалгын «өдөр» болно);
- * хүргэх өдөр мөнгө орсон өдрөөс өмнө бол мөнгө орсон өдөр (хойших — он сар өдөртэй — хэвээр).
+ * хуучинд өмнөх өдөр үүссэн бол цуцлаад МӨНГӨ ОРСОН өдөр шинэ захиалга үүсгэдэг байв.
+ * #195 (эзний шийдвэр): анх удаа мөнгө орж байгаа бол — дугаар, бусад бүх зүйл хэвээр, зөвхөн
+ *   үүссэн огноо = мөнгө орсон мөч (операторын цалин, жагсаалт энэ өдрөөр), хүргэх өдөр = маргааш (шинэ захиалга шиг;
+ *   аль хэдийн хойш бол хэвээр). Хуучин огноо түүхэнд тайлбартай (note).
+ * Аудит Б22 (#104 «өдөр бэхлэгдэнэ»): өмнө нь баталгаажсан (засаад төлбөр хүлээж буй руу буцсан) бол анхны өдрүүд хэвээр;
+ *   зөвхөн хүргэх өдөр өнгөрсөн бол өнөөдөр болно.
  */
-export function paidOrderData(o: { deliveryDate: Date; confirmedAt?: Date | null }, now = new Date()) {
+export function paidOrderData(o: { deliveryDate: Date; confirmedAt?: Date | null; createdAt?: Date }, now = new Date()) {
   const today = ubDay(now);
   const from = o.deliveryDate.toISOString().slice(0, 10);
+  if (!o.confirmedAt) {
+    const tomorrow = ubDay(now, 1);
+    const moved = from < tomorrow;
+    const createdChange = o.createdAt ? { from: o.createdAt, to: now } : null;
+    const fmt = (d: Date) => new Date(d.getTime() + 8 * 3600_000).toISOString().slice(0, 16).replace('T', ' ');
+    return {
+      data: { status: 'NEW' as const, prepaid: true, confirmedAt: now, createdAt: now, paymentDeadline: null, ...(moved ? { deliveryDate: new Date(`${tomorrow}T00:00:00Z`) } : {}), version: { increment: 1 } },
+      deliveryChange: moved ? { from, to: tomorrow } : null,
+      createdChange,
+      note: `Мөнгө орсон тул (хуучин ERP шиг мөнгө орсон өдөр шинэ захиалга): үүссэн огноо ${createdChange ? fmt(createdChange.from) : '—'} → ${fmt(now)}${moved ? `, хүргэх өдөр ${from} → ${tomorrow}` : ''}. Дугаар, бусад нь хэвээр; операторын цалин шинэ огноогоор.`,
+    };
+  }
   const moved = from < today;
   return {
-    // Аудит Б22 (#104 «өдөр бэхлэгдэнэ»): өмнө нь баталгаажсан (засаад төлбөр хүлээж буй руу буцсан) бол анхны өдөр хэвээр
-    data: { status: 'NEW' as const, prepaid: true, confirmedAt: o.confirmedAt ?? now, paymentDeadline: null, ...(moved ? { deliveryDate: new Date(`${today}T00:00:00Z`) } : {}), version: { increment: 1 } },
+    data: { status: 'NEW' as const, prepaid: true, confirmedAt: o.confirmedAt, paymentDeadline: null, ...(moved ? { deliveryDate: new Date(`${today}T00:00:00Z`) } : {}), version: { increment: 1 } },
     deliveryChange: moved ? { from, to: today } : null,
+    createdChange: null,
+    note: null as string | null,
   };
 }

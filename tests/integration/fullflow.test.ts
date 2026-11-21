@@ -95,6 +95,9 @@ describe('Бүрэн өдрийн урсгал — бүх хуудас уялд�
     await B.importTransactions(acc, [{ date: new Date(), description: `Utga: ${p7.slice(0, 4)}-${p7.slice(4)} Uvs`, amount: o7.total }], 'CSV');
     const paid7 = await db.order.findUniqueOrThrow({ where: { id: o7.id } });
     expect([paid7.status, paid7.prepaid, paid7.paidAmount]).toEqual(['NEW', true, o7.total]);
+    // #195: мөнгө орсон захиалга маргааш хүргэгдэнэ — энэ тестэд ахлах өнөөдөр болгосон
+    expect(U.ymdOf(paid7.deliveryDate)).toBe(U.ubDay(new Date(), 1));
+    await db.order.update({ where: { id: o7.id }, data: { deliveryDate: U.dateOnly(today) } });
 
     // ── 3. Хуваарилалт → падаан → жолооч хүлээн авна ──
     const ids = [o1, o2, o3, o4, o5, o6, o7].map((o) => o.id);

@@ -90,7 +90,7 @@ describe('#142 захиалга: банкаар л төлсөн, утас шал
     // банкны импорттой ижил Meta дараалалд орно (энэ тестэд Meta тохируулаагүй → «алгассан»)
     expect(await db.metaEvent.count({ where: { orderId: order.id } })).toBe(1);
     const h = await db.auditLog.findFirstOrThrow({ where: { action: 'order.paid', entityId: String(order.id) } });
-    expect(h).toMatchObject({ actorName: sa.name, details: expect.objectContaining({ note: 'Хуучин дансанд орсон', by: 'Супер админ гараар' }) });
+    expect(h).toMatchObject({ actorName: sa.name, details: expect.objectContaining({ reason: 'Хуучин дансанд орсон', note: expect.stringContaining('Хуучин дансанд орсон · Мөнгө орсон тул'), by: 'Супер админ гараар' }) });
     await err(O.markPaid(sa, order.id, { note: 'Дахин дарав' }), 409, 'not_pending');
     // «Мөнгө орсон» буцаах боломжтой (банкны гүйлгээгүй)
     await O.undoPaid(lead, order.id, { note: 'Андуурч дарсан' });

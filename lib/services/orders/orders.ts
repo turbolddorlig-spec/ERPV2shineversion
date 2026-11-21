@@ -479,7 +479,7 @@ export async function markPaid(actor: UserActor, idInput: unknown, input: { note
     const pd = paidOrderData(o);
     const u = await tx.order.update({ where: { id }, data: { ...pd.data, paidAmount: o.total } });
     await enqueueMeta(tx, id);
-    await writeAudit(actor, 'order.paid', 'Order', String(id), { number: o.number, total: o.total, paid: o.total, by: 'Супер админ гараар', note, ...(pd.deliveryChange ? { deliveryDate: pd.deliveryChange } : {}) }, tx, ['order', 'money']);
+    await writeAudit(actor, 'order.paid', 'Order', String(id), { number: o.number, total: o.total, paid: o.total, by: 'Супер админ гараар', note: pd.note ? `${note} · ${pd.note}` : note, reason: note, ...(pd.deliveryChange ? { deliveryDate: pd.deliveryChange } : {}), ...(pd.createdChange ? { createdAt: pd.createdChange } : {}) }, tx, ['order', 'money']);
     return { order: u };
   });
   return res; // табын тоо 5 сек кэштэй

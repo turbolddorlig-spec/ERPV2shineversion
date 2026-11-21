@@ -166,6 +166,7 @@ describe('#155 төлсөн ч цуцлагдсан, СА цуцлах', () => {
     const B = await import('@/lib/services/accounting/bank');
     const pre = (await O.createOrder(op, ub({ deliveryDate: today, prepaidWait: true }))).order.id;
     await bankPay(pre);
+    await db.order.update({ where: { id: pre }, data: { deliveryDate: U.dateOnly(today) } }); // #195: мөнгө орсон → маргааш; тест өнөөдөр хүргэнэ
     await L.assignOrders(lead, { ids: [pre], driverId: drv.id });
     await handTo(drv, today, [pre]);
     await DR.driverCancel(drv, pre, { note: 'Захиалагч авахаас татгалзсан' });
