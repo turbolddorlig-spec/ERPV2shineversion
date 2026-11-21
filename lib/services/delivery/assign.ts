@@ -52,6 +52,9 @@ export async function leadOrders(actor: UserActor, p: LeadParams) {
     else if (st === 'NEW') and.push({ status: 'NEW', deliveryDate: { lte: tomorrow } });
     else if (['PENDING_PAYMENT', 'ASSIGNED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED'].includes(st)) and.push({ status: st as OrderStatus });
     else throw badRequest('Төлөв буруу');
+  } else if (assign === 'leftover') {
+    // #194 (эзэн): «Хоносон» — хүргэх өдөр нь өнөөдөр / өнгөрсөн, хуваарилагдаагүй «Шинэ» (самбарын улаан анхааруулгатай ижил тоо)
+    and.push({ status: 'NEW', deliveryDate: { lte: dateOnly(ubDay()) }, driverId: null });
   } else if (assign === 'unassigned') {
     // Аудит #145: хуваарилаагүй = зөвхөн «Шинэ» (хүргэсэн / хүргэлтэд захиалга үргэлж жолоочтой) — 1 сая мөр бүтэн уншихгүй (хэсэгчилсэн индекс)
     and.push({ status: 'NEW', deliveryDate: { lte: tomorrow } });

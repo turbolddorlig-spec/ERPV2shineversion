@@ -188,6 +188,10 @@ describe('#124-4 хуваарилагдаагүй «Шинэ» захиалгы�
     await db.order.update({ where: { id: order.id }, data: { createdAt: new Date(Date.now() - 86_400_000 * 1.5) } });
     AS.bustUnassignedAlert();
     expect((await AS.unassignedAlert(['ADMIN']))?.leftover).toBe(1);
+    // #194: анхааруулга дээр дарахад яг тэр захиалгууд «Хоносон» шүүлтээр харагдана; маргаашийнх орохгүй
+    const { order: tm } = await O.createOrder(op, ub({ phone: '88990011' }));
+    await db.order.update({ where: { id: tm.id }, data: { deliveryDate: U.dateOnly(U.ubDay(new Date(), 1)) } });
+    expect((await AS.leadOrders(sa, { assign: 'leftover' })).items.map((x) => x.id)).toEqual([order.id]);
     await err(A.setOrderSettings(sa, { assignHour: 5 }), 400);
   });
 });

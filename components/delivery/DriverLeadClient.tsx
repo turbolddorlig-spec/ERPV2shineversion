@@ -16,6 +16,8 @@ interface LItem extends OItem { driverId: string | null; driverName: string | nu
 interface Resp { page: number; pageSize: number; hasMore: boolean; canAssign: boolean; kpi: Record<string, number>; items: LItem[] }
 interface Driver { id: string; name: string; phone: string; load: number }
 
+/** #194: хоносон = хуваарилагдаагүй «Шинэ», хүргэх өдөр нь өнөөдөр / өнгөрсөн */
+const isLeftover = (o: { status: string; driverId?: string | null; deliveryDate: string }) => o.status === 'NEW' && !o.driverId && o.deliveryDate <= ubToday();
 const ubToday = (add = 0) => new Date(Date.now() + 8 * 3600_000 + add * 86_400_000).toISOString().slice(0, 10);
 const md = (ymd: string) => `${ymd.slice(5, 7)}/${ymd.slice(8, 10)}`;
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа гарлаа');
@@ -54,6 +56,11 @@ function AssignView() {
     return api<Resp>(`/api/driver-lead/orders?${sp}`).then((r) => { if (id === req.current) { setData(r); setError(null); } }).catch((e) => setError(msg(e)));
   }, [f, page]);
   const loadDrivers = useCallback(() => api<{ items: Driver[] }>(`/api/driver-lead/drivers?date=${ubToday(1)}`).then((r) => setDrivers(r.items)).catch(() => undefined), []);
+  // #194: дээд талын анхааруулгаас (?assign=leftover) ирвэл шууд хоносон захиалгыг харуулна
+  useEffect(() => {
+    const a = new URLSearchParams(window.location.search).get('assign');
+    if (a === 'leftover') { const n = { ...EMPTY, assign: 'leftover' }; setDraft(n); setF(n); }
+  }, []);
   useEffect(() => { load(); }, [load]);
   // Аудит #145: шүүлтүүр / хуудас солиход сонголт цэвэрлэнэ (харагдахгүй захиалга санамсаргүй хуваарилагдахгүй)
   useEffect(() => { setSel(new Set()); }, [f, page]);
@@ -103,7 +110,10 @@ function AssignView() {
         ))}
       </div>
 
-      {kpi.leftover ? <p role="alert" data-lead-leftover className="rounded-xl border border-bad/40 bg-bad-soft px-4 py-2.5 text-[13.5px] font-semibold text-bad-ink">🔴 Хоносон, хуваарилагдаагүй {kpi.leftover} захиалга байна — яаралтай хуваарилна уу (хүргэх өдөр нь өнгөрсөн / өнөөдөр).</p>
+      {kpi.leftover ? <button type="button" role="alert" data-lead-leftover onClick={() => { const n = { ...EMPTY, assign: 'leftover' }; setDraft(n); setF(n); setPage(1); }}
+        className="flex flex-wrap items-center gap-2 rounded-xl border border-bad/40 bg-bad-soft px-4 py-2.5 text-left text-[13.5px] font-semibold text-bad-ink hover:brightness-95">
+        <span className="min-w-0 flex-1">🔴 Хоносон, хуваарилагдаагүй {kpi.leftover} захиалга байна — яаралтай хуваарилна уу (хүргэх өдөр нь өнгөрсөн / өнөөдөр).</span>
+        <span className="rounded-lg bg-bad px-3 py-1 text-[12.5px] font-bold text-white">{f.assign === 'leftover' ? 'Доор харагдаж байна ↓' : 'Харах →'}</span></button>
         : kpi.unassigned ? <p data-lead-today className="rounded-xl border border-warn/40 bg-warn-soft px-4 py-2.5 text-[13.5px] font-semibold text-warn">🟠 Хуваарилагдаагүй {kpi.unassigned} «Шинэ» захиалга байна — өнөөдөртөө заавал хуваарилна уу.</p> : null}
 
       {/* Шүүлтүүр */}
@@ -115,7 +125,7 @@ function AssignView() {
               placeholder="Дугаар, утас, жолоочийн нэр…" className={clsx(fsel, 'w-full pl-8')} />
           </label>
           <select aria-label="Хуваарилалт" value={draft.assign} onChange={(e) => setDraft({ ...draft, assign: e.target.value })} className={fsel}>
-            <option value="unassigned">Хуваарилаагүй</option><option value="assigned">Хуваарилсан</option><option value="all">Бүгд</option>
+            <option value="unassigned">Хуваарилаагүй</option><option value="leftover">Хоносон (хуваарилаагүй)</option><option value="assigned">Хуваарилсан</option><option value="all">Бүгд</option>
           </select>
           <input type="date" aria-label="Хүргэх огноо" title="Хүргэх огноо" value={draft.deliveryDate} onChange={(e) => setDraft({ ...draft, deliveryDate: e.target.value })} className={fsel} />
           <select aria-label="Төлөв" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })} className={fsel}>
@@ -176,11 +186,12 @@ function AssignView() {
             <tbody key={g.key || 'all'} className="divide-y divide-line">
               {g.key ? <tr className="bg-teal-500/10"><td colSpan={8} className="px-3 py-1.5 font-bold text-teal-800 dark:text-teal-200">{g.key} <span className="ml-1 rounded-md bg-surface px-1.5 text-[11.5px]">{g.items.length}</span></td></tr> : null}
               {g.items.map((o) => (
-                <tr key={o.id} className={clsx('align-top', sel.has(o.id) && 'bg-info-soft/40')}>
+                <tr key={o.id} data-leftover={isLeftover(o) || undefined} className={clsx('align-top', sel.has(o.id) && 'bg-info-soft/40', isLeftover(o) && 'shadow-[inset_4px_0_0_var(--bad)]')}>
                   <td className="px-2.5 py-2">{editable(o) ? <input type="checkbox" aria-label={`№${o.number} сонгох`} className="h-4 w-4" checked={sel.has(o.id)} onChange={(e) => setSel((s) => { const x = new Set(s); if (e.target.checked) x.add(o.id); else x.delete(o.id); return x; })} /> : null}</td>
                   <td className="select-text px-2.5 py-2">
                     <div className="font-bold">№{o.number}</div>
                     <div className="mt-0.5 flex flex-wrap gap-1">
+                      {isLeftover(o) ? <span className="rounded bg-bad px-1 text-[10.5px] font-bold text-white">🔴 Хоносон</span> : null}
                       {o.postponeCount ? <span className="rounded bg-warn-soft px-1 text-[10.5px] font-bold text-warn">⏰ Маргааш</span> : null}
                       {o.handover ? <span className="rounded bg-info-soft px-1 text-[10.5px] font-bold text-info" title="Падаанд орсон">{o.handover.number}</span> : null}
                     </div>
