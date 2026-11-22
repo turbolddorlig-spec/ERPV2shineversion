@@ -162,7 +162,7 @@ describe('бараа татах — нөөц хоног (#119, зөвхөн СА
     // «Захиалсан» — анх ирэх өдөр = өнөөдөр + 15
     const o = await OF.markReordered(sa, { productId: prod, qty: 300 });
     expect(o.expectedDay).toBe(U.ubDay(new Date(), 15));
-    await err(OF.markReordered(sa, { productId: prod, qty: 10 }), 409);
+    await err(OF.markReordered(sa, { productId: prod, qty: 300 }), 409, 'duplicate'); // #205: яг ижлийг давтан дарахыг л хориглоно
     x = (await OF.computeReorder()).get(prod)!;
     expect([x.level, x.order?.qty]).toEqual(['ORDERED', 300]);
     expect(await OF.reorderBanner(['SUPER_ADMIN'])).toBeNull();
@@ -222,7 +222,7 @@ describe('бараа татах — өнгө / хэмжээ тус бүрээр 
     expect(x.variants.map((v) => [v.label, v.days, v.level])).toEqual([['Улаан', 0, 'URGENT'], ['Хар', 63, 'OK']]);
     // улааныг «Захиалсан» → хар бодогдсоор; хар дуусах дөхвөл барааны мөрөнд «Хар»
     await OF.markReordered(sa, { productId: p2.id, variantId: red, qty: 100 });
-    await err(OF.markReordered(sa, { productId: p2.id, variantId: red, qty: 5 }), 409);
+    await err(OF.markReordered(sa, { productId: p2.id, variantId: red, qty: 100 }), 409, 'duplicate'); // #205: дахин захиалж болно, яг ижлийг давтахгүй
     await err(OF.markReordered(sa, { productId: p2.id, qty: 5 }), 409); // өнгөөр захиалсан бол бүхэлд нь тэмдэглэхгүй
     x = (await OF.computeReorder(true)).get(p2.id)!;
     expect([x.level, x.variants[0]!.level, x.variants[1]!.level]).toEqual(['ORDERED', 'ORDERED', 'OK']);
@@ -594,5 +594,34 @@ describe('#198 бүүсттэй барааны үлдэгдэл дуусах', (
     const a = (await OF.computeStockOut()).find((x) => x.productId === p2.id);
     expect(a?.level).toBe('VARIANT');
     expect(a?.variants.map((x) => x.label)).toEqual(['Хар']);
+  });
+});
+
+describe('#205 «Захиалсан»-ы дараа дахин татах төлөвлөгөө', () => {
+  async function reserve(n: number) {
+    const { order: o } = await O.createOrder(op, { phone: String(99700000 + ++ph), province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 13, addressDetail: 'Тест', pageId: page1, lines: [{ variantId: v, qty: n }], idemKey: randomUUID(), deliveryDate: U.ubDay(new Date(), 1) });
+    await db.order.update({ where: { id: o.id }, data: { confirmedAt: new Date(Date.now() - 400 * 86_400_000) } });
+  }
+  it('төлөвлөгөө, дахин «Татах», санал тоо; 2 захиалга — нэг орлого зөвхөн эртний нэгийг хаана', async () => {
+    for (let d = 1; d <= 3; d++) for (let i = 0; i < 10; i++) await order({ daysAgo: d }); // хурд 10
+    await reserve(470 - 50); // боломжтой 50 → 5 хоног → 🔴
+    let x = (await OF.computeReorder(true)).get(prod)!;
+    expect([x.level, x.suggestQty]).toEqual(['URGENT', 300]); // 10 × 30 хоног
+    // 20 хоногийн дараа 100 ирнэ: 5 хоногт дуусч 15 хоног тасарна; ирсний дараа 10 хоног → дуусах − 15 хоног ≤ өнөөдөр → дахин татах
+    await OF.markReordered(sa, { productId: prod, qty: 100, expectedDay: U.ubDay(new Date(), 20) });
+    x = (await OF.computeReorder(true)).get(prod)!;
+    expect(x.plan).toMatchObject({ gapDays: 15, gapFrom: U.ubDay(new Date(), 5), coverUntil: U.ubDay(new Date(), 30), nextOrderDay: U.ubDay(new Date(), 15), again: false });
+    expect(x.level).toBe('ORDERED');
+    // 3 хоногт ирэх 500 нэмж захиалбал тасрахгүй
+    await OF.markReordered(sa, { productId: prod, qty: 500, expectedDay: U.ubDay(new Date(), 3) });
+    x = (await OF.computeReorder(true)).get(prod)!;
+    expect([x.plan!.gapDays, x.plan!.incoming.length, x.level]).toEqual([0, 2, 'ORDERED']);
+    // Агуулахад нэг орлого орвол зөвхөн эртний (100) захиалга хаагдана, 500 хүлээгдсэн хэвээр
+    const wh = (await db.warehouse.findFirstOrThrow()).id;
+    await D.createReceipt(sa, { warehouseId: wh, lines: [{ variantId: v, qty: 100 }], idemKey: randomUUID() });
+    x = (await OF.computeReorder(true)).get(prod)!;
+    const open = await db.reorderOrder.findMany({ where: { productId: prod, receivedAt: null, cancelledAt: null } });
+    expect(open.map((o) => o.qty)).toEqual([500]);
+    expect(x.plan!.incoming).toEqual([{ day: U.ubDay(new Date(), 3), qty: 500 }]);
   });
 });

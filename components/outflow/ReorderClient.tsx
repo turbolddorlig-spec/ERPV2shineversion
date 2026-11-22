@@ -5,19 +5,19 @@ import { PageBand } from '@/components/shell/AppShell';
 import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/Notice';
 import { api, ApiError } from '@/components/ui/api';
-import { ReorderDialog } from './OutflowClient';
+import { PlanLine, ReorderDialog, type ReorderPlan } from './OutflowClient';
 
 type Level = 'URGENT' | 'ORDER' | 'LATE' | 'ORDERED' | 'OK';
 interface Ord { id: number; qty: number; expectedDay: string; byName: string; note: string; variantId: number | null }
 interface Row {
-  id: number; code: string; name: string; thumb: string | null; level: Level; available: number; pace: number; days: number | null; runOutDay: string | null; worstLabel: string | null; order: Ord | null;
-  variants: { variantId: number; label: string; available: number; pace: number; days: number | null; level: Level; order: Ord | null }[];
+  id: number; code: string; name: string; thumb: string | null; level: Level; available: number; pace: number; days: number | null; runOutDay: string | null; worstLabel: string | null; order: Ord | null; plan?: ReorderPlan | null;
+  variants: { variantId: number; label: string; available: number; pace: number; days: number | null; level: Level; order: Ord | null; plan?: ReorderPlan | null }[];
 }
 interface Resp { tab: string; page: number; total: number; pages: number; counts: { need: number; ordered: number }; rows: Row[] }
 const LV: Record<Level, { l: string; cls: string }> = {
   URGENT: { l: '🔴 Яаралтай', cls: 'bg-bad-soft text-bad-ink' },
   LATE: { l: '⏰ Хоцорсон', cls: 'bg-bad-soft text-bad-ink' },
-  ORDER: { l: '🟠 Татах', cls: 'bg-warn-soft text-warn' },
+  ORDER: { l: '🟠 Татах', cls: 'bg-warn-soft text-warn' }, // #205: захиалсан ч дахин татах цаг болсон бол мөн «Татах»
   ORDERED: { l: '🚚 Захиалсан', cls: 'bg-info-soft text-info' },
   OK: { l: 'Хангалттай', cls: 'bg-surface2 text-muted' },
 };
@@ -70,7 +70,7 @@ export function ReorderClient() {
                     <div className="flex items-center gap-2">
                       {r.variants.length > 1 ? <button type="button" aria-label={`${r.name} өнгөөр`} aria-expanded={open.has(r.id)} onClick={() => toggle(r.id)} className="h-6 w-6 shrink-0 rounded text-muted hover:bg-surface2">{open.has(r.id) ? '▾' : '▸'}</button> : <span className="w-6 shrink-0" />}
                       {r.thumb ? <img src={r.thumb} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover" /> : <span className="h-9 w-9 shrink-0 rounded-lg bg-surface2" />}
-                      <div className="min-w-0"><div className="line-clamp-2 font-semibold [overflow-wrap:anywhere]">{r.name}</div><div className="text-[11.5px] text-muted [overflow-wrap:anywhere]">{r.code}{r.worstLabel ? ` · хамгийн дутуу: ${r.worstLabel}` : ''}</div></div>
+                      <div className="min-w-0"><div className="line-clamp-2 font-semibold [overflow-wrap:anywhere]">{r.name}</div><div className="text-[11.5px] text-muted [overflow-wrap:anywhere]">{r.code}{r.worstLabel ? ` · хамгийн дутуу: ${r.worstLabel}` : ''}</div>{r.plan ? <PlanLine p={r.plan} compact /> : null}</div>
                     </div>
                   </td>
                   <td className="px-3 py-2 text-right font-bold">{r.available}</td>
@@ -80,7 +80,7 @@ export function ReorderClient() {
                 </tr>
                 {open.has(r.id) ? r.variants.map((v) => (
                   <tr key={v.variantId} data-reorder-variant className="border-t border-line/60 bg-surface2/50 text-[12.5px]">
-                    <td className="py-1.5 pl-14 pr-3 [overflow-wrap:anywhere]">↳ <b>{v.label}</b></td>
+                    <td className="py-1.5 pl-14 pr-3 [overflow-wrap:anywhere]">↳ <b>{v.label}</b>{v.plan ? <PlanLine p={v.plan} compact /> : null}</td>
                     <td className="px-3 py-1.5 text-right font-semibold">{v.available}</td>
                     <td className="px-3 py-1.5 text-right">{v.pace}</td>
                     <td className="px-3 py-1.5 text-center">{cover(v.days, v.level, v.order)}</td>

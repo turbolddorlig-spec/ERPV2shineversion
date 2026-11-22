@@ -48,10 +48,12 @@ export interface OutflowConfig {
   stockDays: number;
   /** Бараа татах (#119, СА): Хятадаас ирэх хоног — нөөц ≤ энэ бол 🟠; ≤ urgentDays бол 🔴 */
   leadDays: number; urgentDays: number;
+  /** #205: дахин татах тоо = өдрийн хурд × энэ хоног (санал) */
+  coverDays: number;
   /** Нийлүүлэгчийн дэлгүүрт оноосон барааг СА-ын «Бараа татах»-д харуулахгүй (#120) */
   hideSupplierReorder: boolean;
 }
-export const DEFAULT_CFG: OutflowConfig = { claimTarget: 5, claimExpireDays: 7, watchHours: 8, defaultDollar: 5, oppCost: 1200, deliveryCost: 5000, rate: 3600, costPct: 35, lowProfit: 1500, bulkMin: 5, stockDays: 1, leadDays: 15, urgentDays: 7, hideSupplierReorder: true };
+export const DEFAULT_CFG: OutflowConfig = { claimTarget: 5, claimExpireDays: 7, watchHours: 8, defaultDollar: 5, oppCost: 1200, deliveryCost: 5000, rate: 3600, costPct: 35, lowProfit: 1500, bulkMin: 5, stockDays: 1, leadDays: 15, urgentDays: 7, coverDays: 30, hideSupplierReorder: true };
 let cfgCache: { at: number; v: OutflowConfig } | null = null;
 export async function getConfig(tx: Tx | typeof db = db): Promise<OutflowConfig> {
   if (tx === db && cfgCache && Date.now() - cfgCache.at < 30_000) return cfgCache.v;
@@ -76,7 +78,7 @@ export async function setConfig(actor: UserActor, b: Record<string, unknown>) {
   if (b.claimExpireDays !== undefined) next.claimExpireDays = cleanInt(b.claimExpireDays, 'Чөлөөлөх хоног', 1, 365);
   if (b.stockDays !== undefined) next.stockDays = cleanInt(b.stockDays, 'Дуусах анхааруулга (өдөр)', 1, 30);
   if (b.hideSupplierReorder !== undefined) { assertSA(actor); next.hideSupplierReorder = b.hideSupplierReorder === true || b.hideSupplierReorder === 'true'; }
-  const money = ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar', 'bulkMin', 'leadDays', 'urgentDays'] as const;
+  const money = ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar', 'bulkMin', 'leadDays', 'urgentDays', 'coverDays'] as const;
   if (money.some((k) => b[k] !== undefined)) {
     assertSA(actor);
     if (b.oppCost !== undefined) next.oppCost = cleanInt(b.oppCost, 'Опп цалин', 0, 1_000_000);
@@ -89,6 +91,7 @@ export async function setConfig(actor: UserActor, b: Record<string, unknown>) {
     if (b.bulkMin !== undefined) next.bulkMin = cleanInt(b.bulkMin, 'Бөөний захиалгын ширхэг', 2, 100_000);
     if (b.leadDays !== undefined) next.leadDays = cleanInt(b.leadDays, 'Бараа ирэх хоног', 1, 180);
     if (b.urgentDays !== undefined) next.urgentDays = cleanInt(b.urgentDays, 'Яаралтай хоног', 0, 180);
+    if (b.coverDays !== undefined) next.coverDays = cleanInt(b.coverDays, 'Нэг татахад хүрэлцэх хоног', 1, 180);
     if (next.urgentDays >= next.leadDays) throw badRequest('Яаралтай хоног нь ирэх хоногоос бага байна');
   }
   const json = next as unknown as Prisma.InputJsonValue;
@@ -1117,6 +1120,8 @@ export interface ReorderInfo {
   shopId: number | null;
   basis: { avg7: number; avg3: number; today: number; fullDays: number };
   order: { id: number; qty: number; expectedDay: string; orderedAt: Date; byName: string; note: string; variantId: number | null } | null;
+  /** #205: ирэх бүх захиалгаар дахин татах төлөвлөгөө (Супер админы); захиалгагүй бол null. suggestQty — «Захиалсан»-ы санал */
+  plan: ReorderPlan | null; suggestQty: number;
   /** Хамгийн яаралтай өнгө / хэмжээ (#128) — олон өнгөтэй бол */
   worstLabel: string | null;
   /** Өнгө / хэмжээ тус бүрийн нөөц ба «Захиалсан» (#128) */
@@ -1126,7 +1131,36 @@ export interface ReorderInfo {
 }
 export interface VariantCover {
   variantId: number; label: string; available: number; pace: number; /** өнөөдөр зарагдсан (бөөнийг хассан) */ today?: number; days: number | null; runOutDay: string | null;
+  /** #205: ирэх захиалгатай бол дахин татах төлөвлөгөө */
+  plan?: ReorderPlan | null;
   level: ReorderLevel; order: ReorderInfo['order']; supLevel: ReorderLevel; supOrder: ReorderInfo['order'];
+}
+/**
+ * #205 (эзний шийдвэр): «Захиалсан»-ы дараах төлөвлөгөө — ирэх бүх захиалгыг огноогоор нь нэмж, өдрийн хурдаар хасна:
+ *  • gap — ачаа ирэхээс өмнө тасрах өдрүүд; • coverUntil — сүүлийн ачаа ирсний дараа дуусах өдөр;
+ *  • nextOrderDay = coverUntil − ирэх хоног (leadDays) → тэр өдөр болоход дахин «Татах»; • suggestQty = хурд × coverDays.
+ */
+export interface ReorderPlan {
+  incoming: { day: string; qty: number }[]; gapFrom: string | null; gapDays: number; coverUntil: string | null;
+  nextOrderDay: string | null; suggestQty: number; again: boolean;
+}
+export function planOf(available: number, pace: number, incoming: { day: string; qty: number }[], cfg: { leadDays: number; coverDays: number }, today: string): ReorderPlan | null {
+  if (!incoming.length) return null;
+  const inc = [...incoming].sort((a, b) => a.day.localeCompare(b.day));
+  const suggestQty = pace > 0 ? Math.ceil(pace * cfg.coverDays) : 0;
+  if (pace <= 0) return { incoming: inc, gapFrom: null, gapDays: 0, coverUntil: null, nextOrderDay: null, suggestQty, again: false };
+  const last = inc[inc.length - 1]!.day < today ? today : inc[inc.length - 1]!.day;
+  let stock = available; let gapFrom: string | null = null; let gapDays = 0; let coverUntil: string | null = null;
+  for (let i = 0; i <= 730; i++) {
+    const d = addDays(today, i);
+    for (const x of inc) if ((x.day < today ? today : x.day) === d) stock += x.qty; // хоцорсон ачааг өнөөдөр ирнэ гэж үзнэ
+    if (stock <= 0) {
+      if (d < last) { gapDays++; gapFrom ??= d; } else { coverUntil = d; break; }
+    }
+    stock = Math.max(0, stock - pace); // тасарсан өдрүүдийн эрэлт дараагийн ачаанаас хасагдахгүй (зарагдаагүй)
+  }
+  const nextOrderDay = coverUntil ? addDays(coverUntil, -cfg.leadDays) : null;
+  return { incoming: inc, gapFrom, gapDays, coverUntil, nextOrderDay, suggestQty, again: nextOrderDay !== null && nextOrderDay <= today };
 }
 export type ReorderScope = 'OWNER' | 'SUPPLIER';
 let reorderCache: { at: number; map: Map<number, ReorderInfo> } | null = null;
@@ -1180,15 +1214,24 @@ async function computeReorderNow(gen: number): Promise<Map<number, ReorderInfo>>
   // Агуулахад орлого орсон бол «Захиалсан» хаагдана — өнгө тус бүрээр бол тэр өнгөний орлогоор (#128), бүхэлд нь бол аль ч өнгөний орлогоор
   if (orders.length) {
     const since = new Date(Math.min(...orders.map((o) => o.orderedAt.getTime())));
-    const rec = await db.$queryRaw<{ productId: number; variantId: number; at: Date }[]>`
-      SELECT v."productId", m."variantId", max(m.at) AS at FROM "StockMove" m JOIN "ProductVariant" v ON v.id = m."variantId"
-      WHERE m.type = 'RECEIPT' AND m.at > ${since} AND v."productId" IN (${Prisma.join([...new Set(orders.map((o) => o.productId))])}) GROUP BY 1, 2`;
+    const rec = await db.$queryRaw<{ productId: number; variantId: number; docId: number; at: Date }[]>`
+      SELECT v."productId", m."variantId", m."docId", min(m.at) AS at FROM "StockMove" m JOIN "ProductVariant" v ON v.id = m."variantId"
+      WHERE m.type = 'RECEIPT' AND m.at > ${since} AND v."productId" IN (${Prisma.join([...new Set(orders.map((o) => o.productId))])}) GROUP BY 1, 2, 3`;
+    // #205: нэг барааг хэд хэдэн удаа захиалж болно — орлого бүр (баримт) хамгийн эртний НЭГ захиалгыг хаана
     const recBy = groupBy(rec, (r) => r.productId);
-    const recAt = (o: (typeof orders)[number]) => {
-      const xs = (recBy.get(o.productId) ?? []).filter((r) => (o.variantId === null || r.variantId === o.variantId) && r.at > o.orderedAt);
-      return xs.length ? new Date(Math.max(...xs.map((r) => r.at.getTime()))) : null;
-    };
-    const done = orders.map((o) => ({ o, at: recAt(o) })).filter((x) => x.at);
+    const done: { o: (typeof orders)[number]; at: Date }[] = [];
+    for (const [pid, pos] of groupBy(orders, (o) => o.productId)) {
+      // баримт × өнгө нэг удаа; бүхэл барааны захиалга баримтыг бүхэлд нь эзэлнэ
+      const used = new Set<string>(); const usedDoc = new Set<number>();
+      const evs = [...(recBy.get(pid) ?? [])].sort((a, b) => a.at.getTime() - b.at.getTime());
+      for (const o of [...pos].sort((a, b) => a.orderedAt.getTime() - b.orderedAt.getTime())) {
+        const e = evs.find((r) => !usedDoc.has(r.docId) && !used.has(`${r.docId}:${r.variantId}`) && r.at > o.orderedAt && (o.variantId === null || r.variantId === o.variantId)
+          && (o.variantId !== null || !evs.some((x) => x.docId === r.docId && used.has(`${x.docId}:${x.variantId}`))));
+        if (!e) continue;
+        if (o.variantId === null) usedDoc.add(e.docId); else used.add(`${e.docId}:${e.variantId}`);
+        done.push({ o, at: e.at });
+      }
+    }
     for (const { o, at } of done) await db.reorderOrder.updateMany({ where: { id: o.id, receivedAt: null }, data: { receivedAt: at! } });
     if (done.length) { const ids = new Set(done.map((x) => x.o.id)); orders = orders.filter((o) => !ids.has(o.id)); }
   }
@@ -1229,7 +1272,10 @@ async function computeReorderNow(gen: number): Promise<Map<number, ReorderInfo>>
   };
   type O = (typeof orders)[number];
   const view = (o: O | undefined) => o ? { id: o.id, qty: o.qty, expectedDay: o.expectedDay, orderedAt: o.orderedAt, byName: o.byName, note: o.note, variantId: o.variantId } : null;
-  const levelOf = (o: O | undefined, days: number | null): ReorderLevel => o ? (o.expectedDay < today ? 'LATE' : 'ORDERED')
+  // #205: захиалсан ч ирсний дараа дуусах өдрөөс «ирэх хоног»-ийн өмнө болбол дахин «Татах» (яаралтай бол 🔴)
+  const daysTo = (d: string) => Math.round((Date.parse(`${d}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
+  const levelOf = (o: O | undefined, days: number | null, plan?: ReorderPlan | null): ReorderLevel => o ? (o.expectedDay < today ? 'LATE'
+      : plan?.again ? (plan.coverUntil && daysTo(plan.coverUntil) <= cfg.urgentDays ? 'URGENT' : 'ORDER') : 'ORDERED')
     : days !== null && days <= cfg.urgentDays ? 'URGENT' : days !== null && days <= cfg.leadDays ? 'ORDER' : 'OK';
   const RANK: Record<ReorderLevel, number> = { URGENT: 5, LATE: 4, ORDER: 3, ORDERED: 2, OK: 1 };
   const map = new Map<number, ReorderInfo>();
@@ -1247,8 +1293,10 @@ async function computeReorderNow(gen: number): Promise<Map<number, ReorderInfo>>
       const available = byV?.get(v.id)?.available ?? 0;
       const days = p.pace > 0 ? Math.max(0, Math.floor(available / p.pace)) : null;
       const vo = (scope: 'OWNER' | 'SUPPLIER') => mine(scope).find((o) => o.variantId === v.id) ?? whole(scope);
+      // Энэ өнгөнд тусгайлан захиалсан бүх ирэх ачаа (бүхэл барааны захиалгыг өнгө тус бүрд хуваах боломжгүй — барааны түвшинд)
+      const plan = planOf(available, p.pace, mine('OWNER').filter((o) => o.variantId === v.id || (o.variantId === null && vs.length === 1)).map((o) => ({ day: o.expectedDay, qty: o.qty })), cfg, today);
       return { variantId: v.id, label: [v.color, v.size].filter(Boolean).join(' / ') || v.code, available, pace: r1(p.pace), today: p.td, days, runOutDay: days === null ? null : addDays(today, days),
-        level: levelOf(vo('OWNER'), days), order: view(vo('OWNER')), supLevel: levelOf(vo('SUPPLIER'), days), supOrder: view(vo('SUPPLIER')) };
+        level: levelOf(vo('OWNER'), days, plan), order: view(vo('OWNER')), supLevel: levelOf(vo('SUPPLIER'), days), supOrder: view(vo('SUPPLIER')), plan };
     }).filter((v) => v.days !== null || v.order || v.supOrder);
     // Бараа бүхэлдээ (нийлбэр) — тайлбарт
     const tp = paceOf(ZERO.map((_, i) => vs.reduce((s, v) => s + (vday.get(v.id) ?? ZERO)[i]!, 0)));
@@ -1260,12 +1308,16 @@ async function computeReorderNow(gen: number): Promise<Map<number, ReorderInfo>>
       const w = [...vcov].sort((a, b) => RANK[lv(b)] - RANK[lv(a)] || (a.days ?? 1e9) - (b.days ?? 1e9))[0]!;
       return { level: lv(w), days: w.days, order: od(w), label: vcov.length > 1 ? w.label : null };
     };
+    // Барааны түвшин: ирэх бүх (өнгөний ба бүхэл) ачаа
+    const pplan = planOf(available, tp.pace, mine('OWNER').map((o) => ({ day: o.expectedDay, qty: o.qty })), cfg, today);
     const ow = worst('OWNER', (v) => v.level, (v) => v.order);
+    // Олон өнгөгүй (эсвэл бүхэл барааны захиалгатай) бол барааны төлөвлөгөөгөөр «дахин татах»
+    if (!vcov.length && ow.order && ow.level === 'ORDERED' && pplan?.again) ow.level = pplan.coverUntil && daysTo(pplan.coverUntil) <= cfg.urgentDays ? 'URGENT' : 'ORDER';
     const sw = worst('SUPPLIER', (v) => v.supLevel, (v) => v.supOrder);
     map.set(id, {
       productId: id, shopId: shopOf.get(id) ?? null, available, pace: r1(tp.pace), days: ow.days, runOutDay: ow.days === null ? null : addDays(today, ow.days), level: ow.level,
       basis: { avg7: r1(tp.avg7), avg3: r1(tp.avg3), today: tp.td, fullDays: tp.fullDays },
-      order: ow.order, worstLabel: ow.label, variants: vcov,
+      order: ow.order, worstLabel: ow.label, variants: vcov, plan: pplan, suggestQty: tp.pace > 0 ? Math.ceil(tp.pace * cfg.coverDays) : 0,
       sup: { level: sw.level, order: sw.order, days: sw.days, worstLabel: sw.label },
     });
   }
@@ -1417,8 +1469,9 @@ export async function createReorder(actor: UserActor, b: { productId?: unknown; 
   }
   const row = await db.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(7401, ${productId}::int)`; // Аудит #152: зэрэг дарахад 500 биш
-    const cur = await tx.reorderOrder.findFirst({ where: { productId, scope, variantId, receivedAt: null, cancelledAt: null } });
-    if (cur) throw conflict(variantId ? `«${label}» аль хэдийн «Захиалсан» байна — эхлээд цуцална уу` : 'Энэ бараа аль хэдийн «Захиалсан» байна — эхлээд цуцална уу');
+    // #205: дахин татахын тулд олон удаа захиалж болно; зөвхөн яг ижил захиалгыг 2 минутын дотор давтан дарахыг хориглоно
+    const cur = await tx.reorderOrder.findFirst({ where: { productId, scope, variantId, receivedAt: null, cancelledAt: null, qty, expectedDay, orderedAt: { gt: new Date(Date.now() - 120_000) } } });
+    if (cur) throw conflict(variantId ? `«${label}» яг ийм захиалга саяхан тэмдэглэгдсэн` : 'Яг ийм захиалга саяхан тэмдэглэгдсэн', 'duplicate');
     if (!variantId && (await tx.reorderOrder.count({ where: { productId, scope, variantId: { not: null }, receivedAt: null, cancelledAt: null } }))) throw conflict('Өнгө тус бүрээр захиалсан байна — өнгө бүрээр нь тэмдэглэнэ үү');
     const r = await tx.reorderOrder.create({ data: { productId, variantId, qty, expectedDay, note, byName: actor.name, scope, shopId } });
     await writeAudit(actor, 'outflow.reorder', 'ReorderOrder', String(r.id), { productId, name: product.name, variant: label || null, qty, expectedDay, note, scope }, tx);
@@ -1462,7 +1515,7 @@ export async function reorderDetailOf(productIdIn: unknown, scope: ReorderScope 
   const history = await db.reorderOrder.findMany({ where: { productId: id, scope, ...(scope === 'SUPPLIER' && shopId !== null ? { shopId } : {}) }, orderBy: { orderedAt: 'desc' }, take: 10 });
   const x = m.get(id);
   const info = x && scope === 'SUPPLIER' ? { ...x, level: x.sup.level, order: x.sup.order, days: x.sup.days, worstLabel: x.sup.worstLabel, variants: x.variants.map((v) => ({ ...v, level: v.supLevel, order: v.supOrder })) } : x;
-  return { info: info ?? null, leadDays: cfg.leadDays, urgentDays: cfg.urgentDays, defaultExpected: addDays(ubDay(), cfg.leadDays), history };
+  return { info: info ?? null, leadDays: cfg.leadDays, urgentDays: cfg.urgentDays, coverDays: cfg.coverDays, defaultExpected: addDays(ubDay(), cfg.leadDays), history };
 }
 
 // ───────────── Гаралтаа хангаагүй пэйж (#121) ─────────────
@@ -1552,8 +1605,8 @@ export async function reorderBoard(actor: UserActor, p: { tab?: string; q?: stri
       const pr = pm.get(x.productId);
       return {
         id: x.productId, code: pr?.code ?? '', name: pr?.name ?? `#${x.productId}`, thumb: pr?.images[0] ? mediaUrl(pr.images[0].fileKey, 'sm') : null,
-        level: x.level, available: x.available, pace: x.pace, days: x.days, runOutDay: x.runOutDay, worstLabel: x.worstLabel, order: x.order,
-        variants: x.variants.map((v) => ({ variantId: v.variantId, label: v.label, available: v.available, pace: v.pace, days: v.days, level: v.level, order: v.order })),
+        level: x.level, available: x.available, pace: x.pace, days: x.days, runOutDay: x.runOutDay, worstLabel: x.worstLabel, order: x.order, plan: x.plan, suggestQty: x.suggestQty,
+        variants: x.variants.map((v) => ({ variantId: v.variantId, label: v.label, available: v.available, pace: v.pace, days: v.days, level: v.level, order: v.order, plan: v.plan ?? null })),
       };
     }),
   };

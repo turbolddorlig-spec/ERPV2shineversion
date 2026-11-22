@@ -50,7 +50,20 @@ interface Reorder {
   basis: { avg7: number; avg3: number; today: number; fullDays: number };
   order: { id: number; qty: number; expectedDay: string; orderedAt: string; byName: string; note: string; variantId: number | null } | null;
   worstLabel: string | null;
-  variants: { variantId: number; label: string; available: number; pace: number; days: number | null; runOutDay: string | null; level: RLevel; order: Reorder['order'] }[];
+  variants: { variantId: number; label: string; available: number; pace: number; days: number | null; runOutDay: string | null; level: RLevel; order: Reorder['order']; plan?: ReorderPlan | null }[];
+  plan?: ReorderPlan | null; suggestQty?: number;
+}
+/** #205: «Захиалсан»-ы дараах төлөвлөгөө */
+export interface ReorderPlan { incoming: { day: string; qty: number }[]; gapFrom: string | null; gapDays: number; coverUntil: string | null; nextOrderDay: string | null; suggestQty: number; again: boolean }
+export function PlanLine({ p, compact }: { p: ReorderPlan; compact?: boolean }) {
+  const inc = p.incoming.map((x) => `${md(x.day)} ${x.qty}ш`).join(' + ');
+  return (
+    <div data-plan className={clsx('flex flex-col gap-0.5 [overflow-wrap:anywhere]', compact ? 'text-[11.5px]' : 'text-[12.5px]')}>
+      <span>🚚 Ирэх: {inc}{p.coverUntil ? <> → <b>{md(p.coverUntil)}</b> хүртэл хүрэлцэнэ</> : ''}</span>
+      {p.gapDays ? <span className="font-bold text-bad-ink">⚠ Ачаа ирэхээс өмнө {md(p.gapFrom!)}-аас {p.gapDays} хоног бараагүй болно</span> : null}
+      {p.nextOrderDay ? <span className={clsx('font-bold', p.again ? 'text-warn' : 'text-muted')}>{p.again ? '🟠 Дахин татах цаг боллоо' : `Дараагийн таталт: ${md(p.nextOrderDay)}`}{p.suggestQty ? ` · ~${p.suggestQty}ш` : ''}</span> : null}
+    </div>
+  );
 }
 interface Table {
   rows: Row[]; total: number; page: number; pages: number; days: string[]; counts: { all: number; boost: number; noboost: number; red: number; orange: number; watched: number; pageShort: number; stockout?: number; reorder?: number; ordered?: number };
@@ -323,11 +336,11 @@ function ReorderChip({ r, onOpen }: { r: Row; onOpen: () => void }) {
     </button>
   );
 }
-interface ReorderD { info: Reorder | null; leadDays: number; urgentDays: number; defaultExpected: string; history: { id: number; qty: number; expectedDay: string; orderedAt: string; byName: string; note: string; receivedAt: string | null; cancelledAt: string | null; variantId: number | null }[] }
+interface ReorderD { info: Reorder | null; leadDays: number; urgentDays: number; coverDays?: number; defaultExpected: string; history: { id: number; qty: number; expectedDay: string; orderedAt: string; byName: string; note: string; receivedAt: string | null; cancelledAt: string | null; variantId: number | null }[] }
 const coverCls = (l: RLevel) => (l === 'URGENT' || l === 'LATE' ? 'bg-bad-soft text-bad-ink' : l === 'ORDER' ? 'bg-warn-soft text-warn' : 'bg-surface2');
 /** «Захиалсан» маягт — бараа бүхэлд нь эсвэл нэг өнгө / хэмжээнд (#128) */
-function OrderForm({ defaultDay, onSave, onCancel }: { defaultDay: string; onSave: (qty: number, day: string, note: string) => Promise<void>; onCancel?: () => void }) {
-  const [qty, setQty] = useState(''); const [day, setDay] = useState(defaultDay); const [note, setNote] = useState(''); const [e, setE] = useState<string | null>(null);
+function OrderForm({ defaultDay, defaultQty, onSave, onCancel }: { defaultDay: string; defaultQty?: number; onSave: (qty: number, day: string, note: string) => Promise<void>; onCancel?: () => void }) {
+  const [qty, setQty] = useState(defaultQty ? String(defaultQty) : ''); const [day, setDay] = useState(defaultDay); const [note, setNote] = useState(''); const [e, setE] = useState<string | null>(null);
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-3">
       {e ? <p className="text-[12.5px] text-bad-ink">{e}</p> : null}
@@ -369,6 +382,7 @@ export function ReorderDialog({ row, onClose, post, detailUrl, sub = 'зөвхө
               {x.days === null ? 'Сүүлийн 7 хоногт зарагдаагүй — нөөц бодогдохгүй.' : <>{x.worstLabel ? <>Хамгийн түрүүнд <b>«{x.worstLabel}»</b> </> : 'Энэ хурдаар '}<b>{md(x.runOutDay!)}</b> орчим дуусна. Хятадаас захиалбал ~{d.leadDays} хоногт ирнэ
                 {x.level === 'URGENT' ? <b className="text-bad-ink"> — яаралтай!</b> : x.level === 'ORDER' ? <b className="text-warn"> — бараагаа одоо татаарай.</b> : x.level === 'OK' ? ' — одоохондоо хангалттай.' : ''}</>}
             </p>
+            {multi && x.plan ? <div className="rounded-xl bg-surface2 p-2.5"><b className="text-[12.5px]">Бараа нийтдээ:</b> <PlanLine p={x.plan} /></div> : null}
             {multi ? (
               <div className="overflow-x-auto rounded-xl border border-line">
                 <table className="w-full min-w-[560px] text-[13px]">
@@ -381,10 +395,14 @@ export function ReorderDialog({ row, onClose, post, detailUrl, sub = 'зөвхө
                         <td className="px-2 text-right">{v.pace ? `~${v.pace}` : '—'}</td>
                         <td className="px-2 text-center"><span className={clsx('inline-block rounded-md px-1.5 py-0.5 text-[12px] font-bold', coverCls(v.level))}>{v.days === null ? '—' : `${v.days} хоног`} {RL[v.level].label.split(' ')[0]}</span></td>
                         <td className="px-2 py-1 text-right">{v.order ? (
-                          <span className="inline-flex flex-wrap items-center justify-end gap-1 text-[12px]">🚚 {v.order.qty}ш · {md(v.order.expectedDay)}{v.order.variantId !== null ? <button type="button" onClick={() => void cancel(v.order!.id)} className="text-bad-ink underline">цуцлах</button> : <span className="text-subtle">(бүхэлд)</span>}</span>
+                          <span className="inline-flex flex-col items-end gap-0.5 text-[12px]">
+                            <span className="inline-flex flex-wrap items-center justify-end gap-1">🚚 {v.order.qty}ш · {md(v.order.expectedDay)}{v.order.variantId !== null ? <button type="button" onClick={() => void cancel(v.order!.id)} className="text-bad-ink underline">цуцлах</button> : <span className="text-subtle">(бүхэлд)</span>}
+                              <button type="button" onClick={() => setFormFor(v.variantId)} className="font-bold text-accent-ink underline">+ дахин</button></span>
+                            {v.plan ? <PlanLine p={v.plan} compact /> : null}
+                          </span>
                         ) : <Button size="sm" onClick={() => setFormFor(v.variantId)}>Захиалсан</Button>}</td>
                       </tr>
-                      {formFor === v.variantId ? <tr><td colSpan={5} className="px-2 pb-2"><OrderForm defaultDay={d.defaultExpected} onSave={(q, dy, n) => save(v.variantId, q, dy, n)} onCancel={() => setFormFor(null)} /></td></tr> : null}
+                      {formFor === v.variantId ? <tr><td colSpan={5} className="px-2 pb-2"><OrderForm defaultDay={d.defaultExpected} defaultQty={v.plan?.suggestQty || (v.pace ? Math.ceil(v.pace * (d.coverDays ?? 30)) : undefined)} onSave={(q, dy, n) => save(v.variantId, q, dy, n)} onCancel={() => setFormFor(null)} /></td></tr> : null}
                     </Fragment>
                   ))}</tbody>
                 </table>
@@ -396,8 +414,11 @@ export function ReorderDialog({ row, onClose, post, detailUrl, sub = 'зөвхө
             <div className={clsx('rounded-xl p-3', x?.level === 'LATE' ? 'bg-bad-soft text-bad-ink' : 'bg-surface2')}>
               <b>{x?.level === 'LATE' ? '⏰ Ирэх хугацаа хэтэрсэн' : '🚚 Захиалсан — ирэхийг хүлээж байна'}</b>
               <div className="[overflow-wrap:anywhere]">{o.qty} ширхэг · {md(o.expectedDay)} ирнэ · {o.byName}, {ubDateTime(o.orderedAt)}{o.note ? ` · ${o.note}` : ''}</div>
-              <div className="flex flex-wrap items-center justify-between gap-2 text-[12.5px] text-muted">Агуулахад орлого бүртгэгдэхэд автоматаар хаагдана.<Button size="sm" onClick={() => void cancel(o.id)}>«Захиалсан»-ыг цуцлах</Button></div>
-            </div>); })() : (<><b>Захиалсан бол тэмдэглэ — сануулга зогсоно</b><OrderForm defaultDay={d.defaultExpected} onSave={(q, dy, n) => save(null, q, dy, n)} /></>)) : null}
+              {x?.plan ? <PlanLine p={x.plan} /> : null}
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[12.5px] text-muted">Агуулахад орлого бүртгэгдэхэд автоматаар хаагдана.
+                <span className="flex flex-wrap gap-2"><Button size="sm" variant={x?.plan?.again ? 'primary' : 'secondary'} onClick={() => setFormFor('all')}>+ Дахин захиалсан</Button><Button size="sm" onClick={() => void cancel(o.id)}>«Захиалсан»-ыг цуцлах</Button></span></div>
+              {formFor === 'all' ? <OrderForm defaultDay={d.defaultExpected} defaultQty={x?.plan?.suggestQty || x?.suggestQty || undefined} onSave={(q, dy, n) => save(null, q, dy, n)} onCancel={() => setFormFor(null)} /> : null}
+            </div>); })() : (<><b>Захиалсан бол тэмдэглэ — сануулга зогсоно</b><OrderForm defaultDay={d.defaultExpected} defaultQty={x?.suggestQty || undefined} onSave={(q, dy, n) => save(null, q, dy, n)} /></>)) : null}
           {d.history.length ? (
             <div className="text-[12.5px]"><b>Өмнөх захиалга</b>
               {d.history.map((h) => <div key={h.id} className="flex justify-between gap-2 border-t border-line py-1"><span className="min-w-0 [overflow-wrap:anywhere]">{ubDateTime(h.orderedAt)}{h.variantId ? ` · ${labelOf(h.variantId)}` : ''} · {h.qty} ш · {h.byName}</span><span className="shrink-0 text-muted">{h.receivedAt ? `✓ ирсэн ${ubDateTime(h.receivedAt)}` : h.cancelledAt ? 'цуцалсан' : `${md(h.expectedDay)} ирнэ`}</span></div>)}
@@ -811,7 +832,7 @@ function ConfigDialog({ sa, onClose, onDone }: { sa: boolean; onClose: () => voi
   const f = (k: string, l: string) => <label key={k} className="flex flex-col gap-1 text-[12.5px] font-semibold text-muted">{l}<input value={v?.[k] ?? ''} inputMode="numeric" onChange={(e) => setV({ ...v!, [k]: digits(e.target.value) })} className={clsx(inputCls, 'text-right')} /></label>;
   const save = async () => {
     try {
-      const keys = ['claimTarget', 'claimExpireDays', 'stockDays', ...(sa ? ['oppCost', 'deliveryCost', 'rate', 'costPct', 'watchHours', 'defaultDollar', 'bulkMin', 'leadDays', 'urgentDays'] : [])];
+      const keys = ['claimTarget', 'claimExpireDays', 'stockDays', ...(sa ? ['oppCost', 'deliveryCost', 'rate', 'costPct', 'watchHours', 'defaultDollar', 'bulkMin', 'leadDays', 'urgentDays', 'coverDays'] : [])];
       await api('/api/goods-outflow', { method: 'POST', json: { action: 'config', ...Object.fromEntries(keys.map((k) => [k, Number(v?.[k])])), ...(sa ? { hideSupplierReorder: v?.hideSupplierReorder !== 'false' } : {}) } }); onDone();
     } catch (e) { setErr(msg(e)); }
   };
@@ -827,6 +848,7 @@ function ConfigDialog({ sa, onClose, onDone }: { sa: boolean; onClose: () => voi
             <div className="grid grid-cols-2 gap-3">{f('oppCost', 'Опп цалин (₮/захиалга)')}{f('deliveryCost', 'Хүргэлтийн цалин (₮/захиалга)')}{f('rate', 'Долларын ханш (₮)')}{f('defaultDollar', 'Анхдагч $ (бүүст)')}{f('costPct', 'Өртөг оруулаагүй бол үнийн %')}{f('bulkMin', '📦 Бөөний захиалга (ширхэгээс)')}{f('watchHours', 'Ажиглах цаг (асаасан цагаас)')}</div>
             <b className="text-[14px]">🚚 Бараа татах (зөвхөн Супер админ)</b>
             <div className="grid grid-cols-2 gap-3">{f('leadDays', '🟠 Бараа ирэх хоног (нөөц үүнээс бага бол «татах»)')}{f('urgentDays', '🔴 Яаралтай (нөөц үүнээс бага)')}</div>
+            <div className="grid grid-cols-2 gap-3">{f('coverDays', '📦 Нэг татахад хүрэлцэх хоног (санал болгох тоо = хурд × энэ)')}</div>
             <label className="flex items-start gap-2 text-[13px] font-semibold"><input type="checkbox" className="mt-0.5" checked={v.hideSupplierReorder !== 'false'} onChange={(e) => setV({ ...v, hideSupplierReorder: String(e.target.checked) })} /><span className="min-w-0 [overflow-wrap:anywhere]">Нийлүүлэгчийн дэлгүүрт оноосон барааг миний «Бараа татах»-д харуулахгүй (нийлүүлэгч өөрийн хуудаснаас харна)</span></label>
           </>) : null}
         </div>
