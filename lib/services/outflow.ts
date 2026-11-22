@@ -385,6 +385,8 @@ export interface OutflowRow {
   /** Бөөний захиалга өдөр бүр: тоо ба ширхэг (#117) — өнгө, дунджид орохгүй */
   bulk: { n: number; qty: number }[];
   stock?: { total: number; available: number; driver: number };
+  /** #198: бүүсттэй барааны үлдэгдэл өнөөдөр / маргааш дуусах */
+  stockOut?: { level: StockOutLevel; available: number; runOutAt: string | null; dayRate: number; variants: { label: string; available: number; runOutAt: string | null }[] } | null;
   alert?: AlertLevel | null; profit?: { status: ProfitStatus | null; perUnit: number | null; orders: number; target: number } | null;
   /** Мөрийн ард жижиг тэмдэг — дарахад дэлгэрэнгүй */
   alertInfo?: { level: AlertLevel; reasons: string[]; pages: { name: string; n: number }[]; watchedUntil: Date | null; watchedBy: string | null } | null;
@@ -508,6 +510,9 @@ export async function outflowTable(actor: UserActor, p: TableParams) {
   const ro = sa ? await ownerReorder() : new Map<number, ReorderInfo>();
   if (sa && p.tab === 'reorder') rows = rows.filter((r) => NEEDS.includes(ro.get(r.id)?.level as ReorderLevel));
   if (sa && p.tab === 'ordered') rows = rows.filter((r) => ro.get(r.id)?.order);
+  const so = await computeStockOut();
+  const soMap = new Map(so.map((a) => [a.productId, a]));
+  if (p.tab === 'stockout') rows = rows.filter((r) => soMap.has(r.id));
   const dir = p.dir === 'asc' ? 1 : -1;
   const key = p.sort ?? 'week';
   const val = (r: OutflowRow): number | string => {
@@ -526,6 +531,7 @@ export async function outflowTable(actor: UserActor, p: TableParams) {
   const stock = await productStockTotals(slice.map((r) => r.id));
   for (const r of slice) {
     const s = stock.get(r.id); r.stock = { total: s?.total ?? 0, available: s?.available ?? 0, driver: s?.driver ?? 0 };
+    const sx = soMap.get(r.id); r.stockOut = sx ? { level: sx.level, available: sx.available, runOutAt: sx.runOutAt, dayRate: sx.dayRate, variants: sx.variants } : null;
     const a = alertMap.get(r.id); r.alert = a && !(a.watchedUntil && a.watchedUntil.getTime() > now) ? a.level : null;
     r.alertInfo = a ? { level: a.level, reasons: a.reasons, pages: a.pages, watchedUntil: a.watchedUntil && a.watchedUntil.getTime() > now ? a.watchedUntil : null, watchedBy: a.watchedBy } : null;
     if (sa) { const pr = prof.get(r.id); r.profit = pr ? { status: pr.status, perUnit: pr.perUnit, orders: pr.orders, target: pr.target } : null; r.reorder = ro.get(r.id) ?? null; }
@@ -536,7 +542,7 @@ export async function outflowTable(actor: UserActor, p: TableParams) {
     all: all.length, boost: all.filter((r) => r.zones > 0).length, noboost: all.filter((r) => r.zones === 0).length,
     red: alerts.filter((a) => a.level === 'RED' && !(a.watchedUntil && a.watchedUntil.getTime() > now)).length,
     orange: alerts.filter((a) => a.level === 'ORANGE' && !(a.watchedUntil && a.watchedUntil.getTime() > now)).length,
-    watched: watchedN, pageShort: (await pageShortfall()).length,
+    watched: watchedN, pageShort: (await pageShortfall()).length, stockout: so.length,
     ...(sa ? { reorder: [...ro.values()].filter((x) => NEEDS.includes(x.level)).length, ordered: [...ro.values()].filter((x) => x.order).length } : {}),
   };
   const days = Array.from({ length: 7 }, (_, i) => addDays(ubDay(), -i));
@@ -1119,7 +1125,7 @@ export interface ReorderInfo {
   sup: { level: ReorderLevel; order: ReorderInfo['order']; days: number | null; worstLabel: string | null };
 }
 export interface VariantCover {
-  variantId: number; label: string; available: number; pace: number; days: number | null; runOutDay: string | null;
+  variantId: number; label: string; available: number; pace: number; /** өнөөдөр зарагдсан (бөөнийг хассан) */ today?: number; days: number | null; runOutDay: string | null;
   level: ReorderLevel; order: ReorderInfo['order']; supLevel: ReorderLevel; supOrder: ReorderInfo['order'];
 }
 export type ReorderScope = 'OWNER' | 'SUPPLIER';
@@ -1241,7 +1247,7 @@ async function computeReorderNow(gen: number): Promise<Map<number, ReorderInfo>>
       const available = byV?.get(v.id)?.available ?? 0;
       const days = p.pace > 0 ? Math.max(0, Math.floor(available / p.pace)) : null;
       const vo = (scope: 'OWNER' | 'SUPPLIER') => mine(scope).find((o) => o.variantId === v.id) ?? whole(scope);
-      return { variantId: v.id, label: [v.color, v.size].filter(Boolean).join(' / ') || v.code, available, pace: r1(p.pace), days, runOutDay: days === null ? null : addDays(today, days),
+      return { variantId: v.id, label: [v.color, v.size].filter(Boolean).join(' / ') || v.code, available, pace: r1(p.pace), today: p.td, days, runOutDay: days === null ? null : addDays(today, days),
         level: levelOf(vo('OWNER'), days), order: view(vo('OWNER')), supLevel: levelOf(vo('SUPPLIER'), days), supOrder: view(vo('SUPPLIER')) };
     }).filter((v) => v.days !== null || v.order || v.supOrder);
     // Бараа бүхэлдээ (нийлбэр) — тайлбарт
@@ -1265,6 +1271,113 @@ async function computeReorderNow(gen: number): Promise<Map<number, ReorderInfo>>
   }
   if (gen === reorderGen) reorderCache = { at: Date.now(), map };
   return map;
+}
+
+// ───────────────────────── #198 Бүүсттэй барааны үлдэгдэл өнөөдөр / маргааш дуусах ─────────────────────────
+
+/**
+ * Эзний хүсэлт (#198): бүүст асаалттай барааны БОЛОМЖТОЙ үлдэгдэл (агуулах − нөөцлөгдсөн) өнөөдөртөө дуусах бол 🔴 «Бүүст унтраа»,
+ * маргааш дуусах бол 🟠, зарим өнгө / хэмжээ л өнөөдөр дуусах бол 🟡.
+ *  • Өдрийн хурд = max(«Бараа татах»-ын хурд [7 хоног, 3 хоног, өнөөдрийн дээд], өнөөдрийн одоогийн хурдаар бүтэн өдөрт тооцсон).
+ *  • Өнөөдрийн үлдсэн хэрэгцээ = өдрийн хурд × өдрийн ҮЛДСЭН цагийн захиалгын хувь (сүүлийн 14 хоногийн цаг тутмын хуваариар — орой их захиалга ордог бол харгалзана).
+ *  • Дуусах цаг ≈ үлдэгдлийг цаг тутмын хэрэгцээгээр хасаж олно.
+ */
+export type StockOutLevel = 'TODAY' | 'TOMORROW' | 'VARIANT';
+export interface StockOutAlert {
+  productId: number; code: string; name: string; ownerId: string | null; level: StockOutLevel;
+  available: number; dayRate: number; remainingToday: number; runOutAt: string | null;
+  variants: { label: string; available: number; runOutAt: string | null }[];
+}
+let shareCache: { at: number; v: number[] } | null = null;
+/** Өдрийн 24 цагийн захиалгын хувь (нийлбэр 1) — сүүлийн 14 бүтэн өдөр, бүх бараа */
+async function hourShares(): Promise<number[]> {
+  if (shareCache && Date.now() - shareCache.at < (process.env.NODE_ENV === 'test' ? 0 : 30 * 60_000)) return shareCache.v;
+  const today = ubDay();
+  const rows = await db.$queryRaw<{ h: number; n: number }[]>`
+    SELECT extract(hour from o."confirmedAt" + interval '8 hours')::int AS h, count(*)::int AS n
+    FROM "Order" o WHERE o."confirmedAt" >= ${ubDayStart(addDays(today, -14))} AND o."confirmedAt" < ${ubDayStart(today)} AND ${COUNTED}
+    GROUP BY 1`;
+  const a = Array(24).fill(0) as number[];
+  for (const r of rows) if (r.h >= 0 && r.h < 24) a[r.h] += r.n;
+  const tot = a.reduce((x, y) => x + y, 0);
+  // Өгөгдөл бага бол 09–23 цагт жигд гэж үзнэ
+  const v = tot >= 50 ? a.map((n) => n / tot) : a.map((_, h) => (h >= 9 && h <= 23 ? 1 / 15 : 0));
+  shareCache = { at: Date.now(), v };
+  return v;
+}
+/** Одоогийн УБ цаг (бутархай) — тестэд TEST_UB_HOUR */
+function ubHourFrac(): number {
+  if (process.env.NODE_ENV === 'test' && process.env.TEST_UB_HOUR) return Number(process.env.TEST_UB_HOUR);
+  const d = new Date(Date.now() + 8 * 3600_000);
+  return d.getUTCHours() + d.getUTCMinutes() / 60;
+}
+function dayPart(shares: number[], hf: number) {
+  const h = Math.min(23, Math.floor(hf)), f = hf - h;
+  let before = 0; for (let i = 0; i < h; i++) before += shares[i]!;
+  before += shares[h]! * f;
+  return { before, after: Math.max(0, 1 - before) };
+}
+/** Үлдэгдэл өнөөдөр хэдэн цагт дуусах (≈) — өнөөдөр дуусахгүй бол null */
+function runOutTime(available: number, dayRate: number, shares: number[], hf: number): string | null {
+  if (available <= 0) return 'дууссан';
+  let left = available; let t = hf;
+  while (t < 24) {
+    const h = Math.floor(t); const span = Math.min(24, h + 1) - t;
+    const need = dayRate * shares[h]! * span;
+    if (need >= left && need > 0) {
+      const at = t + span * (left / need);
+      const hh = Math.floor(at), mm = Math.floor((at - hh) * 60 / 10) * 10;
+      return `${String(Math.min(23, hh)).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+    }
+    left -= need; t = h + 1;
+  }
+  return null;
+}
+let stockOutCache: { at: number; v: StockOutAlert[] } | null = null;
+export async function computeStockOut(): Promise<StockOutAlert[]> {
+  if (stockOutCache && Date.now() - stockOutCache.at < (process.env.NODE_ENV === 'test' ? 0 : 60_000)) return stockOutCache.v;
+  const boosted = (await allRows()).filter((r) => r.zones > 0);
+  if (!boosted.length) { stockOutCache = { at: Date.now(), v: [] }; return []; }
+  const [ro, shares, stock] = await Promise.all([computeReorder(), hourShares(), productStockTotals(boosted.map((r) => r.id))]);
+  const hf = ubHourFrac();
+  const { before, after } = dayPart(shares, hf);
+  const rate = (pace: number, td: number) => Math.max(pace, before >= 0.2 ? td / before : 0);
+  const out: StockOutAlert[] = [];
+  for (const r of boosted) {
+    const info = ro.get(r.id);
+    const available = stock.get(r.id)?.available ?? 0;
+    const dayRate = rate(info?.pace ?? 0, info?.basis.today ?? 0);
+    const remainingToday = dayRate * after;
+    const vToday = (info?.variants ?? []).map((v) => {
+      const vr = rate(v.pace, v.today ?? 0);
+      return { label: v.label, available: v.available, out: v.available <= 0 ? vr > 0 : vr > 0 && v.available <= vr * after, runOutAt: runOutTime(v.available, vr, shares, hf) };
+    }).filter((v) => v.out).map(({ label, available: a, runOutAt }) => ({ label, available: a, runOutAt }));
+    let level: StockOutLevel | null = null;
+    if (available <= 0 || (dayRate > 0 && available <= remainingToday)) level = 'TODAY';
+    else if (dayRate > 0 && available <= remainingToday + dayRate) level = 'TOMORROW';
+    else if (vToday.length && r.variantCount > 1) level = 'VARIANT'; // нэг өнгөтэй бол бараа = өнгө (дээрх дүрэм)
+    if (!level) continue;
+    out.push({ productId: r.id, code: r.code, name: r.name, ownerId: r.ownerId, level, available, dayRate: r1(dayRate), remainingToday: r1(remainingToday),
+      runOutAt: level === 'TODAY' ? runOutTime(available, dayRate, shares, hf) : null, variants: vToday });
+  }
+  const RANK: Record<StockOutLevel, number> = { TODAY: 3, TOMORROW: 2, VARIANT: 1 };
+  out.sort((a, b) => RANK[b.level] - RANK[a.level] || a.available - b.available);
+  stockOutCache = { at: Date.now(), v: out };
+  return out;
+}
+/** Хэнд харагдах (эзний шийдвэр): Супер админ, ахлах маркетинг — бүгд; маркетинг — өөрийн хариуцсан бараа */
+function stockOutFor(roles: Role[], userId: string, list: StockOutAlert[]): StockOutAlert[] | null {
+  if (roles.includes('SUPER_ADMIN') || roles.includes('MARKETING_LEAD')) return list;
+  if (roles.includes('MARKETING')) return list.filter((a) => a.ownerId === userId);
+  return null;
+}
+/** Бүх хуудасны дээрх сануулга */
+export async function stockOutBanner(actor: { id: string; roles: Role[] }): Promise<{ today: number; tomorrow: number; variant: number } | null> {
+  if (!actor.roles.some((r) => ['SUPER_ADMIN', 'MARKETING_LEAD', 'MARKETING'].includes(r))) return null;
+  const list = stockOutFor(actor.roles, actor.id, await computeStockOut());
+  if (!list?.length) return null;
+  const n = (l: StockOutLevel) => list.filter((a) => a.level === l).length;
+  return { today: n('TODAY'), tomorrow: n('TOMORROW'), variant: n('VARIANT') };
 }
 
 /** Бүх хуудасны дээрх сануулга — зөвхөн Супер админд */

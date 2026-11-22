@@ -32,6 +32,17 @@ interface Row {
   stock?: { total: number; available: number; driver: number }; alert?: 'RED' | 'ORANGE' | null; profit?: { status: Status | null; perUnit: number | null; orders: number; target: number } | null;
   alertInfo?: { level: 'RED' | 'ORANGE'; reasons: string[]; pages: { name: string; n: number }[]; watchedUntil: string | null; watchedBy: string | null } | null;
   reorder?: Reorder | null;
+  stockOut?: StockOut | null;
+}
+/** #198: бүүсттэй барааны үлдэгдэл дуусах */
+interface StockOut { level: 'TODAY' | 'TOMORROW' | 'VARIANT'; available: number; runOutAt: string | null; dayRate: number; variants: { label: string; available: number; runOutAt: string | null }[] }
+function StockOutChip({ s }: { s: StockOut }) {
+  const v = s.variants.map((x) => `${x.label} (${x.available})`).join(', ');
+  const text = s.level === 'TODAY' ? (s.available <= 0 ? '🔴 Үлдэгдэл дууссан — бүүст унтраа' : `🔴 Үлдэгдэл ${s.available}${s.runOutAt ? ` · ~${s.runOutAt} дуусна` : ''} — бүүст унтраа`)
+    : s.level === 'TOMORROW' ? `🟠 Үлдэгдэл ${s.available} · маргааш дуусна`
+    : `🟡 Өнөөдөр дуусах: ${v}`;
+  return <div data-stockout={s.level} title={`Өдрийн хурд ≈ ${s.dayRate}ш${v ? ` · дуусах өнгө: ${v}` : ''}`}
+    className={clsx('mt-0.5 rounded px-1.5 py-0.5 text-[11.5px] font-bold [overflow-wrap:anywhere]', s.level === 'TODAY' ? 'bg-bad text-white' : s.level === 'TOMORROW' ? 'bg-warn-soft text-warn' : 'bg-cell-mid text-cell-ink')}>{text}</div>;
 }
 type RLevel = 'OK' | 'ORDER' | 'URGENT' | 'ORDERED' | 'LATE';
 interface Reorder {
@@ -42,7 +53,7 @@ interface Reorder {
   variants: { variantId: number; label: string; available: number; pace: number; days: number | null; runOutDay: string | null; level: RLevel; order: Reorder['order'] }[];
 }
 interface Table {
-  rows: Row[]; total: number; page: number; pages: number; days: string[]; counts: { all: number; boost: number; noboost: number; red: number; orange: number; watched: number; pageShort: number; reorder?: number; ordered?: number };
+  rows: Row[]; total: number; page: number; pages: number; days: string[]; counts: { all: number; boost: number; noboost: number; red: number; orange: number; watched: number; pageShort: number; stockout?: number; reorder?: number; ordered?: number };
   totals: { today: number; yesterday: number }; dollars: number[]; owners: { id: string; name: string }[]; isLead: boolean; isSA: boolean;
 }
 
@@ -119,6 +130,7 @@ export function OutflowClient() {
           <button type="button" data-alert-tab="red" onClick={() => go('red')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'red' ? 'border-bad bg-bad text-white' : 'border-bad/40 bg-bad-soft text-bad-ink', d.counts.red > 0 && tab !== 'red' && 'animate-pulse')}>🔴 Алдагдалтай ({d.counts.red})</button>
           <button type="button" data-alert-tab="orange" onClick={() => go('orange')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'orange' ? 'border-warn bg-warn text-white' : 'border-warn/40 bg-warn-soft text-warn')}>🟠 Ашиг бага ({d.counts.orange})</button>
           <button type="button" onClick={() => go('watched')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'watched' ? 'border-ink bg-ink text-surface' : 'border-line bg-surface')}>👁 Ажиглаж буй ({d.counts.watched})</button>
+          <button type="button" data-stockout-tab onClick={() => go('stockout')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'stockout' ? 'border-bad bg-bad text-white' : d.counts.stockout ? 'border-bad/40 bg-bad-soft text-bad-ink' : 'border-line bg-surface')}>⛔ Үлдэгдэл дуусах ({d.counts.stockout ?? 0})</button>
           <button type="button" data-pageshort-btn onClick={() => setDlg({ k: 'pageshort' })} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', d.counts.pageShort ? 'border-bad/40 bg-bad-soft text-bad-ink' : 'border-line bg-surface')}>⚠ Гаралтаа хангаагүй пэйж ({d.counts.pageShort})</button>
           {d.isSA ? <button type="button" onClick={() => { go('diamond'); setStatus('DIAMOND'); }} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'diamond' ? 'border-info bg-info text-white' : 'border-line bg-surface')}>💎 Зорилт 150%+</button> : null}
           {d.isSA ? <button type="button" data-reorder-tab onClick={() => go('reorder')} className={clsx('rounded-full border px-3.5 py-1.5 text-[13.5px] font-bold', tab === 'reorder' ? 'border-warn bg-warn text-white' : 'border-warn/40 bg-warn-soft text-warn')}>🚚 Бараа татах ({d.counts.reorder ?? 0})</button> : null}
@@ -170,6 +182,7 @@ export function OutflowClient() {
                         <div className="min-w-0">
                           <div title={r.name} className="line-clamp-2 [overflow-wrap:anywhere] font-semibold">{r.name}</div>
                           <div className="[overflow-wrap:anywhere] text-[11.5px] text-muted">{r.code}{r.price !== null ? ` · ${money(r.price)}` : ''}{r.doneAt ? ` · ✓ ${r.doneByName ?? ''}` : ''}</div>
+                          {r.stockOut ? <StockOutChip s={r.stockOut} /> : null}
                         </div>
                       </div>
                     </td>
@@ -198,7 +211,7 @@ export function OutflowClient() {
             {d.rows.map((r) => (
               <div key={r.id} className={clsx('flex min-w-0 flex-col gap-2 rounded-2xl border border-line bg-surface p-3', r.alert === 'RED' && 'border-l-4 border-l-bad', r.alert === 'ORANGE' && 'border-l-4 border-l-warn')}>
                 <div className="flex items-start justify-between gap-2">
-                  <div className="flex min-w-0 items-start gap-2"><Thumb src={r.imageKey ? `/media/${r.imageKey}-sm.webp` : null} alt={r.name} size={44} zoom={r.code} /><div className="min-w-0"><b className="[overflow-wrap:anywhere]">{r.name}</b><div className="[overflow-wrap:anywhere] text-[12px] text-muted">{r.code} · {r.ownerName ?? 'хариуцагчгүй'}{r.doneAt ? ' · ✓' : ''}</div></div></div>
+                  <div className="flex min-w-0 items-start gap-2"><Thumb src={r.imageKey ? `/media/${r.imageKey}-sm.webp` : null} alt={r.name} size={44} zoom={r.code} /><div className="min-w-0"><b className="[overflow-wrap:anywhere]">{r.name}</b><div className="[overflow-wrap:anywhere] text-[12px] text-muted">{r.code} · {r.ownerName ?? 'хариуцагчгүй'}{r.doneAt ? ' · ✓' : ''}</div>{r.stockOut ? <StockOutChip s={r.stockOut} /> : null}</div></div>
                   <div className="shrink-0 text-right"><b className="text-[18px]">{r.weekTotal}</b><div className="text-[11px] text-muted">7 хоног · ⌀{r.avg}</div></div>
                 </div>
                 <div className="grid grid-cols-7 gap-1 text-center text-[12px]">

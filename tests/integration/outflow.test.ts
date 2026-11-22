@@ -544,3 +544,55 @@ describe('пэйж, статистик, үнэлгээ, цалин (#104-3, 6)',
     expect(dd.rows.find((r) => r.userId === mk.id)?.items[0]?.daily[0]).toBe(11);
   });
 });
+
+describe('#198 бүүсттэй барааны үлдэгдэл дуусах', () => {
+  async function reserve(n: number) {
+    const { order: o } = await O.createOrder(op, { phone: String(99500000 + ++ph), province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 13, addressDetail: 'Тест', pageId: page1, lines: [{ variantId: v, qty: n }], idemKey: randomUUID(), deliveryDate: U.ubDay(new Date(), 1) });
+    await db.order.update({ where: { id: o.id }, data: { confirmedAt: new Date(Date.now() - 400 * 86_400_000) } });
+  }
+  it('өнөөдөр дуусах → 🔴 «бүүст унтраа» (дуусах цагтай); маргааш → 🟠; бүүстгүй бол сануулахгүй; хэнд харагдах', async () => {
+    // өдөрт 10 (3 өдөр) → хурд 10; тестийн цаг 10:00, өгөгдөл бага → 09–23 жигд: үлдсэн хэрэгцээ ≈ 10 × 14/15 = 9.3
+    for (let d = 1; d <= 3; d++) for (let i = 0; i < 10; i++) await order({ daysAgo: d });
+    await reserve(470 - 8); // боломжтой 8
+    expect(await OF.computeStockOut()).toEqual([]); // бүүстгүй — сануулахгүй
+    await boostAt(2, new Date());
+    await db.productMarketing.update({ where: { productId: prod }, data: { ownerId: mk.id, ownerName: mk.name } });
+    OF.bustTable();
+    let a = (await OF.computeStockOut())[0]!;
+    expect([a.level, a.available, a.dayRate]).toEqual(['TODAY', 8, 10]);
+    expect(a.runOutAt).toMatch(/^\d\d:\d0$/);
+    expect(await OF.stockOutBanner(sa)).toEqual({ today: 1, tomorrow: 0, variant: 0 });
+    expect(await OF.stockOutBanner(lead)).toEqual({ today: 1, tomorrow: 0, variant: 0 });
+    expect(await OF.stockOutBanner(mk)).toEqual({ today: 1, tomorrow: 0, variant: 0 }); // хариуцагч
+    expect(await OF.stockOutBanner(mk2)).toBeNull();  // өөр маркетинг
+    expect(await OF.stockOutBanner(op)).toBeNull();
+    const t = await OF.outflowTable(lead, { tab: 'stockout' });
+    expect([t.total, t.counts.stockout, t.rows[0]?.stockOut?.level]).toEqual([1, 1, 'TODAY']);
+    // орлого орж 15 болбол — маргааш дуусна (9.3 < 15 ≤ 19.3)
+    const wh = (await db.warehouse.findFirstOrThrow()).id;
+    await D.createReceipt(sa, { warehouseId: wh, lines: [{ variantId: v, qty: 7 }], idemKey: randomUUID() });
+    a = (await OF.computeStockOut())[0]!;
+    expect([a.level, a.available, a.runOutAt]).toEqual(['TOMORROW', 15, null]);
+    // их орлого → сануулгагүй
+    await D.createReceipt(sa, { warehouseId: wh, lines: [{ variantId: v, qty: 100 }], idemKey: randomUUID() });
+    expect(await OF.computeStockOut()).toEqual([]);
+    expect(await OF.stockOutBanner(sa)).toBeNull();
+  });
+  it('🟡 нийт хангалттай ч нэг өнгө өнөөдөр дуусах → тусад нь сануулна (бүүст унтраа биш)', async () => {
+    const p2 = await P.createProduct(sa, { code: 'B2', name: 'Өнгөтэй бараа', price: 20000, colors: ['Хар', 'Цагаан'] });
+    const [vb, vw] = [p2.variants[0]!.id, p2.variants[1]!.id];
+    const wh = (await db.warehouse.findFirstOrThrow()).id;
+    await D.createReceipt(sa, { warehouseId: wh, lines: [{ variantId: vb, qty: 19 }, { variantId: vw, qty: 300 }], idemKey: randomUUID() });
+    for (let d = 1; d <= 3; d++) for (let i = 0; i < 5; i++) {
+      const { order: o } = await O.createOrder(op, { phone: String(99600000 + ++ph), province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 13, addressDetail: 'Тест', pageId: page1, lines: [{ variantId: vb, qty: 1 }], idemKey: randomUUID(), deliveryDate: U.ubDay(new Date(), 1) });
+      const at = new Date(U.ubDayStart(U.ubDay(new Date(), -d)).getTime() + 10 * H);
+      await db.order.update({ where: { id: o.id }, data: { createdAt: at, confirmedAt: at } });
+    }
+    // Хар: 19 − 15 = 4 боломжтой, хурд 5 → өнөөдөр үлдсэн ≈ 5 × 14/15 = 4.7 → өнөөдөр дуусна; Цагаан 300 — нийт хангалттай
+    await OF.saveBoost(mk, { productId: p2.id, dollar: 5, zones: 1 });
+    OF.bustOutflowCache(); OF.bustTable();
+    const a = (await OF.computeStockOut()).find((x) => x.productId === p2.id);
+    expect(a?.level).toBe('VARIANT');
+    expect(a?.variants.map((x) => x.label)).toEqual(['Хар']);
+  });
+});
