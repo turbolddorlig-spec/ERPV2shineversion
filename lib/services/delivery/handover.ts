@@ -339,9 +339,11 @@ export async function myHandover(actor: UserActor) {
   const pending = await db.handover.count({ where: { driverId: actor.id, status: 'HANDED_OVER' } });
   if (!h) return { today, pending, handover: null };
   const d = await buildDetail(h.id, false);
-  // Аудит #144 (#77): агуулах «өгсөн» болохоос өмнө жолоочид захиалгын утас, дүн, бараа харагдахгүй — зөвхөн хаяг, тоо
+  // Аудит #144 (#77): агуулах «өгсөн» болохоос өмнө жолоочид захиалгын утас, дүн харагдахгүй — зөвхөн хаяг, тоо.
+  // #203 (эзний шийдвэр): агуулах Check хийсэн бараа (нэр, зураг, тоо — дүнгүй) бэлдэх явцад харагдаж, жолооч 1-1-ээр чагтална
   if (d.status === 'DRAFT' || d.status === 'PREPARED') {
-    return { today, pending, handover: { ...d, totals: { ...d.totals, amount: 0, extraAmount: 0 }, items: [], extras: [],
+    return { today, pending, handover: { ...d, totals: { ...d.totals, amount: 0, extraAmount: 0 },
+      items: d.items.filter((i) => i.checked).map((i) => ({ ...i, amount: 0 })), extras: d.extras.filter((i) => i.checked).map((i) => ({ ...i, amount: 0 })),
       orders: d.orders.map((o) => ({ ...o, phone: '', total: 0, note: null, lines: [] })), hidden: true } };
   }
   return { today, pending, handover: d };
@@ -353,21 +355,25 @@ export async function myHandoverPending(actor: UserActor) {
   return { pending: await db.handover.count({ where: { driverId: actor.id, status: 'HANDED_OVER' } }) };
 }
 
-/** Жолооч бараа бүрийг чагтална (агуулах Check хийсэн бараа л; «Бүгд» — variantId: 'all') */
+/**
+ * Жолооч бараа бүрийг чагтална (агуулах Check хийсэн бараа л; «Бүгд» — variantId: 'all').
+ * #203: агуулах бэлдэж байх үед (Ноорог / Бэлтгэсэн) ч болно — зөвхөн тэмдэг; үлдэгдэл «Барааг бүрэн хүлээн авсан» үед л шилжинэ.
+ * Агуулах Check-ээ арилгавал (мөр устна) жолоочийн чагт ч арилна.
+ */
 export async function setDriverCheck(actor: UserActor, idInput: unknown, input: { variantId?: unknown; checked?: unknown; kind?: unknown }) {
   assertDriverRole(actor);
   const id = cleanHid(idInput);
   await inTx(async (tx) => {
     const h = await loadForChange(tx, id);
     if (h.driverId !== actor.id) throw notFound('Падаан олдсонгүй');
-    if (h.status !== 'HANDED_OVER') throw conflict(h.status === 'RECEIVED' ? 'Падааныг аль хэдийн хүлээн авсан' : 'Агуулах барааг өгөөгүй байна', 'bad_status');
+    if (!['DRAFT', 'PREPARED', 'HANDED_OVER'].includes(h.status)) throw conflict(h.status === 'RECEIVED' ? 'Падааныг аль хэдийн хүлээн авсан' : 'Падааны төлөв өөрчлөгдсөн', 'bad_status');
     const value = input.checked === false ? null : new Date();
     if (input.variantId === 'all') await tx.handoverCheck.updateMany({ where: { handoverId: id }, data: { driverCheckedAt: value } });
     else {
       const variantId = Number(input.variantId);
       const kind = input.kind === 'EXTRA' ? 'EXTRA' : 'ORDER';
       const n = await tx.handoverCheck.updateMany({ where: { handoverId: id, variantId, kind }, data: { driverCheckedAt: value } });
-      if (!n.count) throw badRequest('Энэ бараа падаанд алга');
+      if (!n.count) throw badRequest(h.status === 'HANDED_OVER' ? 'Энэ бараа падаанд алга' : 'Агуулах энэ барааг хараахан Check хийгээгүй байна', 'not_checked_by_warehouse');
     }
     // Жолоочийн шалгалт түүхэнд (#124-Г)
     await writeAudit(actor, value ? 'handover.driver_check' : 'handover.driver_uncheck', 'Handover', String(id), { number: h.number, variantId: input.variantId === 'all' ? 'all' : Number(input.variantId) }, tx, ['delivery']);

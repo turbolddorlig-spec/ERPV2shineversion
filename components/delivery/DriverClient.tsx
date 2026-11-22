@@ -438,8 +438,10 @@ function HandoverTab({ onReceived }: { onReceived: () => void }) {
   const load = useCallback(async () => { try { setD(await api('/api/driver/handover')); setErr(null); } catch (e) { setErr(msg(e)); } }, []);
   useEffect(() => { void load(); }, [load]);
   const reloadH = useCallback(() => { void load(); }, [load]);
-  useVisibleInterval(reloadH, 15_000);
   const h = d?.handover ?? null;
+  // #203: агуулах бэлдэж байх үед бараа ирэх тусам 5 сек тутам шинэчилнэ
+  const preparing = h?.status === 'DRAFT' || h?.status === 'PREPARED';
+  useVisibleInterval(reloadH, preparing ? 5_000 : 15_000);
   async function check(variantId: number | 'all', checked: boolean, kind: 'ORDER' | 'EXTRA' = 'ORDER') {
     if (!h) return;
     setBusy(variantId); setErr(null);
@@ -457,6 +459,8 @@ function HandoverTab({ onReceived }: { onReceived: () => void }) {
   const items = h.items.filter((i) => (!only || !i.driverChecked) && (!q.trim() || `${i.code} ${i.name} ${i.label}`.toLowerCase().includes(q.trim().toLowerCase())));
   const all = h.totals.driverChecked === h.totals.kinds && h.totals.kinds > 0;
   const open = h.status === 'HANDED_OVER';
+  // #203: чагтлах боломжтой — бэлдэх явцад (агуулах Check хийсэн бараа) ба «өгсөн» үед
+  const canCheck = open || h.status === 'DRAFT' || h.status === 'PREPARED';
   return (
     <div className="flex flex-col gap-3">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -464,10 +468,10 @@ function HandoverTab({ onReceived }: { onReceived: () => void }) {
         <div className="rounded-[12px] border border-line bg-surface px-3 py-2"><div className="text-[11.5px] font-semibold text-subtle">Захиалга</div><div className="text-[18px] font-extrabold">{h.totals.orders}</div><div className="text-[11.5px] text-subtle">{h.totals.pieces} ширхэг</div></div>
         <div className="col-span-2 rounded-[12px] border border-line bg-surface px-3 py-2 sm:col-span-1"><div className="text-[11.5px] font-semibold text-subtle">Падааны нийт дүн</div><div className="whitespace-nowrap text-[17px] font-extrabold">{h.status === 'DRAFT' || h.status === 'PREPARED' ? '—' : money(h.totals.amount)}</div></div>
       </div>
-      {h.status === 'DRAFT' ? <Notice tone="info">⏳ Агуулах бэлтгэж байна...</Notice> : null}
-      {h.status === 'PREPARED' ? <Notice tone="info">📦 Агуулах бараа өгч байна...</Notice> : null}
+      {h.status === 'DRAFT' ? <Notice tone="info">⏳ Агуулах бэлтгэж байна — ширээн дээр ирсэн барааг шалгаад чагтална уу ({h.items.length}/{h.totals.kinds} ирсэн).</Notice> : null}
+      {h.status === 'PREPARED' ? <Notice tone="info">📦 Агуулах бараа өгч байна — үлдсэнийг чагтлаад хүлээнэ үү.</Notice> : null}
       {h.status === 'RECEIVED' ? <Notice tone="ok">✓ Барааг бүрэн хүлээн авсан{h.receivedAt ? ` · ${ubDateTime(h.receivedAt)}` : ''}</Notice> : null}
-      {open ? (
+      {canCheck ? (
         <>
           <div className="h-2.5 overflow-hidden rounded-full bg-surface2"><div className="h-full rounded-full bg-ok" style={{ width: `${h.totals.kinds ? (h.totals.driverChecked / h.totals.kinds) * 100 : 0}%` }} /></div>
           <div className="flex flex-wrap items-center gap-2">
@@ -482,8 +486,8 @@ function HandoverTab({ onReceived }: { onReceived: () => void }) {
       <ul className="flex flex-col gap-1.5">
         {items.map((i) => (
           <li key={i.variantId}>
-            <label className={clsx('flex items-center gap-3 rounded-[14px] border bg-surface p-2.5', i.driverChecked ? 'border-ok/50 bg-ok-soft/40' : 'border-line', open && 'cursor-pointer')}>
-              <input type="checkbox" className="h-7 w-7 shrink-0 accent-[var(--accent)]" aria-label={`${i.name} хүлээн авсан`} checked={i.driverChecked} disabled={!open || !i.checked || busy !== null}
+            <label className={clsx('flex items-center gap-3 rounded-[14px] border bg-surface p-2.5', i.driverChecked ? 'border-ok/50 bg-ok-soft/40' : 'border-line', canCheck && 'cursor-pointer')}>
+              <input type="checkbox" className="h-7 w-7 shrink-0 accent-[var(--accent)]" aria-label={`${i.name} хүлээн авсан`} checked={i.driverChecked} disabled={!canCheck || !i.checked || busy !== null}
                 onChange={(e) => check(i.variantId, e.target.checked)} />
               <Thumb src={i.thumb} alt={i.name} size={46} zoom={i.code} />
               <span className="min-w-0 flex-1 text-[13.5px] leading-tight [overflow-wrap:anywhere]"><b>{i.name}</b>{i.label ? ` · ${i.label}` : ''}<span className="block text-[12px] text-subtle">{i.code}{i.shelfCode ? ` · ${i.shelfCode}` : ''}</span></span>
@@ -491,15 +495,15 @@ function HandoverTab({ onReceived }: { onReceived: () => void }) {
             </label>
           </li>
         ))}
-        {open && !items.length ? <li className="py-6 text-center text-muted">{only ? 'Бүх бараа шалгагдсан' : 'Хайлтад тохирох бараа олдсонгүй'}</li> : null}
+        {canCheck && !items.length ? <li className="py-6 text-center text-muted">{only ? 'Бүх бараа шалгагдсан' : preparing && !h.items.length ? 'Агуулах бараа авчирч эхлэхэд энд гарна' : 'Хайлтад тохирох бараа олдсонгүй'}</li> : null}
       </ul>
       {h.extras.length ? (
         <section className="flex flex-col gap-1.5 rounded-[14px] border-2 border-dashed border-info/50 bg-info-soft/40 p-2.5">
-          <h3 className="px-1 text-[14.5px] font-extrabold text-info">Нэмэлт бараа ({h.totals.extraPieces}ш · {money(h.totals.extraAmount)})</h3>
+          <h3 className="px-1 text-[14.5px] font-extrabold text-info">Нэмэлт бараа ({h.totals.extraPieces}ш{open ? ` · ${money(h.totals.extraAmount)}` : ''})</h3>
           <p className="px-1 text-[12px] text-muted">Таны хүсэлт — захиалгаас гадна. Захиалгын бараатай хамт хүлээн авна.</p>
           {h.extras.map((i) => (
-            <label key={`x${i.variantId}`} className={clsx('flex items-center gap-3 rounded-[12px] border bg-surface p-2.5', i.driverChecked ? 'border-ok/50' : 'border-line', open && 'cursor-pointer')}>
-              <input type="checkbox" className="h-7 w-7 shrink-0 accent-[var(--accent)]" aria-label={`${i.name} нэмэлт хүлээн авсан`} checked={i.driverChecked} disabled={!open || !i.checked || busy !== null}
+            <label key={`x${i.variantId}`} className={clsx('flex items-center gap-3 rounded-[12px] border bg-surface p-2.5', i.driverChecked ? 'border-ok/50' : 'border-line', canCheck && 'cursor-pointer')}>
+              <input type="checkbox" className="h-7 w-7 shrink-0 accent-[var(--accent)]" aria-label={`${i.name} нэмэлт хүлээн авсан`} checked={i.driverChecked} disabled={!canCheck || !i.checked || busy !== null}
                 onChange={(e) => check(i.variantId, e.target.checked, 'EXTRA')} />
               <Thumb src={i.thumb} alt={i.name} size={42} zoom={i.code} />
               <span className="min-w-0 flex-1 text-[13.5px] leading-tight [overflow-wrap:anywhere]"><b>{i.name}</b>{i.label ? ` · ${i.label}` : ''}<span className="block text-[12px] text-subtle">{i.code}{i.shelfCode ? ` · ${i.shelfCode}` : ''}</span></span>

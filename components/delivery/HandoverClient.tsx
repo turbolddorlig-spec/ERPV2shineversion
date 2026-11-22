@@ -258,7 +258,7 @@ function HandoverView({ h, short, canOperate, onCheck, busy }: { h: Detail; shor
                 </td>
                 <td className="px-1 py-2 text-center text-[16px] font-extrabold sm:px-3 sm:text-[18px]">{i.qty}</td>
                 <td className="px-1 py-2 text-center sm:px-3">
-                  <span className={clsx('inline-grid h-8 w-8 place-items-center rounded-lg border-2 sm:h-9 sm:w-9', i.checked ? 'border-ok bg-ok text-white' : 'border-line bg-surface')} title={i.checkedBy ? `Check: ${i.checkedBy}` : undefined}>{i.checked ? <Icon name="check" size={18} strokeWidth={3} /> : null}</span>{h.status === 'HANDED_OVER' || h.status === 'RECEIVED' ? <span className={clsx('mt-1 inline-flex h-7 items-center rounded-lg px-1 text-[10.5px] font-bold sm:ml-1 sm:mt-0 sm:h-9 sm:px-2 sm:text-[11.5px]', i.driverChecked ? 'bg-ok-soft text-ok-ink' : 'bg-warn-soft text-warn')} title="Жолоочийн чагт">{i.driverChecked ? 'Жол. ✓' : 'Жол. —'}</span> : null}
+                  <span className={clsx('inline-grid h-8 w-8 place-items-center rounded-lg border-2 sm:h-9 sm:w-9', i.checked ? 'border-ok bg-ok text-white' : 'border-line bg-surface')} title={i.checkedBy ? `Check: ${i.checkedBy}` : undefined}>{i.checked ? <Icon name="check" size={18} strokeWidth={3} /> : null}</span>{h.status === 'HANDED_OVER' || h.status === 'RECEIVED' || i.driverChecked ? <span className={clsx('mt-1 inline-flex h-7 items-center rounded-lg px-1 text-[10.5px] font-bold sm:ml-1 sm:mt-0 sm:h-9 sm:px-2 sm:text-[11.5px]', i.driverChecked ? 'bg-ok-soft text-ok-ink' : 'bg-warn-soft text-warn')} title="Жолоочийн чагт">{i.driverChecked ? 'Жол. ✓' : 'Жол. —'}</span> : null}
                 </td>
                 
               </tr>
@@ -280,7 +280,7 @@ function HandoverView({ h, short, canOperate, onCheck, busy }: { h: Detail; shor
                   <td className="w-11 px-1 py-2 text-center text-[16px] font-extrabold sm:w-20 sm:px-3 sm:text-[18px]">{i.qty}</td>
                   <td className="w-[52px] px-1 py-2 text-center sm:w-40 sm:px-3">
                     <span className={clsx('inline-grid h-8 w-8 place-items-center rounded-lg border-2 sm:h-9 sm:w-9', i.checked ? 'border-ok bg-ok text-white' : 'border-line bg-surface')}>{i.checked ? <Icon name="check" size={18} strokeWidth={3} /> : null}</span>
-                    {h.status === 'HANDED_OVER' || h.status === 'RECEIVED' ? <span className={clsx('mt-1 inline-flex h-7 items-center rounded-lg px-1 text-[10.5px] font-bold sm:ml-1 sm:mt-0 sm:h-9 sm:px-2 sm:text-[11.5px]', i.driverChecked ? 'bg-ok-soft text-ok-ink' : 'bg-warn-soft text-warn')}>{i.driverChecked ? 'Жол. ✓' : 'Жол. —'}</span> : null}
+                    {h.status === 'HANDED_OVER' || h.status === 'RECEIVED' || i.driverChecked ? <span className={clsx('mt-1 inline-flex h-7 items-center rounded-lg px-1 text-[10.5px] font-bold sm:ml-1 sm:mt-0 sm:h-9 sm:px-2 sm:text-[11.5px]', i.driverChecked ? 'bg-ok-soft text-ok-ink' : 'bg-warn-soft text-warn')}>{i.driverChecked ? 'Жол. ✓' : 'Жол. —'}</span> : null}
                   </td>
                 </tr>
               ))}

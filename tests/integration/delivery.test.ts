@@ -145,6 +145,41 @@ describe('падаан', () => {
     expect(board.drivers.find((d) => d.id === drv.id)).toMatchObject({ approved: true, orders: 2, stateLabel: 'Бэлдэж байна' });
   });
 
+  it('#203 агуулах бэлдэж байх үед жолооч Check хийгдсэн барааг 1-1-ээр чагтална; үлдэгдэл хөдлөхгүй; Check арилгахад чагт арилна', async () => {
+    const ids = await dayWithOrders(2);
+    const h = await H.createHandover(wh, { driverId: drv.id, date: today, orderIds: ids });
+    const main = await locOf(mainWh);
+    const [b1, b2] = [await bal(main, v1), await bal(main, v2)];
+    // Агуулах ширээн дээр v1-ийг авчирсан (Check) — жолоочид зөвхөн тэр бараа, дүнгүй харагдана
+    let my = (await H.myHandover(drv)).handover!;
+    expect([my.status, my.items.length]).toEqual(['DRAFT', 0]);
+    await H.setCheck(wh, h.id, { variantId: v1, checked: true });
+    my = (await H.myHandover(drv)).handover!;
+    expect(my.items.map((i) => [i.variantId, i.amount])).toEqual([[v1, 0]]);
+    expect(my.orders.every((o) => o.phone === '' && o.total === 0)).toBe(true);
+    // Check хийгээгүй барааг чагтлахгүй; хийсэн барааг чагтална
+    await err(H.setDriverCheck(drv, h.id, { variantId: v2, checked: true }), 400, 'not_checked_by_warehouse');
+    await H.setDriverCheck(drv, h.id, { variantId: v1, checked: true });
+    expect((await H.myHandover(drv)).handover!.totals.driverChecked).toBe(1);
+    // Агуулах Check-ээ арилгавал жолоочийн чагт ч арилна
+    await H.setCheck(wh, h.id, { variantId: v1, checked: false });
+    expect((await H.myHandover(drv)).handover!.totals.driverChecked).toBe(0);
+    // Дахин авчирч, v2-г ч авчирна — жолооч «Бүгд» (ирсэн бүгдийг) чагтална; «Бэлтгэсэн» үед ч болно
+    await H.setCheck(wh, h.id, { variantId: v1, checked: true });
+    await H.prepareHandover(wh, h.id);
+    await H.setCheck(wh, h.id, { variantId: v2, checked: true });
+    await H.setDriverCheck(drv, h.id, { variantId: 'all', checked: true });
+    // Хүлээн авах — агуулах «өгсөн» дарахаас өмнө болохгүй; бараа хөдлөөгүй
+    await err(H.receiveHandover(drv, h.id), 409, 'not_handed_over');
+    expect([await bal(main, v1), await bal(main, v2)]).toEqual([b1, b2]);
+    // Агуулах «өгсөн» → жолооч шууд «хүлээн авсан» (дахин чагтлах шаардлагагүй)
+    await H.confirmHandover(wh, h.id);
+    expect((await H.myHandover(drv)).handover!.totals.driverChecked).toBe(2);
+    await H.receiveHandover(drv, h.id);
+    expect([await bal(main, v1), await bal(main, v2)]).toEqual([b1 - 4, b2 - 2]);
+    expect((await V.reconcile(sa, { fresh: true })).ok).toBe(true);
+  });
+
   it('«Барааг бүрэн өгсөн»: Check заавал; бараа агуулахаас жолоочид; нөөц суллагдана; зэрэг 2 дарахад нэг удаа; тулгалт 0', async () => {
     const ids = await dayWithOrders(2);
     const h = await H.createHandover(wh, { driverId: drv.id, date: today, orderIds: ids });
