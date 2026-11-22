@@ -562,6 +562,14 @@ function ProductsTab({ d, post }: { d: Detail; post: Post }) {
   const [from, setFrom] = useState(d.today);
   const [reason, setReason] = useState('');
   const [showOld, setShowOld] = useState(false);
+  // #204: оноосон барааны эхлэх огноог өөрчлөх (Супер админ)
+  const [fd, setFd] = useState(d.today);
+  const [fr, setFr] = useState('');
+  const changeFrom = (body: { ids?: number[]; all?: boolean }, label: string) => {
+    if (fr.trim().length < 5) { alert('Шалтгаанаа бичнэ үү (5+ тэмдэгт)'); return; }
+    if (!confirm(`${label} эхлэх огноог ${fd} болгох уу? ${fd} өдрөөс хойшхи борлуулалт нийлүүлэгчийн тооцоонд орно.`)) return;
+    void post({ action: 'fromDate', shopId: d.shop.id, fromDate: fd, reason: fr, ...body }, 'Эхлэх огноо өөрчлөгдлөө');
+  };
   useEffect(() => {
     if (!q.trim()) { setRes([]); return; }
     const t = setTimeout(async () => { try { setRes(await api(`/api/supplier?search=${encodeURIComponent(q)}`)); } catch { setRes([]); } }, 250);
@@ -588,17 +596,28 @@ function ProductsTab({ d, post }: { d: Detail; post: Post }) {
         <p className="text-[12px] text-subtle">Нэг бараа зөвхөн нэг нийлүүлэгчид — өөр дэлгүүрт оноогдсон барааг эхлээд тэндээс хасна.</p>
         {d.defaults ? <p className="min-w-0 break-words text-[12px] text-subtle">Нэмэхэд автоматаар тавигдах суутгал: {dedText(d.defaults)}{d.isSuperAdmin ? ' — «Нийлүүлэгч» хуудасны «Анхдагч суутгал» товчоор өөрчилнө.' : ''}</p> : null}
       </div>
+      {d.isSuperAdmin && list.some((p) => p.active && !p.toDate) ? (
+        <div data-from-date className="flex min-w-0 flex-col gap-2 rounded-2xl border border-warn/40 bg-warn-soft/40 p-3">
+          <b className="text-[13.5px]">Эхлэх огноо өөрчлөх</b>
+          <p className="text-[12px] text-muted">Хожуу нэмсэн бараанд өмнөх өдрүүдийн борлуулалтыг тооцуулах (хамгийн ихдээ 90 хоног). Тэр өдрүүдийг аль хэдийн өөр замаар төлөөгүй эсэхийг шалгаарай.</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <input type="date" value={fd} max={d.today} onChange={(e) => e.target.value && setFd(e.target.value)} className={inputCls} aria-label="Шинэ эхлэх огноо" />
+            <input value={fr} onChange={(e) => setFr(e.target.value)} maxLength={300} placeholder="Шалтгаан (жишээ: 11/19-өөс хойш энэ нийлүүлэгчийн бараа)" className={clsx(inputCls, 'min-w-0 flex-1')} aria-label="Шалтгаан" />
+            <Button size="sm" variant="primary" onClick={() => changeFrom({ all: true }, 'Энэ дэлгүүрийн БҮХ идэвхтэй барааны')}>Бүх барааг энэ өдрөөс</Button>
+          </div>
+        </div>
+      ) : null}
       <div className="flex items-center justify-between gap-2">
         <b className="text-[14px]">Хувиарласан бараа ба 1 ширхэгийн суутгал</b>
         <label className="flex items-center gap-1.5 text-[12.5px] text-muted"><input type="checkbox" checked={showOld} onChange={(e) => setShowOld(e.target.checked)} />Хасагдсаныг харуулах</label>
       </div>
       {list.length === 0 ? <p className="rounded-2xl border border-line bg-surface p-6 text-center text-[14px] text-muted">Бараа хувиарлагдаагүй</p> : null}
-      {list.map((p) => <ProductRow key={p.id} p={p} shopId={d.shop.id} post={post} canEdit={d.isSuperAdmin} />)}
+      {list.map((p) => <ProductRow key={p.id} p={p} shopId={d.shop.id} post={post} canEdit={d.isSuperAdmin} onFrom={d.isSuperAdmin && p.active && !p.toDate && p.fromDate !== fd ? () => changeFrom({ ids: [p.id] }, `«${p.name}»-ийн`) : undefined} fromLabel={fd} />)}
     </div>
   );
 }
 
-function ProductRow({ p, post, canEdit }: { p: Prod; shopId: number; post: Post; canEdit: boolean }) {
+function ProductRow({ p, post, canEdit, onFrom, fromLabel }: { p: Prod; shopId: number; post: Post; canEdit: boolean; onFrom?: () => void; fromLabel?: string }) {
   const [v, setV] = useState({ operatorCost: String(p.deduction.operatorCost), deliveryCost: String(p.deduction.deliveryCost), marketingCost: String(p.deduction.marketingCost), otherCost: String(p.deduction.otherCost), otherNote: p.deduction.otherNote });
   const per = ['operatorCost', 'deliveryCost', 'marketingCost', 'otherCost'].reduce((a, k) => a + Number(v[k as keyof typeof v] || 0), 0);
   const f = (k: keyof typeof v, label: string) => (
@@ -608,6 +627,7 @@ function ProductRow({ p, post, canEdit }: { p: Prod; shopId: number; post: Post;
     <div className={clsx('flex min-w-0 flex-col gap-3 rounded-2xl border border-line bg-surface p-4', !p.active && 'opacity-70')}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0"><b className="break-words">{p.name}</b><div className="break-words text-[12px] text-muted">{p.code} · {p.fromDate}-аас{p.toDate ? ` ${p.toDate} хүртэл (${p.endedByName ?? ''})` : ''} · {p.createdByName}</div></div>
+        {onFrom ? <Button size="sm" onClick={onFrom}>Эхлэх огноо → {fromLabel}</Button> : null}
         {p.active && !p.toDate ? <Button size="sm" onClick={() => { if (confirm(`«${p.name}»-ийг хасах уу? Өнөөдрийн падаан энэ дэлгүүрт тооцогдоно, маргаашаас хамаарахгүй.`)) void post({ action: 'unassign', id: p.id }, 'Хасагдлаа'); }}>Хасах</Button> : <Badge>{p.toDate ? `${p.toDate}-аас хасагдсан` : ''}</Badge>}
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">

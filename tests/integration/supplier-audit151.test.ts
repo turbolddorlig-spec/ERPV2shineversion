@@ -123,6 +123,26 @@ describe('#151 нийлүүлэгч', () => {
     await err(SP.transferDay(adm, { shopId: shop, date: '2021-05-05' }), 400, 'too_old');
   });
 
+  it('#204 оноосон барааны эхлэх огноог өөрчлөх: өчигдрийн борлуулалт тооцоонд орно; СА л; шалтгаан, 90 хоног; бүгд / бараа бүрээр', async () => {
+    const shop = await shopWith(); // өнөөдрөөс оноосон
+    const [a] = await out([[{ variantId: shoe, qty: 1 }]]);
+    await DR.deliverOrder(drv, a!, { payment: 'CASH' });
+    await shift(-1); // өчигдрийн падаан
+    const yest = U.ubDay(new Date(), -1);
+    expect((await SP.dayView(adm, shop, yest)).totals.qty).toBe(0); // өнөөдрөөс оноосон тул өчигдөр хоосон
+    await err(SP.changeFromDate(adm, { shopId: shop, all: true, fromDate: yest, reason: 'Хожуу бүртгэсэн' }), 403);
+    await err(SP.changeFromDate(sa, { shopId: shop, all: true, fromDate: yest }), 400, 'reason_required');
+    await err(SP.changeFromDate(sa, { shopId: shop, all: true, fromDate: '2020-01-01', reason: 'Хожуу бүртгэсэн' }), 400, 'too_old');
+    await err(SP.changeFromDate(sa, { shopId: shop, all: true, fromDate: U.ubDay(new Date(), 1), reason: 'Хожуу бүртгэсэн' }), 400);
+    expect(await SP.changeFromDate(sa, { shopId: shop, all: true, fromDate: yest, reason: '11/19-өөс энэ нийлүүлэгчийн бараа' })).toEqual({ changed: 2, skipped: [] });
+    expect((await SP.dayView(adm, shop, yest)).totals).toMatchObject({ qty: 1, sales: 20000, net: 20000 - 6000 });
+    expect(await db.auditLog.count({ where: { action: 'supplier.product_from_changed' } })).toBe(2);
+    // бараа бүрээр: оймсыг өнөөдөр болговол зөвхөн тэр өөрчлөгдөнө
+    const sockA = await db.supplierProduct.findFirstOrThrow({ where: { shopId: shop, productId: sockP } });
+    expect(await SP.changeFromDate(sa, { shopId: shop, ids: [sockA.id], fromDate: today, reason: 'Оймс өнөөдрөөс' })).toEqual({ changed: 1, skipped: [] });
+    expect(U.ymdOf((await db.supplierProduct.findUniqueOrThrow({ where: { id: sockA.id } })).fromDate)).toBe(today);
+  });
+
   it('бараа шинэ дэлгүүрт шилжихэд Супер админы суутгал дагана', async () => {
     const s1 = await shopWith('Дэлгүүр А');
     const a = await db.supplierProduct.findFirstOrThrow({ where: { shopId: s1, productId: shoeP } });

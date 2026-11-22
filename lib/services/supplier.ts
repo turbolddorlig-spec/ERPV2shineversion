@@ -642,6 +642,47 @@ export async function assignProduct(actor: UserActor, b: { shopId?: unknown; pro
   }
 }
 
+/**
+ * #204 (эзний шийдвэр): аль хэдийн оноосон барааны «Эхлэх огноо»-г өөрчлөх — бараа бүрээр (ids) эсвэл дэлгүүрийн бүх идэвхтэй бараа (all).
+ * Зөвхөн Супер админ, шалтгаан заавал, хамгийн ихдээ 90 хоногийн өмнө, өнөөдрөөс хойш биш; өмнө нь өөр дэлгүүрт хамаарч байсан хугацаатай давхцахгүй.
+ * Эрт болговол тэр өдрүүдийн борлуулалт нийлүүлэгчид нэмэгдэнэ (шилжүүлсэн өдөр бол буцаалт/нэмэгдлээр дараагийн шилжүүлэгт).
+ */
+export async function changeFromDate(actor: UserActor, b: { shopId?: unknown; ids?: unknown; all?: unknown; fromDate?: unknown; reason?: unknown }) {
+  if (!actor.roles.includes('SUPER_ADMIN')) throw forbidden('Эхлэх огноог зөвхөн Супер админ өөрчилнө');
+  const shopId = shopIdOf(b.shopId);
+  const fromDate = cleanDate(b.fromDate, 'Эхлэх огноо');
+  const today = ubDay();
+  if (fromDate > today) throw badRequest('Эхлэх огноо өнөөдрөөс хойш байж болохгүй');
+  if (fromDate < addDays(today, -SYNC_DAYS)) throw badRequest(`Хамгийн ихдээ ${SYNC_DAYS} хоногийн өмнөөс`, 'too_old');
+  const reason = cleanText(b.reason, 300);
+  if (reason.length < 5) throw badRequest('Эхлэх огноог өөрчлөх шалтгаанаа бичнэ үү', 'reason_required');
+  const ids = b.all === true ? null : Array.isArray(b.ids) ? [...new Set(b.ids.map(Number))].filter((n) => Number.isInteger(n) && n > 0) : [];
+  if (ids && !ids.length) throw badRequest('Бараа сонгоно уу');
+  const res = await db.$transaction(async (tx) => {
+    await lockShop(tx, shopId);
+    const rows = await tx.supplierProduct.findMany({ where: { shopId, toDate: null, ...(ids ? { id: { in: ids } } : {}) } });
+    if (!rows.length) throw notFound('Идэвхтэй бараа олдсонгүй');
+    const info = await productInfo(tx, rows.map((r) => r.productId));
+    let changed = 0; const skipped: string[] = [];
+    for (const r of rows) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(7301, ${r.productId}::int)`;
+      const old = ymdOf(r.fromDate);
+      if (old === fromDate) continue;
+      // Өмнө нь өөр (эсвэл энэ) дэлгүүрт хамаарч байсан хугацаатай давхцахгүй
+      const prev = await tx.supplierProduct.findFirst({ where: { productId: r.productId, id: { not: r.id }, toDate: { gt: dateOnly(fromDate) } }, include: { shop: { select: { name: true } } } });
+      const name = `${info.get(r.productId)?.code ?? ''} ${info.get(r.productId)?.name ?? ''}`.trim();
+      if (prev) { skipped.push(`${name} — ${ymdOf(prev.toDate!)} хүртэл «${prev.shop.name}»-д хамаарч байсан`); continue; }
+      await tx.supplierProduct.update({ where: { id: r.id }, data: { fromDate: dateOnly(fromDate) } });
+      await writeAudit(actor, 'supplier.product_from_changed', 'SupplierShop', String(shopId), { product: name, from: old, to: fromDate, reason }, tx, ['money']);
+      changed++;
+    }
+    return { changed, skipped };
+  });
+  // Шилжүүлсэн өдрүүдэд нөлөөлбөл буцаалт / нэмэгдэл үүснэ
+  await syncAdjustments(shopId);
+  return res;
+}
+
 /** Хасах — өнөөдрийн падаан хуучин дэлгүүрт тооцогдоно, маргаашаас хамаарахгүй */
 export async function unassignProduct(actor: UserActor, idIn: unknown) {
   assertAdmin(actor);

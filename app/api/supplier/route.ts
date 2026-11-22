@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
       case 'active': return json(await S.setShopActive(ctx.actor, b.shopId, b.active));
       case 'assign': return json(await S.assignProduct(ctx.actor, b));
       case 'unassign': return json(await S.unassignProduct(ctx.actor, b.id));
+      case 'fromDate': return json(await S.changeFromDate(ctx.actor, b));
       case 'deduction': return json(await S.saveDeduction(ctx.actor, b));
       case 'defaults': return json(await S.setDefaults(ctx.actor, b));
       case 'override': return json(await S.overrideDay(ctx.actor, b));
