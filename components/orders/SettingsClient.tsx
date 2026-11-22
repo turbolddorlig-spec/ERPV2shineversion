@@ -12,11 +12,13 @@ import { SmsSettings, type SmsData } from './SmsSettings';
 interface Resp {
   sms: SmsData | null;
   settings: { feeUB: number; feeRural: number; waitDays: number; assignHour: number; extraDailyMax?: number };
+  idle?: Idle;
   pages: { id: number; name: string; isActive: boolean; sortOrder: number }[];
   meta: { pixelId: string; tokenSet: boolean; tokenHint: string | null; testCode: string; counts: Record<string, number>; recent: { id: number; orderNumber?: string; total?: number; status: string; attempts: number; lastError: string | null; sentAt: string | null; createdAt: string }[] };
 }
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа гарлаа');
 const sec = 'flex min-w-0 flex-col gap-3 rounded-[18px] border border-line bg-surface p-4 shadow-card';
+interface Idle { enabled: boolean; start: string; lunchFrom: string; lunchTo: string; end: string; minToday: number; windowMin: number; maxInWindow: number }
 const META_LABEL: Record<string, string> = { PENDING: 'Дараалалд', SENT: 'Илгээсэн', FAILED: 'Алдаатай', SKIPPED: 'Алгассан' };
 
 export function SettingsClient() {
@@ -26,10 +28,13 @@ export function SettingsClient() {
   const [busy, setBusy] = useState<string | null>(null);
   const [metaOpen, setMetaOpen] = useState(false);
   const [fees, setFees] = useState({ feeUB: '', feeRural: '', waitDays: '', assignHour: '', extraDailyMax: '' });
+  // #202: операторын идэвхгүй байдлын сануулга
+  const [idle, setIdle] = useState({ enabled: true, start: '', lunchFrom: '', lunchTo: '', end: '', minToday: '', windowMin: '', maxInWindow: '' });
   const [newPage, setNewPage] = useState('');
   const [meta, setMeta] = useState({ pixelId: '', token: '', testCode: '' });
   const load = useCallback(() => api<Resp>('/api/settings/orders').then((r) => {
     setD(r);
+    if (r.idle) setIdle({ enabled: r.idle.enabled, start: r.idle.start, lunchFrom: r.idle.lunchFrom, lunchTo: r.idle.lunchTo, end: r.idle.end, minToday: String(r.idle.minToday), windowMin: String(r.idle.windowMin), maxInWindow: String(r.idle.maxInWindow) });
     setFees({ feeUB: String(r.settings.feeUB), feeRural: String(r.settings.feeRural), waitDays: String(r.settings.waitDays), assignHour: String(r.settings.assignHour), extraDailyMax: String(r.settings.extraDailyMax ?? 30) });
     setMeta({ pixelId: r.meta.pixelId ?? '', token: '', testCode: r.meta.testCode ?? '' });
   }).catch((e) => setError(msg(e))), []);
@@ -54,6 +59,24 @@ export function SettingsClient() {
           <Field id="extraDailyMax" label="Жолоочийн нэмэлт бараа — өдөрт (ширхэг)" inputMode="numeric" value={fees.extraDailyMax} onChange={(e) => setFees({ ...fees, extraDailyMax: e.target.value.replace(/\D/g, '').slice(0, 5) })} hint="Нэг жолооч өдөрт нийт хэдэн ширхэг нэмэлт бараа хүсч болох (нэг бараанаас 10 хүртэл)" />
         </div>
         <Button variant="primary" className="self-start" loading={busy === 'fees'} onClick={() => post('fees', { kind: 'fees', feeUB: Number(fees.feeUB), feeRural: Number(fees.feeRural), waitDays: Number(fees.waitDays), assignHour: Number(fees.assignHour), extraDailyMax: Number(fees.extraDailyMax) }, 'Хадгаллаа')}>Хадгалах</Button>
+      </section>
+
+      <section className={sec} data-idle-settings>
+        <h2 className="text-[16px] font-extrabold">Операторын идэвх — сануулга</h2>
+        <p className="text-[13px] text-subtle">Ажлын цагт (цайны цагаас бусад) өнөөдөр «ажиллаж байна» гэх тооноос олон захиалга үүсгэсэн оператор сүүлийн N минутад заасан тооноос бага захиалга үүсгэвэл Супер админ, Ахлах операторт «⏰ … шалгана уу» гэж харагдана.</p>
+        <label className="flex items-center gap-2 text-[14px] font-semibold"><input type="checkbox" className="h-5 w-5" checked={idle.enabled} onChange={(e) => setIdle({ ...idle, enabled: e.target.checked })} />Сануулга асаалттай</label>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Field id="idleStart" label="Ажил эхлэх" placeholder="09:30" value={idle.start} onChange={(e) => setIdle({ ...idle, start: e.target.value.slice(0, 5) })} />
+          <Field id="idleLunchFrom" label="Цай эхлэх" placeholder="12:00" value={idle.lunchFrom} onChange={(e) => setIdle({ ...idle, lunchFrom: e.target.value.slice(0, 5) })} />
+          <Field id="idleLunchTo" label="Цай дуусах" placeholder="13:00" value={idle.lunchTo} onChange={(e) => setIdle({ ...idle, lunchTo: e.target.value.slice(0, 5) })} />
+          <Field id="idleEnd" label="Ажил дуусах" placeholder="21:00" value={idle.end} onChange={(e) => setIdle({ ...idle, end: e.target.value.slice(0, 5) })} />
+        </div>
+        <div className="grid items-end gap-3 sm:grid-cols-3">
+          <Field id="idleMinToday" label="Өнөөдөр багадаа (захиалга)" inputMode="numeric" value={idle.minToday} onChange={(e) => setIdle({ ...idle, minToday: e.target.value.replace(/\D/g, '') })} />
+          <Field id="idleWindow" label="Шалгах хугацаа (мин)" inputMode="numeric" value={idle.windowMin} onChange={(e) => setIdle({ ...idle, windowMin: e.target.value.replace(/\D/g, '') })} />
+          <Field id="idleMax" label="Ийм ба доош бол сануулна" inputMode="numeric" value={idle.maxInWindow} onChange={(e) => setIdle({ ...idle, maxInWindow: e.target.value.replace(/\D/g, '') })} />
+        </div>
+        <Button variant="primary" className="self-start" loading={busy === 'idle'} onClick={() => post('idle', { kind: 'idle', enabled: idle.enabled, start: idle.start, lunchFrom: idle.lunchFrom, lunchTo: idle.lunchTo, end: idle.end, minToday: Number(idle.minToday), windowMin: Number(idle.windowMin), maxInWindow: Number(idle.maxInWindow) }, 'Хадгаллаа')}>Хадгалах</Button>
       </section>
 
       <section className={sec}>
