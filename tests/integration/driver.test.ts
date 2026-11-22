@@ -288,6 +288,19 @@ describe('асуудал, буцаалт, нэмэлт бараа, pickup, хя�
     await recOk();
   });
 
+  it('#197 ахлах оператор ӨӨРИЙН авсан захиалгын асуудлыг цуцалж чадна — буруу нь автоматаар «Опп-н алдаа» (бусдад тохохгүй)', async () => {
+    const olead = await actor(['OPERATOR_LEAD']);
+    const [c] = await outFor(drv, 1);
+    await db.order.update({ where: { id: c! }, data: { operatorId: olead.id, operatorName: olead.name } });
+    await DR.reportIssue(drv, c!, { type: 'UNCLEAR_ADDRESS', note: 'Хаяг олдохгүй байна' });
+    expect((await DR.listIssues(olead, {})).items.find((x) => x.id === c)?.mine).toBe(true);
+    await DR.resolveIssue(olead, c!, { action: 'cancel', note: 'Хаяг буруу авсан', fault: 'DRIVER' });
+    const oc = await db.order.findUniqueOrThrow({ where: { id: c! } });
+    expect([oc.issueStatus, oc.issueFault]).toEqual(['CANCELLED', 'OPERATOR']);
+    expect((await db.auditLog.findFirstOrThrow({ where: { action: 'order.issue_cancelled', entityId: String(c) } })).details).toMatchObject({ fault: 'OPERATOR', ownOrder: true });
+    await recOk();
+  });
+
   it('буцаалт хүлээн авах: буцаахаас илүүг болохгүй, хүргэлтийн барааг авахгүй, дутуу нь жолоочид үлдэнэ, давхар дарахад нэг удаа, зэрэг', async () => {
     const [a] = await outFor(drv, 2);
     await DR.driverCancel(drv, a, { note: 'Үйлчлүүлэгч болисон' }); // буцаах: v1 2, v2 1; нөгөө захиалга хүргэлтэд

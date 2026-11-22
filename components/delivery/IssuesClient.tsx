@@ -11,7 +11,7 @@ import { money, ubDateTime } from '@/lib/format';
 /** «Опп-руу явуулах» асуудлууд (хуучин ERP-ийн ОПП ахлах): «Зассан» эсвэл «Цуцлах» (хэний алдаа) */
 interface IOrder {
   id: number; number: string; phone: string; extraPhone: string | null; fullAddress: string; note: string | null; total: number; driverName: string | null; status: string; statusLabel: string;
-  operatorName: string; issueLabel: string | null; issueNote: string | null; issueAt: string | null; issueStatus: string | null; faultLabel: string | null;
+  operatorName: string; mine?: boolean; issueLabel: string | null; issueNote: string | null; issueAt: string | null; issueStatus: string | null; faultLabel: string | null;
   issueResolveNote: string | null; issueResolvedByName: string | null; issueResolvedAt: string | null; lines: { id: number; name: string; label: string; qty: number }[];
 }
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа гарлаа');
@@ -64,7 +64,8 @@ export function IssuesClient() {
 
 function ResolveModal({ o, action, onClose, onDone }: { o: IOrder; action: 'fix' | 'cancel'; onClose: () => void; onDone: () => Promise<void> }) {
   const [note, setNote] = useState('');
-  const [fault, setFault] = useState<string | null>(null);
+  // #197: өөрийн авсан захиалга — буруу нь автоматаар «Опп-н алдаа» (өөрчлөхгүй)
+  const [fault, setFault] = useState<string | null>(o.mine && action === 'cancel' ? 'OPERATOR' : null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   async function submit() {
@@ -76,7 +77,8 @@ function ResolveModal({ o, action, onClose, onDone }: { o: IOrder; action: 'fix'
       footer={<><Button variant="ghost" onClick={onClose}>Болих</Button><Button variant={action === 'fix' ? 'primary' : 'danger'} loading={busy} disabled={note.trim().length < 5 || (action === 'cancel' && !fault)} onClick={submit}>{action === 'fix' ? 'Зассан' : 'Цуцлах'}</Button></>}>
       <div className="flex flex-col gap-3">
         {action === 'cancel' ? <p className="text-[12.5px] text-muted">Опп / Маркетинг / Агуулахын алдаа бол хариуцагчид автоматаар торгууль тавигдана (Жолоочийн алдаа — торгуульгүй).</p> : null}
-        {action === 'cancel' ? <div className="grid grid-cols-2 gap-2">{FAULTS.map(([k, l]) => <Button key={k} variant={fault === k ? 'dark' : 'secondary'} onClick={() => setFault(k)}>{l}</Button>)}</div> : null}
+        {action === 'cancel' && o.mine ? <Notice tone="warn">Өөрийн авсан захиалга — буруу нь автоматаар <b>Опп-н алдаа</b> (таны) болно.</Notice> : null}
+        {action === 'cancel' ? <div className="grid grid-cols-2 gap-2">{FAULTS.map(([k, l]) => <Button key={k} variant={fault === k ? 'dark' : 'secondary'} disabled={!!o.mine && k !== 'OPERATOR'} onClick={() => setFault(k)}>{l}</Button>)}</div> : null}
         <textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} data-autofocus placeholder="Тайлбар (5+ тэмдэгт)" className="rounded-[10px] border border-line bg-surface px-3 py-2 text-[14px]" />
         {err ? <Notice>{err}</Notice> : null}
       </div>

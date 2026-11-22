@@ -514,8 +514,7 @@ export async function resolveIssue(actor: UserActor, idIn: unknown, input: { act
   const action = String(input.action ?? '');
   if (!['fix', 'cancel'].includes(action)) throw badRequest('Шийдвэрээ сонгоно уу');
   const note = requireReason(input.note);
-  const fault = action === 'cancel' ? (String(input.fault ?? '') as IssueFault) : null;
-  if (fault !== null && !(fault in FAULT_LABEL)) throw badRequest('Хэний алдаа болохыг сонгоно уу', 'fault_required');
+  let fault = action === 'cancel' ? (String(input.fault ?? '') as IssueFault) : null;
   const r = await inTx(async (tx) => {
     const locked = await lockOrderDrivers(tx, id);
     if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
@@ -527,8 +526,11 @@ export async function resolveIssue(actor: UserActor, idIn: unknown, input: { act
       if (!same) throw conflict(`Энэ асуудлыг ${o.issueResolvedByName ?? 'өөр хүн'} аль хэдийн «${o.issueStatus === 'FIXED' ? 'Зассан' : o.issueStatus === 'CANCELLED' ? 'Цуцалсан' : 'шийдсэн'}» гэж шийдсэн байна`, 'already_resolved');
       return { order: o, duplicate: true, penaltyWarning: null as string | null };
     }
-    // Аудит #150: өөрийн авсан захиалгын асуудлыг өөрөө «Цуцлах»-аар шийдэж бурууг бусдад хуваарилахгүй (Супер админаас бусад)
-    if (action === 'cancel' && o.operatorId === actor.id && !actor.roles.includes('SUPER_ADMIN')) throw forbidden('Өөрийн авсан захиалгын асуудлыг өөр хүн (ахлах оператор, админ) шийднэ');
+    // Аудит #150 → #197 (эзний шийдвэр): өөрийн авсан захиалгын асуудлыг өөрөө цуцалж болно, гэхдээ буруу нь ҮРГЭЛЖ өөрийнх
+    // (оператор) — бусдад тохох боломжгүй (Супер админаас бусад)
+    const ownForced = action === 'cancel' && o.operatorId === actor.id && !actor.roles.includes('SUPER_ADMIN');
+    if (ownForced) fault = 'OPERATOR';
+    if (fault !== null && !(fault in FAULT_LABEL)) throw badRequest('Хэний алдаа болохыг сонгоно уу', 'fault_required');
     let penaltyWarning: string | null = null;
     const base = { issueResolvedAt: new Date(), issueResolvedByName: actor.name, issueResolveNote: note };
     if (action === 'fix') {
@@ -540,7 +542,7 @@ export async function resolveIssue(actor: UserActor, idIn: unknown, input: { act
       // Модуль 7а (#90): хэний алдаагаар автомат торгууль (хуучин шиг; жолоочийн алдаа → торгуульгүй)
       penaltyWarning = await autoPenaltyForIssue(tx, actor, o, fault!);
     }
-    await writeAudit(actor, action === 'fix' ? 'order.issue_fixed' : 'order.issue_cancelled', 'Order', String(id), { number: o.number, note, ...(fault ? { fault } : {}) }, tx, ['order', 'delivery', 'issue']);
+    await writeAudit(actor, action === 'fix' ? 'order.issue_fixed' : 'order.issue_cancelled', 'Order', String(id), { number: o.number, note, ...(fault ? { fault } : {}), ...(ownForced ? { ownOrder: true } : {}) }, tx, ['order', 'delivery', 'issue']);
     return { order: await tx.order.findUniqueOrThrow({ where: { id } }), duplicate: false, penaltyWarning };
   });
   issueCountCache = null; bust();
@@ -555,7 +557,8 @@ export async function listIssues(actor: UserActor, p: { status?: string; page?: 
   const rows = await db.order.findMany({ where, orderBy: pending ? { issueAt: 'asc' } : { issueResolvedAt: 'desc' }, skip: (page - 1) * 50, take: 51, include: { lines: true } });
   return {
     page, hasMore: rows.length > 50, canResolve: canResolveIssues(actor.roles), pending: await pendingIssueCount(),
-    items: rows.slice(0, 50).map((o) => ({ ...serializeOrder(o), issueLabel: o.issueType ? ISSUE_LABEL[o.issueType] : null, faultLabel: o.issueFault ? FAULT_LABEL[o.issueFault] : null })),
+    // #197: өөрийн авсан захиалга — цуцлахад буруу нь автоматаар «Опп-н алдаа»
+    items: rows.slice(0, 50).map((o) => ({ ...serializeOrder(o), mine: o.operatorId === actor.id && !actor.roles.includes('SUPER_ADMIN'), issueLabel: o.issueType ? ISSUE_LABEL[o.issueType] : null, faultLabel: o.issueFault ? FAULT_LABEL[o.issueFault] : null })),
   };
 }
 
