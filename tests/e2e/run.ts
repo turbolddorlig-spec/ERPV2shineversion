@@ -556,6 +556,14 @@ async function main() {
     check('банк: ахлах оператор CSV экспорт татахгүй → 403 (#173)', exp6ol.status === 403, String(exp6ol.status));
     const exp6 = await req('/api/bank/export', { cookie: acc6.cookie });
     check('банк: CSV экспорт (нягтлан)', exp6.status === 200 && exp6.text.includes('Огноо,Утга,Дүн'), String(exp6.status));
+    // #211: мөнгө буцаах хүсэлт — оператор, нягтлан жагсаалт харна; оператор эцэслэхгүй (403); буруу данс 400
+    const rf1 = await req('/api/bank/refunds', { cookie: op4.cookie });
+    const rf2 = await req('/api/bank/refunds?status=DONE', { cookie: acc6.cookie });
+    const rf3 = await req('/api/bank/refunds', { cookie: op4.cookie, method: 'POST', body: { action: 'done', id: 1 } });
+    const rf4 = await req('/api/bank/refunds', { cookie: acc6.cookie, method: 'POST', body: { action: 'create', kind: 'TX', id: 1, bankName: 'Хаан', accountNo: 'x', accountName: 'Бат', reason: 'туршилт' } });
+    check('банк: буцаах хүсэлт — жагсаалт 200, оператор эцэслэхгүй 403, нягтлан хүсэлт бичихгүй 403', rf1.status === 200 && rf2.status === 200 && rf3.status === 403 && rf4.status === 403, `${rf1.status} ${rf2.status} ${rf3.status} ${rf4.status}`);
+    const rf5 = await req('/api/bank/refunds', { cookie: op4.cookie, method: 'POST', body: { action: 'create', kind: 'TX', id: 1, bankName: 'Хаан', accountNo: 'x', accountName: 'Бат', reason: 'туршилт' } });
+    check('банк: буцаах хүсэлт — буруу дансны дугаар 400 (мөнгө хөдлөхгүй)', rf5.status === 400, `${rf5.status} ${rf5.text.slice(0, 80)}`);
     const rec6 = JSON.parse((await req('/api/stock/reconcile?fresh=1', { cookie: adm.cookie })).text);
     check('Модуль 6-ын дараа тулгалт: журнал = үлдэгдэл', rec6.ok === true, JSON.stringify(rec6).slice(0, 120));
     }

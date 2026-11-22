@@ -155,3 +155,7 @@ export const canManagePay = (roles: Role[]) => has(roles, ['SUPER_ADMIN']);
 export const canBankImport = (roles: Role[]) => canEdit(roles, 'bank-import');
 /** #173 (эзний шийдвэр): Gmail тохиргоо, CSV (Excel) экспорт — оператор, ахлах операторт харагдахгүй (СА, Админ, нягтлан) */
 export const canBankSetup = (roles: Role[]) => has(roles, ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTING']);
+
+/** #211 (эзэн): мөнгө буцаах хүсэлт — Оператор, Ахлах оператор (мөн Супер админ) бичнэ; Супер админ, Нягтлан эцэслэнэ / татгалзана */
+export const canRequestRefund = (roles: Role[]) => has(roles, ['OPERATOR', 'OPERATOR_LEAD', 'SUPER_ADMIN']);
+export const canDecideRefund = (roles: Role[]) => has(roles, ['SUPER_ADMIN', 'ACCOUNTING']);

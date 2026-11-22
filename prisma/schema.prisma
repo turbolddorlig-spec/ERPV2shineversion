@@ -1610,3 +1610,30 @@ model SupplierOwnCost {
 
   @@id([shopId, productId])
 }
+
+/// #211 (эзэн): мөнгө буцаах хүсэлт — Оператор / Ахлах оператор данс, шалтгаан бичнэ; Супер админ / Нягтлан «Буцаасан» эсвэл «Татгалзсан»
+model RefundRequest {
+  id                Int       @id @default(autoincrement())
+  /// TX (таараагүй / давхардсан гүйлгээ) · EXCESS (банкны илүү төлөлт) · ORDER_EXCESS (банкгүй илүү) · PAID_CANCELLED (төлсөн ч цуцлагдсан)
+  kind              String
+  bankTransactionId Int?
+  orderId           Int?
+  orderNumber       String?
+  amount            Int
+  bankName          String
+  accountNo         String
+  accountName       String
+  reason            String
+  /// PENDING · DONE · REJECTED
+  status            String    @default("PENDING")
+  requestedById     String
+  requestedByName   String
+  requestedAt       DateTime  @default(now())
+  decidedByName     String?
+  decidedAt         DateTime?
+  decisionNote      String?
+
+  @@index([status, id])
+  @@index([bankTransactionId])
+  @@index([orderId])
+}

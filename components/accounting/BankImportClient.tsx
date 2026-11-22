@@ -13,9 +13,12 @@ import { GmailSettings } from './GmailSettings';
  * Банкны импорт (Модуль 6, хуучнаар нь, #83; #148 — зөвхөн Gmail): Хаан банкны Gmail → утас + дүнгээр «Төлбөр хүлээж буй» захиалга «Мөнгө орсон».
  * Статистик, табууд, хайлт, «Гараар тааруулах», «Буцаасан», «Дүн өөрчлөгдсөн», CSV экспорт.
  */
-interface ManualEx { id: number; number: string; phone: string; total: number; paidAmount: number; excess: number; why: string }
-interface Tx { why?: string | null; id: number; txDate: string; description: string; amount: number; phone: string | null; status: string; statusLabel: string; isDuplicate: boolean; refunded: boolean; excess?: number; excessRefunded: number; excessRefundedByName: string | null; source: string; matchedByName: string | null; importedByName: string; order: { id: number; number: string; total: number; status: string; prepaid: boolean } | null }
-interface ListResp { page: number; total: number; pages: number; canEdit: boolean; canSetup?: boolean; items: Tx[]; manualExcess?: ManualEx[] }
+interface RefundReq { id: number; requestedByName: string; requestedAt: string; bankName: string; accountNo: string; accountName: string; amount: number }
+type RefundKind = 'TX' | 'EXCESS' | 'ORDER_EXCESS' | 'PAID_CANCELLED';
+interface RefundTarget { kind: RefundKind; id: number; amount: number; title: string }
+interface ManualEx { id: number; number: string; phone: string; total: number; paidAmount: number; excess: number; why: string; refundReq?: RefundReq | null }
+interface Tx { why?: string | null; id: number; txDate: string; description: string; amount: number; phone: string | null; status: string; statusLabel: string; isDuplicate: boolean; refunded: boolean; excess?: number; excessRefunded: number; excessRefundedByName: string | null; source: string; matchedByName: string | null; importedByName: string; refundReq?: RefundReq | null; order: { id: number; number: string; total: number; status: string; prepaid: boolean } | null }
+interface ListResp { page: number; total: number; pages: number; canEdit: boolean; canSetup?: boolean; canRequestRefund?: boolean; items: Tx[]; manualExcess?: ManualEx[] }
 type Agg = { count: number; amount: number };
 interface Stats { total: Agg; matched: Agg; unmatched: Agg; partial: Agg; excess: Agg; duplicate: Agg; refunded: Agg }
 interface Gmail { configured: boolean; canEdit: boolean; canSetup?: boolean; settings: null | { email: string; sender: string; autoSync: boolean; minutes: number; days: number; lastSyncAt: string | null; lastResult: string | null; lastOk: boolean | null } }
@@ -24,13 +27,20 @@ const TABS: [string, string, keyof Stats | null][] = [['all', 'Бүгд', 'total
 const TONE: Record<string, 'ok' | 'bad' | 'warn' | 'info' | 'neutral' | 'accent'> = { MATCHED: 'ok', UNMATCHED: 'bad', PARTIAL_PAYMENT: 'warn', EXCESS_AMOUNT: 'info', DUPLICATE: 'neutral' };
 const ST_L: Record<string, string> = { PENDING_PAYMENT: 'Төлбөр хүлээж буй', NEW: 'Шинэ', ASSIGNED: 'Оноосон', OUT_FOR_DELIVERY: 'Хүргэлтэд', DELIVERED: 'Хүргэсэн', CANCELLED: 'Цуцлагдсан' };
 
-interface PaidCancel { id: number; number: string; phone: string; total: number; paid: number; cancelReason: string | null; cancelNote: string | null; cancelledByName: string | null; cancelledAt: string | null; driverName: string | null }
+interface PaidCancel { id: number; number: string; phone: string; total: number; paid: number; cancelReason: string | null; cancelNote: string | null; cancelledByName: string | null; cancelledAt: string | null; driverName: string | null; refundReq?: RefundReq | null }
 
 export function BankImportClient() {
   // #201: дээд талын анхааруулгаас ?tab=UNMATCHED гэх мэтээр шууд тухайн табыг нээнэ
-  const [tab, setTab] = useState(() => { const t = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('tab') : null; return t && (t === 'paidCancelled' || TABS.some(([k]) => k === t)) ? t : 'all'; });
+  // #211: URL-аас табыг mount-ийн дараа уншина (SSR-тэй зөрөхөөс сэргийлнэ — өмнө нь «Бүгд» тодорч харагддаг байв)
+  const [tab, setTab] = useState<string | null>(null);
+  useEffect(() => { const t = new URLSearchParams(window.location.search).get('tab'); setTab(t && (t === 'paidCancelled' || t === 'refunds' || TABS.some(([k]) => k === t)) ? t : 'all'); }, []);
   // Аудит #155: төлсөн ч жолооч / асуудлаар цуцлагдсан — зөвхөн Супер админд (403 бол таб харагдахгүй)
   const [pc, setPc] = useState<PaidCancel[] | null>(null);
+  const [pcResolve, setPcResolve] = useState(false);
+  // #211: мөнгө буцаах хүсэлт
+  const [rfTarget, setRfTarget] = useState<RefundTarget | null>(null);
+  const [rfPending, setRfPending] = useState<number | null>(null);
+  const [rfVer, setRfVer] = useState(0);
   const [pcNote, setPcNote] = useState<{ id: number; number: string; note: string } | null>(null);
   const [q, setQ] = useState('');
   const [qd, setQd] = useState('');
@@ -47,14 +57,17 @@ export function BankImportClient() {
   const [match, setMatch] = useState<Tx | null>(null);
   const [gset, setGset] = useState(false);
   useEffect(() => { const t = setTimeout(() => { setQd(q); setPage(1); }, 300); return () => clearTimeout(t); }, [q]);
-  const qs = useCallback(() => new URLSearchParams({ ...(tab !== 'all' && tab !== 'changes' && tab !== 'paidCancelled' ? { tab } : {}), ...(qd ? { q: qd } : {}), ...(from ? { from } : {}), ...(to ? { to } : {}) }), [tab, qd, from, to]);
+  const qs = useCallback(() => new URLSearchParams({ ...(tab && tab !== 'all' && tab !== 'changes' && tab !== 'paidCancelled' && tab !== 'refunds' ? { tab } : {}), ...(qd ? { q: qd } : {}), ...(from ? { from } : {}), ...(to ? { to } : {}) }), [tab, qd, from, to]);
   const load = useCallback(async () => {
+    if (tab === null) return;
     try {
       const p = qs();
       const [s, g] = await Promise.all([api<Stats>(`/api/bank/stats?${new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}`), api<Gmail>('/api/bank/gmail')]);
       setStats(s); setGmail(g);
-      api<{ items: PaidCancel[] }>('/api/bank/paid-cancelled').then((r) => setPc(r.items)).catch(() => setPc(null));
-      if (tab === 'paidCancelled') { /* жагсаалтыг дээр уншсан */ }
+      api<{ items: PaidCancel[]; canResolve?: boolean }>('/api/bank/paid-cancelled').then((r) => { setPc(r.items); setPcResolve(!!r.canResolve); }).catch(() => setPc(null));
+      api<{ counts: Record<string, number> }>('/api/bank/refunds?status=PENDING').then((r) => setRfPending(r.counts.PENDING ?? 0)).catch(() => setRfPending(null));
+      setRfVer((v) => v + 1);
+      if (tab === 'paidCancelled' || tab === 'refunds') { /* жагсаалтыг тусад нь уншина */ }
       else if (tab === 'changes') setChanges(await api(`/api/bank/price-changes?page=${page}`));
       else { p.set('page', String(page)); setData(await api(`/api/bank?${p}`)); }
       setErr(null);
@@ -80,6 +93,11 @@ export function BankImportClient() {
     try { await api(`/api/bank/${t.id}/refund`, { method: 'POST', json: { refunded: true } }); await load(); } catch (e) { setErr(msg(e)); }
   };
   const canEdit = !!data?.canEdit || !!gmail?.canEdit;
+  const canReq = !!data?.canRequestRefund;
+  /** #211: «💸 Буцаах хүсэлт» товч эсвэл хүлээгдэж буй хүсэлтийн тэмдэг */
+  const reqCell = (r: RefundReq | null | undefined, t: RefundTarget | null) => r
+    ? <span data-refund-pending className="inline-block max-w-[220px] rounded-lg bg-warn-soft px-2 py-1 text-left text-[11.5px] font-semibold text-warn [overflow-wrap:anywhere]">⏳ Буцаах хүсэлт · {r.requestedByName}<span className="block font-normal">{r.bankName} {r.accountNo} · {r.accountName}</span></span>
+    : t && canReq ? <Button size="sm" variant="secondary" data-refund-request onClick={() => setRfTarget(t)}>💸 Буцаах хүсэлт</Button> : null;
   // #173: Gmail тохиргоо, CSV экспорт — оператор, ахлах операторт харагдахгүй
   const canSetup = !!data?.canSetup || !!gmail?.canSetup || !!gmail?.canEdit;
 
@@ -106,8 +124,9 @@ export function BankImportClient() {
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex max-w-full gap-1.5 overflow-x-auto pb-1">{TABS.map(([k, l]) => <button key={k} onClick={() => { setTab(k); setPage(1); }} className={clsx('h-9 shrink-0 rounded-full border px-3 text-[13px] font-bold', tab === k ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface text-muted')}>{l}</button>)}
-          {pc ? <button onClick={() => { setTab('paidCancelled'); setPage(1); }} className={clsx('h-9 shrink-0 rounded-full border px-3 text-[13px] font-bold', tab === 'paidCancelled' ? 'border-ink bg-ink text-on-ink' : pc.length ? 'border-warn bg-warn-soft text-warn' : 'border-line bg-surface text-muted')}>💰 Төлсөн ч цуцлагдсан ({pc.length})</button> : null}</div>
-        {tab !== 'changes' && tab !== 'paidCancelled' ? <div className="ml-auto flex flex-wrap gap-2">
+          {pc ? <button onClick={() => { setTab('paidCancelled'); setPage(1); }} className={clsx('h-9 shrink-0 rounded-full border px-3 text-[13px] font-bold', tab === 'paidCancelled' ? 'border-ink bg-ink text-on-ink' : pc.length ? 'border-warn bg-warn-soft text-warn' : 'border-line bg-surface text-muted')}>💰 Төлсөн ч цуцлагдсан ({pc.length})</button> : null}
+          {rfPending !== null ? <button data-tab-refunds onClick={() => { setTab('refunds'); setPage(1); }} className={clsx('h-9 shrink-0 rounded-full border px-3 text-[13px] font-bold', tab === 'refunds' ? 'border-ink bg-ink text-on-ink' : rfPending ? 'border-warn bg-warn-soft text-warn' : 'border-line bg-surface text-muted')}>💸 Буцаах хүсэлт ({rfPending})</button> : null}</div>
+        {tab !== 'changes' && tab !== 'paidCancelled' && tab !== 'refunds' ? <div className="ml-auto flex flex-wrap gap-2">
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Утга, утас, дүн" className="h-9 w-[180px] rounded-[10px] border border-line bg-surface px-2 text-[13.5px]" aria-label="Хайх" />
           <input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPage(1); }} className="h-9 rounded-[10px] border border-line bg-surface px-2 text-[13px]" aria-label="Эхлэх огноо" />
           <input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }} className="h-9 rounded-[10px] border border-line bg-surface px-2 text-[13px]" aria-label="Дуусах огноо" />
@@ -123,11 +142,13 @@ export function BankImportClient() {
               <tr key={c.id}><td className="px-3 py-2 font-bold">{c.number}</td><td className="px-3 py-2">{c.phone}</td><td className="px-3 py-2 text-right">{money(c.total)}</td><td className="px-3 py-2 text-right font-bold">{money(c.paid)}</td>
                 <td className="max-w-[200px] px-3 py-2 [overflow-wrap:anywhere]">{c.cancelledByName ?? '—'}{c.driverName && c.driverName !== c.cancelledByName ? ` (жолооч ${c.driverName})` : ''}<div className="text-[12px] text-muted">{c.cancelledAt ? ubDateTime(c.cancelledAt) : ''}</div></td>
                 <td className="max-w-[260px] px-3 py-2 [overflow-wrap:anywhere]">{c.cancelReason === 'ISSUE' ? 'Асуудал: ' : c.cancelReason === 'DRIVER_CANCELLED' ? 'Жолооч: ' : ''}{c.cancelNote ?? ''}</td>
-                <td className="px-3 py-2 text-right"><Button size="sm" variant="secondary" onClick={() => setPcNote({ id: c.id, number: c.number, note: '' })}>Шийдсэн</Button></td></tr>
+                <td className="px-3 py-2 text-right"><div className="flex flex-wrap justify-end gap-1.5">{reqCell(c.refundReq, { kind: 'PAID_CANCELLED', id: c.id, amount: c.paid, title: `№${c.number} · ${c.phone}` })}{pcResolve ? <Button size="sm" variant="secondary" onClick={() => setPcNote({ id: c.id, number: c.number, note: '' })}>Шийдсэн</Button> : null}</div></td></tr>
             ))}</tbody></table></div>
           {pc && !pc.length ? <p className="px-4 py-10 text-center text-muted">Ийм захиалга алга</p> : null}
           {pc && pc.length ? <div className="border-t border-line"><Pager page={page} pages={Math.max(1, Math.ceil(pc.length / 25))} total={pc.length} unit="захиалга" onPage={setPage} /></div> : null}
         </div>
+      ) : tab === 'refunds' ? (
+        <RefundsTab ver={rfVer} onChanged={() => void load()} onInfo={setInfo} />
       ) : tab === 'changes' ? (
         <div className="overflow-hidden rounded-[16px] border border-line bg-surface shadow-card">
           <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-[13px]">
@@ -148,7 +169,8 @@ export function BankImportClient() {
               {data.manualExcess.map((o) => (
                 <li key={o.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
                   <span className="min-w-0 flex-1 [overflow-wrap:anywhere]"><b>№{o.number}</b> · {o.phone} · төлсөн {money(o.paidAmount)} / дүн {money(o.total)}<span className="block text-[12px] text-muted">{o.why}</span></span>
-                  {canEdit ? <Button size="sm" variant="primary" onClick={() => void refundManual(o)}>Илүүг буцаасан ({o.excess.toLocaleString('en-US')}₮)</Button> : null}
+                  <span className="flex flex-wrap gap-1.5">{reqCell(o.refundReq, { kind: 'ORDER_EXCESS', id: o.id, amount: o.excess, title: `№${o.number} · ${o.phone} · илүү төлөлт` })}
+                  {canEdit ? <Button size="sm" variant="primary" onClick={() => void refundManual(o)}>Илүүг буцаасан ({o.excess.toLocaleString('en-US')}₮)</Button> : null}</span>
                 </li>
               ))}
             </ul>
@@ -166,7 +188,8 @@ export function BankImportClient() {
                 <td className="px-3 py-2">{t.phone ?? '—'}</td>
                 <td className="px-3 py-2"><Badge tone={t.refunded ? 'accent' : TONE[t.isDuplicate ? 'DUPLICATE' : t.status] ?? 'neutral'}>{t.statusLabel}</Badge>{t.matchedByName ? <span className="block text-[11px] text-subtle">{t.matchedByName}</span> : null}</td>
                 <td className="max-w-[260px] px-3 py-2">{t.order ? <><b>{t.order.number}</b><span className="block text-[11.5px] text-subtle">{money(t.order.total)} · {ST_L[t.order.status] ?? t.order.status}</span>{t.excess && t.why ? <span className="block text-[11.5px] text-info [overflow-wrap:anywhere]">{t.why}</span> : null}</> : '—'}</td>
-                <td className="px-3 py-2 text-right">{data.canEdit ? <div className="flex justify-end gap-1.5">{t.refunded ? <span className="text-[12px] text-subtle">Буцаасан — өөрчлөхгүй</span>
+                <td className="px-3 py-2 text-right"><div className="flex flex-wrap justify-end gap-1.5">{t.refunded ? null : reqCell(t.refundReq, t.order ? (t.excess ? { kind: 'EXCESS', id: t.id, amount: t.excess, title: `№${t.order.number} · илүү төлөлт` } : null) : { kind: 'TX', id: t.id, amount: t.amount, title: `${ubDateTime(t.txDate)} · ${t.isDuplicate ? 'давхардсан' : 'таараагүй'} гүйлгээ` })}</div>
+                  {data.canEdit ? <div className="mt-1.5 flex justify-end gap-1.5">{t.refunded ? <span className="text-[12px] text-subtle">Буцаасан — өөрчлөхгүй</span>
                   : t.order ? (t.excess ? <Button size="sm" variant="primary" data-refund-excess onClick={() => void refundExcess(t)}>Илүүг буцаасан ({t.excess.toLocaleString('en-US')}₮)</Button>
                     : <span className="text-[12px] text-subtle">{t.excessRefunded ? `Илүү ${t.excessRefunded.toLocaleString('en-US')}₮ буцаасан${t.excessRefundedByName ? ` · ${t.excessRefundedByName}` : ''}` : 'Таарсан — өөрчлөхгүй'}</span>)
                   : <><Button size="sm" onClick={() => setMatch(t)}>Гараар тааруулах</Button><Button size="sm" variant="ghost" onClick={() => void refund(t)}>Буцаасан</Button></>}</div> : null}</td>
@@ -187,6 +210,7 @@ export function BankImportClient() {
           <textarea value={pcNote.note} onChange={(e) => setPcNote({ ...pcNote, note: e.target.value })} rows={3} maxLength={300} className="w-full rounded-[10px] border border-line bg-surface p-2 text-[13.5px]" placeholder="Жишээ: мөнгийг буцаасан / дараагийн захиалгад тааруулсан" aria-label="Тайлбар" />
         </Modal>
       ) : null}
+      {rfTarget ? <RefundRequestDialog target={rfTarget} onClose={() => setRfTarget(null)} onDone={async () => { setRfTarget(null); setInfo('Буцаах хүсэлт илгээгдлээ — Супер админ / Нягтлан шалгаад мөнгийг шилжүүлнэ'); await load(); }} /> : null}
       {match ? <MatchDialog t={match} onClose={() => setMatch(null)} onDone={async (m) => { setMatch(null); setInfo(m); await load(); }} /> : null}
       {gset ? <GmailSettingsModal onClose={() => setGset(false)} onDone={() => void load()} /> : null}
     </div>
@@ -268,6 +292,95 @@ function Pager({ page, pages, total, unit, onPage }: { page: number; pages: numb
         ))}
         <Button size="sm" disabled={page >= pages} onClick={() => onPage(page + 1)} aria-label="Дараах">›</Button>
       </div>
+    </div>
+  );
+}
+
+/** #211: «💸 Буцаах хүсэлт» — банк, данс, эзний нэр, шалтгаан (оператор, ахлах оператор) */
+function RefundRequestDialog({ target, onClose, onDone }: { target: RefundTarget; onClose: () => void; onDone: () => void }) {
+  const [f, setF] = useState({ bankName: '', accountNo: '', accountName: '', reason: '' });
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const acc = f.accountNo.replace(/[\s-]/g, '').toUpperCase();
+  const accOk = /^(MN\d{18}|\d{6,20})$/.test(acc);
+  const ok = f.bankName.trim().length >= 2 && accOk && f.accountName.trim().length >= 2 && f.reason.trim().length >= 5;
+  const inp = 'h-11 w-full rounded-xl border border-line bg-surface px-3 text-[14px]';
+  const send = async () => {
+    setBusy(true); setErr(null);
+    try { await api('/api/bank/refunds', { method: 'POST', json: { action: 'create', kind: target.kind, id: target.id, ...f } }); onDone(); }
+    catch (e) { setErr(msg(e)); } finally { setBusy(false); }
+  };
+  return (
+    <Modal open onClose={onClose} title="💸 Мөнгө буцаах хүсэлт" subtitle={`${target.title} · ${money(target.amount)}`}
+      footer={<><Button onClick={onClose}>Болих</Button><Button variant="primary" loading={busy} disabled={!ok} onClick={() => void send()} data-refund-send>Хүсэлт илгээх</Button></>}>
+      <div className="flex flex-col gap-3 text-[13.5px]" data-refund-form>
+        {err ? <Notice>{err}</Notice> : null}
+        <p className="rounded-xl bg-surface2 px-3 py-2 text-muted">Буцаах дүн: <b className="text-ink">{money(target.amount)}</b> (систем тооцно). Супер админ эсвэл Нягтлан шалгаад мөнгийг шилжүүлнэ.</p>
+        <label className="flex flex-col gap-1"><span className="font-semibold">Банк</span>
+          <input list="refund-banks" value={f.bankName} onChange={(e) => setF({ ...f, bankName: e.target.value })} maxLength={60} className={inp} placeholder="Жишээ: Хаан банк" data-autofocus />
+          <datalist id="refund-banks">{['Хаан банк', 'Голомт банк', 'Төрийн банк', 'Худалдаа хөгжлийн банк', 'Хас банк', 'Капитрон банк', 'Ариг банк', 'Богд банк', 'Тээвэр хөгжлийн банк', 'М банк', 'Чингис хаан банк'].map((b) => <option key={b} value={b} />)}</datalist></label>
+        <label className="flex flex-col gap-1"><span className="font-semibold">Дансны дугаар</span>
+          <input value={f.accountNo} onChange={(e) => setF({ ...f, accountNo: e.target.value })} maxLength={30} className={inp} placeholder="Зөвхөн цифр эсвэл MN… IBAN" />
+          {f.accountNo && !accOk ? <span className="text-[12px] text-bad-ink">Зөвхөн цифр (6–20 орон) эсвэл MN + 18 цифр</span> : null}</label>
+        <label className="flex flex-col gap-1"><span className="font-semibold">Дансны эзний нэр</span>
+          <input value={f.accountName} onChange={(e) => setF({ ...f, accountName: e.target.value })} maxLength={100} className={inp} /></label>
+        <label className="flex flex-col gap-1"><span className="font-semibold">Яагаад буцаах вэ</span>
+          <textarea value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} rows={3} maxLength={500} className="w-full rounded-xl border border-line bg-surface p-3 text-[14px]" placeholder="Жишээ: үйлчлүүлэгч захиалгаа цуцалсан, мөнгөө буцааж авна" /></label>
+      </div>
+    </Modal>
+  );
+}
+
+interface RefundRow { id: number; kind: string; kindLabel: string; orderNumber: string | null; amount: number; bankName: string; accountNo: string; accountName: string; reason: string; status: string; requestedByName: string; requestedAt: string; decidedByName: string | null; decidedAt: string | null; decisionNote: string | null; tx: { id: number; txDate: string; amount: number } | null }
+
+/** #211: «💸 Буцаах хүсэлт» таб — хүлээгдэж буй / буцаасан / татгалзсан; Супер админ, Нягтлан шийднэ */
+function RefundsTab({ ver, onChanged, onInfo }: { ver: number; onChanged: () => void; onInfo: (m: string) => void }) {
+  const [st, setSt] = useState<'PENDING' | 'DONE' | 'REJECTED'>('PENDING');
+  const [page, setPage] = useState(1);
+  const [d, setD] = useState<{ page: number; total: number; pages: number; canDecide: boolean; counts: Record<string, number>; items: RefundRow[] } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [rej, setRej] = useState<{ id: number; note: string } | null>(null);
+  const load = useCallback(async () => { try { setD(await api(`/api/bank/refunds?status=${st}&page=${page}`)); setErr(null); } catch (e) { setErr(msg(e)); } }, [st, page]);
+  useEffect(() => { void load(); }, [load, ver]);
+  const act = async (json: Record<string, unknown>, ok: string) => {
+    setBusy(true); setErr(null);
+    try { await api('/api/bank/refunds', { method: 'POST', json }); onInfo(ok); setRej(null); await load(); onChanged(); }
+    catch (e) { setErr(msg(e)); } finally { setBusy(false); }
+  };
+  const done = (r: RefundRow) => {
+    if (!confirm(`${money(r.amount)}-ийг ${r.bankName} ${r.accountNo} (${r.accountName}) дансанд шилжүүлсэн үү?\n\nАнхаар: «Буцаасан» болсны дараа болиулах боломжгүй.`)) return;
+    void act({ action: 'done', id: r.id }, `${money(r.amount)} буцаасан гэж тэмдэглэлээ`);
+  };
+  const SL: Record<string, string> = { PENDING: 'Хүлээгдэж буй', DONE: 'Буцаасан', REJECTED: 'Татгалзсан' };
+  return (
+    <div className="overflow-hidden rounded-[16px] border border-line bg-surface shadow-card" data-refunds>
+      <div className="flex flex-wrap gap-1.5 border-b border-line px-3 py-2.5">
+        {(['PENDING', 'DONE', 'REJECTED'] as const).map((k) => <button key={k} onClick={() => { setSt(k); setPage(1); }} className={clsx('h-8 rounded-full border px-3 text-[12.5px] font-bold', st === k ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface text-muted')}>{SL[k]} ({d?.counts[k] ?? 0})</button>)}
+      </div>
+      {err ? <div className="p-3"><Notice>{err}</Notice></div> : null}
+      <div className="overflow-x-auto"><table className="w-full min-w-[980px] table-fixed text-[13px]">
+        <thead className="bg-surface2 text-[12px] text-muted"><tr><th className="w-[130px] px-3 py-2 text-left">Хүсэлт</th><th className="w-[150px] px-3 py-2 text-left">Юуны мөнгө</th><th className="w-[110px] px-3 py-2 text-right">Дүн</th><th className="w-[200px] px-3 py-2 text-left">Данс</th><th className="px-3 py-2 text-left">Шалтгаан</th><th className="w-[190px] px-3 py-2 text-right" /></tr></thead>
+        <tbody className="divide-y divide-line">{d?.items.map((r) => (
+          <tr key={r.id} className="align-top">
+            <td className="px-3 py-2 [overflow-wrap:anywhere]">{r.requestedByName}<span className="block text-[11.5px] text-subtle">{ubDateTime(r.requestedAt)}</span></td>
+            <td className="px-3 py-2 [overflow-wrap:anywhere]">{r.kindLabel}{r.orderNumber ? <b className="block">№{r.orderNumber}</b> : null}{r.tx ? <span className="block text-[11.5px] text-subtle">Гүйлгээ {ubDateTime(r.tx.txDate)} · {money(r.tx.amount)}</span> : null}</td>
+            <td className="px-3 py-2 text-right font-extrabold">{money(r.amount)}</td>
+            <td className="px-3 py-2 [overflow-wrap:anywhere]"><b>{r.accountNo}</b><span className="block">{r.bankName}</span><span className="block text-muted">{r.accountName}</span></td>
+            <td className="px-3 py-2 [overflow-wrap:anywhere]">{r.reason}</td>
+            <td className="px-3 py-2 text-right">{r.status === 'PENDING'
+              ? (d.canDecide ? <div className="flex flex-wrap justify-end gap-1.5"><Button size="sm" variant="primary" loading={busy} data-refund-done onClick={() => done(r)}>Буцаасан</Button><Button size="sm" variant="ghost" data-refund-reject onClick={() => setRej({ id: r.id, note: '' })}>Татгалзах</Button></div> : <span className="text-[12px] text-subtle">Шалгаж байна</span>)
+              : <span className={clsx('block text-[12px] [overflow-wrap:anywhere]', r.status === 'DONE' ? 'text-ok-ink' : 'text-bad-ink')}>{SL[r.status]} · {r.decidedByName}<span className="block text-subtle">{r.decidedAt ? ubDateTime(r.decidedAt) : ''}</span>{r.decisionNote ? <span className="block text-ink">{r.decisionNote}</span> : null}</span>}</td>
+          </tr>
+        ))}</tbody></table></div>
+      {d && !d.items.length ? <p className="px-4 py-10 text-center text-muted">Хүсэлт алга</p> : null}
+      {d && d.total > 0 ? <div className="border-t border-line"><Pager page={page} pages={d.pages} total={d.total} unit="хүсэлт" onPage={setPage} /></div> : null}
+      {rej ? (
+        <Modal open onClose={() => setRej(null)} title="Хүсэлтээс татгалзах" subtitle="Шалтгааныг бичнэ (оператор харна, түүхэнд үлдэнэ)"
+          footer={<><Button onClick={() => setRej(null)}>Болих</Button><Button variant="danger" loading={busy} disabled={rej.note.trim().length < 3} onClick={() => void act({ action: 'reject', id: rej.id, note: rej.note }, 'Хүсэлтээс татгалзлаа')}>Татгалзах</Button></>}>
+          <textarea value={rej.note} onChange={(e) => setRej({ ...rej, note: e.target.value })} rows={3} maxLength={300} className="w-full rounded-[10px] border border-line bg-surface p-2 text-[13.5px]" placeholder="Жишээ: дансны дугаар буруу, дахин шалгаад илгээнэ үү" aria-label="Шалтгаан" />
+        </Modal>
+      ) : null}
     </div>
   );
 }

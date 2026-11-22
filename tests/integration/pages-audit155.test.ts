@@ -174,11 +174,21 @@ describe('#155 төлсөн ч цуцлагдсан, СА цуцлах', () => {
     expect(tx.status).not.toBe('UNMATCHED');
     expect(await B.paidCancelledAlert(['SUPER_ADMIN'])).toEqual({ count: 1 });
     expect(await B.paidCancelledAlert(['ADMIN'])).toBeNull();
-    await err(B.paidCancelledList(acc), 403);
+    // #211: нягтлан, оператор харна (буцаах хүсэлт); «Шийдсэн» зөвхөн СА; бусдад харагдахгүй
+    await err(B.paidCancelledList(await actor(['ADMIN'])), 403);
+    expect((await B.paidCancelledList(acc)).canResolve).toBe(false);
+    await err(B.markPaidCancelReviewed(acc, pre, 'Мөнгийг буцаасан'), 403);
     const l = await B.paidCancelledList(sa);
     expect(l.items.map((x) => [x.id, x.paid > 0])).toEqual([[pre, true]]);
     await err(B.markPaidCancelReviewed(sa, pre, ''), 400);
-    await B.markPaidCancelReviewed(sa, pre, 'Мөнгийг буцаасан');
+    // #211: оператор буцаах хүсэлт → нягтлан «Буцаасан» = «Шийдсэн» (тайлбарт данс)
+    const R = await import('@/lib/services/accounting/refunds');
+    const rq = await R.createRefundRequest(op, { kind: 'PAID_CANCELLED', id: pre, bankName: 'Голомт банк', accountNo: '1234567890', accountName: 'Дорж', reason: 'Захиалагч татгалзсан, мөнгөө авна' });
+    expect(rq.amount).toBe(l.items[0]!.paid);
+    expect((await B.paidCancelledList(op)).items[0]!.refundReq).toMatchObject({ accountNo: '1234567890' });
+    await R.completeRefundRequest(acc, rq.id);
+    expect((await db.order.findUniqueOrThrow({ where: { id: pre } })).paidCancelReviewedAt).not.toBeNull();
+    expect((await db.auditLog.findFirstOrThrow({ where: { action: 'bank.paid_cancel_reviewed', entityId: String(pre) } })).details).toMatchObject({ note: expect.stringContaining('Голомт банк 1234567890') });
     expect(await B.paidCancelledAlert(['SUPER_ADMIN'])).toBeNull();
     await recOk();
   });

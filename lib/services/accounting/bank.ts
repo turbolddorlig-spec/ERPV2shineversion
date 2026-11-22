@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { db } from '../../db';
 import { badRequest, conflict, forbidden, notFound } from '../../errors';
 import { writeAudit, SYSTEM_ACTOR, type Actor } from '../../audit';
-import { canBankImport, canBankSetup, canView } from '../../permissions';
+import { canBankImport, canBankSetup, canRequestRefund, canView } from '../../permissions';
 import { ubDay, ubDayStart, isYmd } from '../../ubdate';
 import { inTx, lockOrder, orderSettings, paidOrderData, type UserActor } from '../orders/core';
 import { enqueueMeta, skipMeta } from '../orders/meta';
@@ -15,7 +15,7 @@ type Tx = Prisma.TransactionClient;
 /** Аудит #148: банкны нийтлэг түгжээ (6) — 5 сек-ээс удаан хүлээхгүй («Систем түр завгүй»), холболт барьж бусдыг гацаахгүй */
 /** Банкны өгөгдөл өөрчлөгдөх бүрт (түгжээ авах бүрт) статистик, «Дүн өөрчлөгдсөн»-ий санах ой хүчингүй */
 let bankVer = 0;
-async function bankLock(tx: Tx) {
+export async function bankLock(tx: Tx) {
   bankVer++;
   await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(6::int4, 0::int4)`;
@@ -367,8 +367,12 @@ export async function manualMatch(actor: UserActor, idIn: unknown, input: { orde
 export async function refundExcess(actor: UserActor, idIn: unknown) {
   assertEdit(actor);
   const id = Number(idIn);
-  const r = await inTx(async (tx) => {
-    await bankLock(tx);
+  const r = await inTx(async (tx) => { await bankLock(tx); return refundExcessIn(tx, actor, id); });
+  bustCounts();
+  return r;
+}
+/** #211: «Буцаах хүсэлт»-ийг эцэслэхэд мөн ашиглана (дуудагч bankLock авсан байна) */
+export async function refundExcessIn(tx: Tx, actor: UserActor, id: number, extra: Record<string, unknown> = {}) {
     const t = await tx.bankTransaction.findUnique({ where: { id } });
     if (!t) throw notFound('Гүйлгээ олдсонгүй');
     if (!t.orderId || t.status !== 'EXCESS_AMOUNT' || t.refunded || t.isDuplicate) throw conflict('Зөвхөн «Илүү» төлөлттэй гүйлгээнд', 'not_excess');
@@ -390,11 +394,8 @@ export async function refundExcess(actor: UserActor, idIn: unknown) {
     if (left > 0) throw conflict('Илүү дүн гүйлгээнүүдээс их — нягтлан шалгана уу', 'excess_split');
     if (o.prepaid && o.paidAmount > o.total) await tx.order.update({ where: { id: o.id }, data: { paidAmount: o.total } });
     await restatus(tx, o.id);
-    await writeAudit(actor, 'bank.excess_refunded', 'BankTransaction', String(id), { order: o.number, phone: o.phone, amount: excess, txAmount: t.amount, total: o.total }, tx, ['money', 'bank']);
+    await writeAudit(actor, 'bank.excess_refunded', 'BankTransaction', String(id), { order: o.number, phone: o.phone, amount: excess, txAmount: t.amount, total: o.total, ...extra } as Prisma.InputJsonValue, tx, ['money', 'bank']);
     return { refunded: excess, order: o.number };
-  });
-  bustCounts();
-  return r;
 }
 
 /** «Буцаасан» тэмдэг (үйлчлүүлэгчид мөнгийг нь буцааж өгсөн) */
@@ -403,19 +404,20 @@ export async function setRefunded(actor: UserActor, idIn: unknown, input: { refu
   const id = Number(idIn);
   // «Буцаасан» нь эцсийн (#127): болиулахгүй — буцаалт хийсэн мөнгийг дахин захиалгад тааруулах эрсдэлээс сэргийлнэ
   if (input.refunded === false) throw conflict('«Буцаасан» гүйлгээг буцааж болиулах боломжгүй', 'refund_final');
-  const refunded = true;
-  return inTx(async (tx) => {
-    await bankLock(tx);
+  return inTx(async (tx) => { await bankLock(tx); return setRefundedIn(tx, actor, id); });
+}
+/** #211: дуудагч bankLock авсан байна. already=true бол аль хэдийн буцаасан байсан */
+export async function setRefundedIn(tx: Tx, actor: UserActor, id: number, extra: Record<string, unknown> = {}) {
+    const refunded = true;
     const t = await tx.bankTransaction.findUnique({ where: { id } });
     if (!t) throw notFound('Гүйлгээ олдсонгүй');
-    if (t.refunded) return { ok: true };
+    if (t.refunded) return { ok: true, already: true, amount: t.amount };
     // Захиалгатай таарсан гүйлгээг «Буцаасан» болгохгүй (#127) — зөвхөн таараагүй / давхардсан мөнгийг буцаана
     if (t.orderId) throw conflict('Захиалгатай таарсан гүйлгээг «Буцаасан» болгохгүй', 'linked');
     await tx.bankTransaction.update({ where: { id }, data: { refunded } });
     if (t.orderId) await restatus(tx, t.orderId);
-    await writeAudit(actor, refunded ? 'bank.refunded' : 'bank.unrefunded', 'BankTransaction', String(id), { amount: t.amount, phone: t.phone }, tx, ['money', 'bank']);
-    return { ok: true };
-  });
+    await writeAudit(actor, refunded ? 'bank.refunded' : 'bank.unrefunded', 'BankTransaction', String(id), { amount: t.amount, phone: t.phone, ...extra } as Prisma.InputJsonValue, tx, ['money', 'bank']);
+    return { ok: true, already: false, amount: t.amount };
 }
 
 // ───────────────────────── Жагсаалт, статистик, экспорт ─────────────────────────
@@ -468,10 +470,13 @@ export async function listTransactions(actor: UserActor, f: BankFilter) {
     WHERE o.prepaid AND o."paidAmount" > o.total AND o.status <> 'CANCELLED'
       AND NOT EXISTS (SELECT 1 FROM "BankTransaction" t WHERE t."orderId" = o.id AND t.status = 'EXCESS_AMOUNT' AND NOT t.refunded AND NOT t."isDuplicate")
     ORDER BY o.id DESC LIMIT 200` : [];
+  // #211: хүлээгдэж буй «Буцаах хүсэлт» — мөр бүрт
+  const { pendingRefundFor } = await import('./refunds');
+  const [pt, po] = await Promise.all([pendingRefundFor({ txIds: items.map((t) => t.id) }), pendingRefundFor({ orderIds: manualExcess.map((o) => o.id), kind: 'ORDER_EXCESS' })]);
   return {
-    page, total, pages: Math.max(1, Math.ceil(total / BANK_PAGE)), canEdit: canBankImport(actor.roles), canSetup: canBankSetup(actor.roles),
-    manualExcess: manualExcess.map((o) => ({ ...o, excess: o.paidAmount - o.total, why: excessWhy(o) })),
-    items: items.map(maskFor(edit)).map((t) => ({ ...t, why: t.status === 'EXCESS_AMOUNT' && t.orderId ? excessWhy(om.get(t.orderId)) : null, statusLabel: t.refunded ? BANK_STATUS_LABEL.REFUNDED : t.isDuplicate ? BANK_STATUS_LABEL.DUPLICATE : BANK_STATUS_LABEL[t.status] ?? t.status, order: t.orderId ? om.get(t.orderId) ?? null : null,
+    page, total, pages: Math.max(1, Math.ceil(total / BANK_PAGE)), canEdit: canBankImport(actor.roles), canSetup: canBankSetup(actor.roles), canRequestRefund: canRequestRefund(actor.roles),
+    manualExcess: manualExcess.map((o) => ({ ...o, excess: o.paidAmount - o.total, why: excessWhy(o), refundReq: po.get(`o${o.id}`) ?? null })),
+    items: items.map(maskFor(edit)).map((t) => ({ ...t, refundReq: pt.get(`t${t.id}`) ?? null, why: t.status === 'EXCESS_AMOUNT' && t.orderId ? excessWhy(om.get(t.orderId)) : null, statusLabel: t.refunded ? BANK_STATUS_LABEL.REFUNDED : t.isDuplicate ? BANK_STATUS_LABEL.DUPLICATE : BANK_STATUS_LABEL[t.status] ?? t.status, order: t.orderId ? om.get(t.orderId) ?? null : null,
       excess: t.status === 'EXCESS_AMOUNT' && t.orderId && !t.refunded ? Math.max(0, (pm.get(t.orderId) ?? 0) - (om.get(t.orderId)?.total ?? 0)) : 0 })),
   };
 }
@@ -488,8 +493,12 @@ export async function refundManualExcess(actor: UserActor, orderIdIn: unknown) {
   assertEdit(actor);
   const id = Number(orderIdIn);
   if (!Number.isInteger(id) || id <= 0) throw notFound('Захиалга олдсонгүй');
-  const r = await inTx(async (tx) => {
-    await bankLock(tx);
+  const r = await inTx(async (tx) => { await bankLock(tx); return refundManualExcessIn(tx, actor, id); });
+  bustCounts();
+  return r;
+}
+/** #211: дуудагч bankLock авсан байна */
+export async function refundManualExcessIn(tx: Tx, actor: UserActor, id: number, extra: Record<string, unknown> = {}) {
     if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
     const o = await tx.order.findUniqueOrThrow({ where: { id }, select: { id: true, number: true, phone: true, total: true, paidAmount: true, prepaid: true, status: true } });
     const excess = o.paidAmount - o.total;
@@ -497,11 +506,8 @@ export async function refundManualExcess(actor: UserActor, orderIdIn: unknown) {
     const bankEx = await tx.bankTransaction.count({ where: { orderId: id, status: 'EXCESS_AMOUNT', refunded: false, isDuplicate: false } });
     if (bankEx) throw conflict('Банкны гүйлгээтэй илүү — гүйлгээн дээрх «Илүүг буцаасан»-аар', 'bank_excess');
     await tx.order.update({ where: { id }, data: { paidAmount: o.total, version: { increment: 1 } } });
-    await writeAudit(actor, 'order.excess_refunded', 'Order', String(id), { number: o.number, phone: o.phone, amount: excess, total: o.total }, tx, ['money', 'bank', 'order']);
+    await writeAudit(actor, 'order.excess_refunded', 'Order', String(id), { number: o.number, phone: o.phone, amount: excess, total: o.total, ...extra } as Prisma.InputJsonValue, tx, ['money', 'bank', 'order']);
     return { refunded: excess, order: o.number };
-  });
-  bustCounts();
-  return r;
 }
 
 const statsCache = new Map<string, { at: number; v: unknown; ver: number }>();
@@ -617,12 +623,15 @@ export async function unmatchedBankAlert(roles: string[]): Promise<{ count: numb
 /** #172-8: Банкны импортын жагсаалт хуудаслалт — нэг хуудсанд 25 */
 const BANK_PAGE = 25;
 
+/** #211: «Төлсөн ч цуцлагдсан»-ыг Супер админ («Шийдсэн»), Нягтлан, Оператор, Ахлах оператор («Буцаах хүсэлт») харна */
 export async function paidCancelledList(actor: UserActor) {
-  if (!actor.roles.includes('SUPER_ADMIN')) throw forbidden('Зөвхөн Супер админ');
+  if (!actor.roles.some((r) => ['SUPER_ADMIN', 'ACCOUNTING', 'OPERATOR', 'OPERATOR_LEAD'].includes(r))) throw forbidden('Эрх байхгүй');
   const rows = await db.$queryRaw<{ id: number; number: string; phone: string; total: number; paid: number; cancelReason: string | null; cancelNote: string | null; cancelledByName: string | null; cancelledAt: Date | null; driverName: string | null }[]>`
     SELECT o.id, o.number, o.phone, o.total, b.paid, o."cancelReason"::text AS "cancelReason", o."cancelNote", o."cancelledByName", o."cancelledAt", o."driverName"
     ${PAID_CANCELLED} ORDER BY o."cancelledAt" DESC NULLS LAST LIMIT 500`;
-  return { items: rows };
+  const { pendingRefundFor } = await import('./refunds');
+  const pend = await pendingRefundFor({ orderIds: rows.map((r) => r.id), kind: 'PAID_CANCELLED' });
+  return { canResolve: actor.roles.includes('SUPER_ADMIN'), items: rows.map((r) => ({ ...r, refundReq: pend.get(`o${r.id}`) ?? null })) };
 }
 export async function markPaidCancelReviewed(actor: UserActor, idIn: unknown, noteIn: unknown) {
   if (!actor.roles.includes('SUPER_ADMIN')) throw forbidden('Зөвхөн Супер админ');
@@ -630,14 +639,16 @@ export async function markPaidCancelReviewed(actor: UserActor, idIn: unknown, no
   if (!Number.isInteger(id) || id <= 0) throw notFound('Захиалга олдсонгүй');
   const note = String(noteIn ?? '').trim().slice(0, 300);
   if (note.length < 3) throw badRequest('Юу болсныг товч бичнэ үү', 'reason_required');
-  return inTx(async (tx) => {
+  return inTx(async (tx) => paidCancelReviewIn(tx, actor, id, note));
+}
+/** #211: «Буцаах хүсэлт» эцэслэхэд мөн ашиглана */
+export async function paidCancelReviewIn(tx: Tx, actor: UserActor, id: number, note: string, extra: Record<string, unknown> = {}) {
     if (!(await lockOrder(tx, id))) throw notFound('Захиалга олдсонгүй');
     const o = await tx.order.findUniqueOrThrow({ where: { id }, select: { number: true, status: true, paidCancelReviewedAt: true } });
     if (o.paidCancelReviewedAt) return { ok: true, duplicate: true };
     if (o.status !== 'CANCELLED') throw conflict('Захиалга цуцлагдсан төлөвт байхгүй', 'bad_status');
     await tx.order.update({ where: { id }, data: { paidCancelReviewedAt: new Date(), paidCancelReviewedByName: actor.name } });
-    await writeAudit(actor, 'bank.paid_cancel_reviewed', 'Order', String(id), { number: o.number, note }, tx, ['money', 'bank']);
+    await writeAudit(actor, 'bank.paid_cancel_reviewed', 'Order', String(id), { number: o.number, note, ...extra } as Prisma.InputJsonValue, tx, ['money', 'bank']);
     paidCancelCache = null;
     return { ok: true, duplicate: false };
-  });
 }
