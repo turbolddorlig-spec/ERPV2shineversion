@@ -373,6 +373,8 @@ describe('дуудлагын бүртгэл (хуучин логик + #54)', ()
     // #191: залгах жагсаалт — эхэлж бүртгэсэн нь дээр
     expect((await C.listCallNotes(op, {})).items.map((x) => x.phone)).toEqual(['99112233', '88001122', '80001133']);
     await C.attemptCall(op, n2!.id);
+    // #199: залгаж «Холбогдсон» болсон ч байраа солихгүй — бүртгэсэн дарааллаар
+    expect((await C.listCallNotes(op, {})).items.map((x) => x.phone)).toEqual(['99112233', '88001122', '80001133']);
     await err(C.attemptCall(op, n2!.id), 409, 'too_soon');
     await db.callNote.update({ where: { id: n3!.id }, data: { attempts: 5 } });
     await err(C.attemptCall(op, n3!.id), 409, 'max_attempts');

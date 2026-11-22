@@ -67,9 +67,9 @@ export async function listCallNotes(actor: UserActor, p: { status?: string; owne
   const where = { AND: and };
   const [total, rows, incoming, grouped] = await Promise.all([
     db.callNote.count({ where }),
-    // #191 (эзэн): идэвхтэй (залгах) жагсаалт — ЭХЭЛЖ бүртгэсэн дугаар хамгийн дээр, сүүлд бүртгэсэн нь доор (дарааллаар нь залгана).
-    // Хаагдсан / «Бүгд» түүх — шинэ нь дээр хэвээр (олон хуудастай түүхэнд сүүлийнх нь эхэнд хэрэгтэй)
-    db.callNote.findMany({ where, orderBy: [{ status: 'asc' }, { id: open ? 'asc' : 'desc' }], skip: (page - 1) * 50, take: 50 }),
+    // #191/#199 (эзэн): идэвхтэй (залгах) жагсаалт — ЗӨВХӨН бүртгэсэн дарааллаар: эхэлж бүртгэсэн хамгийн дээр, сүүлд бүртгэсэн хамгийн доор
+    // (залгасан / «Холбогдсон» болсон ч байраа солихгүй). Хаагдсан / «Бүгд» түүх — шинэ нь дээр хэвээр
+    db.callNote.findMany({ where, orderBy: open ? { id: 'asc' } : [{ status: 'asc' }, { id: 'desc' }], skip: (page - 1) * 50, take: 50 }),
     db.callNoteTransfer.findMany({ where: { toId: actor.id, status: 'PENDING' }, include: { note: true }, orderBy: { id: 'desc' }, take: 100 }),
     db.callNote.groupBy({ by: ['status'], where: { AND: base }, _count: true }),
   ]);
