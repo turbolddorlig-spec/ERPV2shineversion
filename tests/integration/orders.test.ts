@@ -369,6 +369,10 @@ describe('дуудлагын бүртгэл (хуучин логик + #54)', ()
     const r = await C.createCallNotes(op, { phones: '99112233, 8800-1122\n80001133', variantId: v2, pageId: page1, note: 'Орой залгана' });
     expect(r.created).toBe(3);
     await err(C.createCallNotes(op, { phones: '123' }), 400, 'bad_phone');
+    // #207: үлдэгдэлгүй бараагаар бүртгэхгүй (сонгосон ч, кодоор бичсэн ч)
+    const z = await P.createProduct(sa, { code: 'ZERO1', name: 'Үлдэгдэлгүй бараа', price: 10000 });
+    await err(C.createCallNotes(op, { phones: '99887766', variantId: z.variants[0]!.id }), 409, 'out_of_stock');
+    await err(C.createCallNotes(op, { phones: '99887766', productText: 'zero1' }), 409, 'out_of_stock');
     const [n1, n2, n3] = (await C.listCallNotes(op, {})).items.sort((a, b) => a.id - b.id);
     // #191: залгах жагсаалт — эхэлж бүртгэсэн нь дээр
     expect((await C.listCallNotes(op, {})).items.map((x) => x.phone)).toEqual(['99112233', '88001122', '80001133']);

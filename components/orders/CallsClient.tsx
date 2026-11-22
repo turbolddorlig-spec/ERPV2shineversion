@@ -305,8 +305,8 @@ function AddForm({ pages, onAdded, onError }: { pages: { id: number; name: strin
           {suggest && hits.length ? (
             <div className="absolute top-full z-20 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-line bg-surface shadow-pop">
               {hits.map((h) => (
-                <button key={h.variantId} type="button" onMouseDown={(e) => { e.preventDefault(); setHit(h); setSuggest(false); }} className="flex w-full items-start gap-2 px-2 py-1.5 text-left text-[12.5px] hover:bg-surface2">
-                  <span className="shrink-0 rounded border border-line px-1 font-mono text-[11px]">{h.variantCode}</span><span className="leading-tight">{h.fullName}</span><span className="ml-auto shrink-0 text-subtle">{h.available}ш</span>
+                <button key={h.variantId} type="button" disabled={h.available <= 0} title={h.available <= 0 ? 'Үлдэгдэл 0 — дуудлага бүртгэхгүй' : undefined} onMouseDown={(e) => { e.preventDefault(); if (h.available <= 0) return; setHit(h); setSuggest(false); }} className={clsx('flex w-full items-start gap-2 px-2 py-1.5 text-left text-[12.5px]', h.available <= 0 ? 'cursor-not-allowed opacity-50' : 'hover:bg-surface2')}>
+                  <span className="shrink-0 rounded border border-line px-1 font-mono text-[11px]">{h.variantCode}</span><span className="leading-tight">{h.fullName}</span><span className={clsx('ml-auto shrink-0', h.available <= 0 ? 'font-bold text-bad-ink' : 'text-subtle')}>{h.available <= 0 ? 'дууссан' : `${h.available}ш`}</span>
                 </button>
               ))}
             </div>

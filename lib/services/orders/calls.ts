@@ -30,8 +30,18 @@ export async function createCallNotes(actor: UserActor, input: { phones?: unknow
   if (phones.length > 100) throw badRequest('Нэг дор 100 хүртэл дугаар');
   const bad = phones.filter((p) => !isValidPhone(p));
   if (bad.length) throw badRequest(`8 оронтой биш дугаар: ${bad.slice(0, 5).join(', ')}`, 'bad_phone');
-  const variantId = input.variantId ? Number(input.variantId) : null;
+  let variantId = input.variantId ? Number(input.variantId) : null;
   if (variantId && !(await db.productVariant.findUnique({ where: { id: variantId } }))) throw badRequest('Бараа олдсонгүй');
+  // #207 (эзэн): бичсэн текст яг барааны (хувилбарын) код бол тэр бараа гэж үзнэ (үлдэгдлийн шалгалтаас тойрохгүй)
+  if (!variantId && input.productText) {
+    const byCode = await db.productVariant.findFirst({ where: { code: { equals: String(input.productText).trim(), mode: 'insensitive' } }, select: { id: true } });
+    if (byCode) variantId = byCode.id;
+  }
+  // #207 (эзний шийдвэр): үлдэгдэлгүй (боломжтой 0) бараагаар дуудлага бүртгэхгүй
+  if (variantId) {
+    const av = (await availableFor(db, [variantId])).get(variantId) ?? 0;
+    if (av <= 0) throw conflict('Энэ барааны үлдэгдэл 0 — дуудлага бүртгэхгүй (бараа орж ирсний дараа бүртгэнэ үү)', 'out_of_stock');
+  }
   const pageId = input.pageId ? Number(input.pageId) : null;
   if (pageId && !(await db.page.findUnique({ where: { id: pageId } }))) throw badRequest('Пэйж олдсонгүй');
   const productText = String(input.productText ?? '').trim().slice(0, 120) || null;
