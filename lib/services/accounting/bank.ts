@@ -605,6 +605,15 @@ export async function paidCancelledAlert(roles: string[]): Promise<{ count: numb
   }
   return paidCancelCache.n ? { count: paidCancelCache.n } : null;
 }
+/** #201 (эзэн): таараагүй банкны гүйлгээ — бүх хуудасны дээд талд (СА, Админ, Ахлах оператор, Оператор). «Таараагүй» табын тоотой ижил */
+let unmatchedCache: { at: number; n: number } | null = null;
+export async function unmatchedBankAlert(roles: string[]): Promise<{ count: number } | null> {
+  if (!roles.some((r) => ['SUPER_ADMIN', 'ADMIN', 'OPERATOR_LEAD', 'OPERATOR'].includes(r))) return null;
+  if (!unmatchedCache || Date.now() - unmatchedCache.at > (process.env.NODE_ENV === 'test' ? 0 : 30_000)) {
+    unmatchedCache = { at: Date.now(), n: await db.bankTransaction.count({ where: { status: 'UNMATCHED', isDuplicate: false, refunded: false } }) };
+  }
+  return unmatchedCache.n ? { count: unmatchedCache.n } : null;
+}
 /** #172-8: Банкны импортын жагсаалт хуудаслалт — нэг хуудсанд 25 */
 const BANK_PAGE = 25;
 

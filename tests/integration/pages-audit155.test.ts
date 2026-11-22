@@ -235,3 +235,19 @@ describe('#155 тохиргоо, хэрэглэгч, нэвтрэх', () => {
     expect(String(raw.value).startsWith('v1:')).toBe(true);
   });
 });
+
+describe('#201 таараагүй банкны гүйлгээний анхааруулга', () => {
+  it('таараагүй (давхардсан, буцаасныг хасна) тоо — СА, Админ, Ахлах оператор, Оператор; бусдад үгүй', async () => {
+    const B = await import('@/lib/services/accounting/bank');
+    expect(await B.unmatchedBankAlert(['OPERATOR'])).toBeNull();
+    await B.importTransactions({ id: null, name: 'т' }, [
+      { date: new Date(), description: '88001122 хэн нэгэн', amount: 12345, phone: '88001122' },
+      { date: new Date(), description: 'Утасгүй орлого', amount: 5000 },
+    ], 'CSV');
+    for (const r of ['SUPER_ADMIN', 'ADMIN', 'OPERATOR_LEAD', 'OPERATOR'] as const) expect(await B.unmatchedBankAlert([r])).toEqual({ count: 2 });
+    expect(await B.unmatchedBankAlert(['DRIVER'])).toBeNull();
+    expect(await B.unmatchedBankAlert(['ACCOUNTING'])).toBeNull();
+    await db.bankTransaction.updateMany({ where: { amount: 5000 }, data: { refunded: true } });
+    expect(await B.unmatchedBankAlert(['OPERATOR'])).toEqual({ count: 1 });
+  });
+});

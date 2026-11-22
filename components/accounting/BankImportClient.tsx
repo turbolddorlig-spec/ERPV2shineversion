@@ -27,7 +27,8 @@ const ST_L: Record<string, string> = { PENDING_PAYMENT: 'Төлбөр хүлээ
 interface PaidCancel { id: number; number: string; phone: string; total: number; paid: number; cancelReason: string | null; cancelNote: string | null; cancelledByName: string | null; cancelledAt: string | null; driverName: string | null }
 
 export function BankImportClient() {
-  const [tab, setTab] = useState(() => (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tab') === 'paidCancelled' ? 'paidCancelled' : 'all'));
+  // #201: дээд талын анхааруулгаас ?tab=UNMATCHED гэх мэтээр шууд тухайн табыг нээнэ
+  const [tab, setTab] = useState(() => { const t = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('tab') : null; return t && (t === 'paidCancelled' || TABS.some(([k]) => k === t)) ? t : 'all'; });
   // Аудит #155: төлсөн ч жолооч / асуудлаар цуцлагдсан — зөвхөн Супер админд (403 бол таб харагдахгүй)
   const [pc, setPc] = useState<PaidCancel[] | null>(null);
   const [pcNote, setPcNote] = useState<{ id: number; number: string; note: string } | null>(null);
