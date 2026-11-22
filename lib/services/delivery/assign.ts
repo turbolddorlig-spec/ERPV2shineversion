@@ -90,7 +90,12 @@ export async function leadOrders(actor: UserActor, p: LeadParams) {
 }
 
 let kpiCache: { at: number; data: Record<string, number> } | null = null;
-async function leadKpi() {
+async function leadKpi(): Promise<Record<string, number>> {
+  // #209 (эзэн): маргааш хүргэх захиалгын сануулга шөнө 00:01-ээс «яаралтай» биш — хуваарилалт дуусах цагаас (Тохиргоо) хойш л улаан
+  const { assignHour } = await orderSettings();
+  return { ...(await leadCounts()), assignHour, late: ubHourNow() >= assignHour ? 1 : 0 };
+}
+async function leadCounts(): Promise<Record<string, number>> {
   if (kpiCache && Date.now() - kpiCache.at < 5000) return kpiCache.data;
   const today = dateOnly(ubDay()); const tomorrow = dateOnly(ubDay(new Date(), 1));
   const r = await db.$queryRaw<{ k: string; n: number }[]>`
@@ -102,7 +107,7 @@ async function leadKpi() {
     UNION ALL SELECT 'deliveredToday', count(*)::int FROM "Order" WHERE status = 'DELIVERED' AND "deliveredAt" >= ${ubDayStart(ubDay())}
     UNION ALL SELECT 'postponedToday', count(*)::int FROM "Order" WHERE "postponedByDriverId" IS NOT NULL AND "postponedAt" >= ${ubDayStart(ubDay())}
     UNION ALL SELECT 'issues', count(*)::int FROM "Order" WHERE "issueStatus" = 'PENDING'`;
-  const data = Object.fromEntries(r.map((x) => [x.k, x.n]));
+  const data: Record<string, number> = Object.fromEntries(r.map((x) => [x.k, x.n]));
   kpiCache = { at: Date.now(), data };
   return data;
 }

@@ -187,4 +187,17 @@ describe('#145 ахлах жолооч', () => {
     // кэш цэвэрлэгдсэн тул KPI шинэ тоог харуулна
     expect((await L.leadOrders(lead, { assign: 'unassigned' })).kpi.unassigned).toBe(10);
   });
+
+  it('#209: маргаашийн хуваарилалтын сануулга зөвхөн хуваарилалт дуусах цагаас хойш «яаралтай» (шөнө 00 цагт биш)', async () => {
+    const lead = await actor(['DRIVER_LEAD']);
+    const prev = process.env.TEST_UB_HOUR;
+    try {
+      process.env.TEST_UB_HOUR = '0';
+      const k0 = (await L.leadOrders(lead, { assign: 'unassigned' })).kpi;
+      expect(k0.late).toBe(0);
+      expect(k0.assignHour).toBeGreaterThanOrEqual(12);
+      process.env.TEST_UB_HOUR = String(k0.assignHour);
+      expect((await L.leadOrders(lead, { assign: 'unassigned' })).kpi.late).toBe(1);
+    } finally { process.env.TEST_UB_HOUR = prev; }
+  });
 });

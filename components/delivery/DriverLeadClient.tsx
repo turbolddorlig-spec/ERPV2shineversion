@@ -114,7 +114,8 @@ function AssignView() {
         className="flex flex-wrap items-center gap-2 rounded-xl border border-bad/40 bg-bad-soft px-4 py-2.5 text-left text-[13.5px] font-semibold text-bad-ink hover:brightness-95">
         <span className="min-w-0 flex-1">🔴 Хоносон, хуваарилагдаагүй {kpi.leftover} захиалга байна — яаралтай хуваарилна уу (хүргэх өдөр нь өнгөрсөн / өнөөдөр).</span>
         <span className="rounded-lg bg-bad px-3 py-1 text-[12.5px] font-bold text-white">{f.assign === 'leftover' ? 'Доор харагдаж байна ↓' : 'Харах →'}</span></button>
-        : kpi.unassigned ? <p data-lead-today className="rounded-xl border border-warn/40 bg-warn-soft px-4 py-2.5 text-[13.5px] font-semibold text-warn">🟠 Хуваарилагдаагүй {kpi.unassigned} «Шинэ» захиалга байна — өнөөдөртөө заавал хуваарилна уу.</p> : null}
+        : kpi.unassigned && kpi.late ? <p role="alert" data-lead-today data-late className="rounded-xl border border-bad/40 bg-bad-soft px-4 py-2.5 text-[13.5px] font-semibold text-bad-ink">🔴 {String(kpi.assignHour).padStart(2, '0')}:00 болсон — маргааш ({md(ubToday(1))}) хүргэх {kpi.unassigned} захиалга хуваарилагдаагүй байна. Яаралтай хуваарилна уу.</p>
+        : kpi.unassigned ? <p data-lead-today className="rounded-xl border border-line bg-surface2 px-4 py-2.5 text-[13.5px] text-muted">ℹ️ Маргааш ({md(ubToday(1))}) хүргэх {kpi.unassigned} захиалга — {String(kpi.assignHour ?? 21).padStart(2, '0')}:00 гэхэд хуваарилна.</p> : null}
 
       {/* Шүүлтүүр */}
       <div className="flex flex-col gap-2.5 rounded-xl border border-line bg-surface p-3">
