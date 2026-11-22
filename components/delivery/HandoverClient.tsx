@@ -89,7 +89,7 @@ export function HandoverClient() {
         </div>
       ) : null}
 
-      <div className="grid gap-3 rounded-xl border border-line bg-surface p-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)_minmax(0,1.4fr)]">
+      <div className="grid gap-2 rounded-xl border border-line bg-surface p-2.5 sm:gap-3 sm:p-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)_minmax(0,1.4fr)]">
         <DriverPicker drivers={board?.drivers ?? []} value={driverId} onChange={(id) => { setDriverId(id); setFlash(null); setError(null); }} />
         <label className="flex flex-col gap-1"><span className="text-[12px] font-semibold text-muted">Огноо</span>
           <input type="date" value={date} onChange={(e) => { if (e.target.value) setDate(e.target.value); }} className="h-11 rounded-lg border border-line bg-surface px-2.5 text-[14px]" />
@@ -124,7 +124,7 @@ export function HandoverClient() {
         : !day ? <p className="py-8 text-center text-muted">Ачаалж байна…</p>
         : h ? <HandoverView h={h} short={short} canOperate={canOperate} onCheck={(variantId, checked, kind) => run(() => api(`/api/handover/${h.id}/check`, { method: 'POST', json: { variantId, checked, kind } }), checked ? 'Check' : 'Check арилгалаа')} busy={busy} />
         : (
-          <div className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-3">
+          <div className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-2.5 sm:gap-3 sm:p-3">
             {!day.approval.approved ? <Notice>ХОРИГ — нягтлан зөвшөөрөл өгөөгүй{day.approval.note ? `: ${day.approval.note}` : ''}. Падаан үүсгэх боломжгүй.</Notice> : null}
             {!day.eligible.length ? <p className="py-6 text-center text-subtle">{drv?.name ?? 'Жолооч'}-д {date}-нд хуваарилсан захиалга алга</p> : <>
               <div className="flex flex-wrap items-center gap-3">
@@ -132,11 +132,12 @@ export function HandoverClient() {
                 {canOperate ? <Button variant="primary" className="ml-auto" loading={busy} disabled={!day.approval.approved || !sel.size}
                   onClick={() => { if (sel.size < day.eligible.length) { setError(`Анхаар! ${day.eligible.length - sel.size} захиалга сонгоогүй байна — бүгдийг сонгоно уу`); return; } run(() => api('/api/handover', { method: 'POST', json: { driverId, date, orderIds: [...sel] } }), 'Падаан үүслээ'); }}>Падаан үүсгэх</Button> : null}
               </div>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {/* #200 (эзэн): утсанд 2 баганатай нягт карт — олон захиалгатай үед хэт урт гүйлгэхгүй */}
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 sm:gap-2 lg:grid-cols-4">
                 {day.eligible.map((o) => (
-                  <label key={o.id} className={clsx('flex cursor-pointer items-start gap-2 rounded-lg border p-2.5', sel.has(o.id) ? 'border-info bg-info-soft/40' : 'border-line')}>
-                    <input type="checkbox" className="mt-0.5 h-5 w-5" checked={sel.has(o.id)} onChange={(e) => setSel((s) => { const x = new Set(s); if (e.target.checked) x.add(o.id); else x.delete(o.id); return x; })} />
-                    <span className="flex min-w-0 flex-col"><b>№{o.number}</b><span className="text-muted">{o.phone} · {o.items}ш · {money(o.total)}</span>{o.note ? <OperatorNote text={o.note} /> : null}</span>
+                  <label key={o.id} className={clsx('flex min-w-0 cursor-pointer items-start gap-1.5 rounded-lg border p-1.5 text-[12px] sm:gap-2 sm:p-2.5 sm:text-[14px]', sel.has(o.id) ? 'border-info bg-info-soft/40' : 'border-line')}>
+                    <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 sm:h-5 sm:w-5" checked={sel.has(o.id)} onChange={(e) => setSel((s) => { const x = new Set(s); if (e.target.checked) x.add(o.id); else x.delete(o.id); return x; })} />
+                    <span className="flex min-w-0 flex-col leading-tight"><b className="text-[12.5px] sm:text-[14px]">№{o.number}</b><span className="text-muted [overflow-wrap:anywhere]">{o.phone}</span><span className="text-muted">{o.items}ш · {money(o.total)}</span>{o.note ? <OperatorNote text={o.note} className="!line-clamp-2 !text-[10.5px] sm:!text-[11.5px]" /> : null}</span>
                   </label>
                 ))}
               </div>
