@@ -116,6 +116,8 @@ export interface ListParams {
   categoryId?: number;
   seasonId?: number;
   status?: 'live' | 'active' | 'discontinued' | 'archived' | 'all';
+  /** #210 (эзэн): үлдэгдлээр эрэмбэлэх — агуулахуудын нийт үлдэгдэл (жагсаалтын «Үлдэгдэл» багана) */
+  sort?: 'stock_desc' | 'stock_asc';
   page?: number;
 }
 
@@ -141,20 +143,36 @@ export async function listProducts(actor: UserActor, params: ListParams) {
 
   const page = Math.max(1, Math.min(10000, Math.floor(params.page ?? 1)));
   const showCost = canSeeCost(actor.roles);
-  const [total, rows] = await Promise.all([
+  const select = {
+        id: true, code: true, name: true, price: true, costPrice: true, status: true, colors: true, sizes: true, updatedAt: true,
+        category: { select: { id: true, name: true, color: true } },
+        season: { select: { id: true, name: true } },
+        images: { orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }], select: { fileKey: true, color: true, isMain: true } },
+        variants: { orderBy: [{ sortOrder: 'asc' as const }, { id: 'asc' as const }], select: { id: true, code: true, color: true, size: true, priceOverride: true, isActive: true } },
+      } satisfies Prisma.ProductSelect;
+  let total: number; let rows: Prisma.ProductGetPayload<{ select: typeof select }>[];
+  if (params.sort === 'stock_desc' || params.sort === 'stock_asc') {
+    // Шүүлтүүрт тохирох барааны id → агуулахын нийт үлдэгдлээр нэг бүлэглэсэн асуулгаар эрэмбэлээд хуудаслана
+    const ids = (await db.product.findMany({ where, select: { id: true } })).map((r) => r.id);
+    total = ids.length;
+    const dir = params.sort === 'stock_desc' ? Prisma.sql`DESC` : Prisma.sql`ASC`;
+    const pageIds = ids.length ? (await db.$queryRaw<{ id: number }[]>`
+      SELECT p.id FROM unnest(${ids}::int[]) AS p(id)
+      LEFT JOIN (SELECT v."productId", sum(b.qty)::int AS q FROM "StockBalance" b
+                 JOIN "StockLocation" l ON l.id = b."locationId" AND l.kind = 'WAREHOUSE'
+                 JOIN "ProductVariant" v ON v.id = b."variantId" WHERE v."productId" = ANY(${ids}::int[]) GROUP BY 1) s ON s."productId" = p.id
+      ORDER BY COALESCE(s.q, 0) ${dir}, p.id DESC
+      OFFSET ${(page - 1) * PRODUCT_PAGE_SIZE} LIMIT ${PRODUCT_PAGE_SIZE}`).map((r) => r.id) : [];
+    const pos = new Map(pageIds.map((id, i) => [id, i]));
+    rows = (await db.product.findMany({ where: { id: { in: pageIds } }, select })).sort((a, b) => pos.get(a.id)! - pos.get(b.id)!);
+  } else [total, rows] = await Promise.all([
     db.product.count({ where }),
     db.product.findMany({
       where,
       orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
       skip: (page - 1) * PRODUCT_PAGE_SIZE,
       take: PRODUCT_PAGE_SIZE,
-      select: {
-        id: true, code: true, name: true, price: true, costPrice: true, status: true, colors: true, sizes: true, updatedAt: true,
-        category: { select: { id: true, name: true, color: true } },
-        season: { select: { id: true, name: true } },
-        images: { orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }], select: { fileKey: true, color: true, isMain: true } },
-        variants: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], select: { id: true, code: true, color: true, size: true, priceOverride: true, isActive: true } },
-      },
+      select,
     }),
   ]);
   // Үлдэгдэл (Модуль 2): агуулахуудын нийт ба захиалах боломжтой

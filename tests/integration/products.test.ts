@@ -204,6 +204,20 @@ describe('аудит Б11, Б12: үлдэгдэлтэй бараа / хувил�
     const w = await W.createWarehouse(sa, { name: `Агуулах ${seq}` });
     await D.createReceipt(sa, { warehouseId: w.id, lines: [{ variantId, qty }], idemKey: `rc-${seq}-${variantId}-xxxxxxxx` });
   }
+  it('#210: үлдэгдлээр эрэмбэлэх — ихээс бага, багаас их (хуудаслалттай)', async () => {
+    const mk = await actor(['MARKETING']);
+    const a = await P.createProduct(mk, { code: 'SRT1', name: 'Эрэмбэ 1', price: 1000 });
+    const b = await P.createProduct(mk, { code: 'SRT2', name: 'Эрэмбэ 2', price: 1000, sizes: ['S', 'M'] });
+    await P.createProduct(mk, { code: 'SRT3', name: 'Эрэмбэ 3', price: 1000 });
+    await stockFor(a.variants[0]!.id, 5);
+    await stockFor(b.variants[0]!.id, 7); await stockFor(b.variants[1]!.id, 4);
+    const desc = await P.listProducts(mk, { q: 'SRT', sort: 'stock_desc' });
+    expect(desc.total).toBe(3);
+    expect(desc.items.map((i) => [i.code, i.stock.total])).toEqual([['SRT2', 11], ['SRT1', 5], ['SRT3', 0]]);
+    const asc = await P.listProducts(mk, { q: 'SRT', sort: 'stock_asc' });
+    expect(asc.items.map((i) => i.code)).toEqual(['SRT3', 'SRT1', 'SRT2']);
+    expect((await P.listProducts(mk, { q: 'SRT', sort: 'stock_asc', page: 2 })).items).toHaveLength(0);
+  });
   it('Б11: үлдэгдэлтэй барааг архивлахгүй; үлдэгдэлгүй бол болно', async () => {
     const adm = await actor(['ADMIN']);
     const p = await P.createProduct(adm, { code: 'AR1', name: 'Архив бараа', price: 10000 });

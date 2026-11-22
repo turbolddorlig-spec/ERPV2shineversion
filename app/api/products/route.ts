@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
       categoryId: Number(sp.get('categoryId')) || undefined,
       seasonId: Number(sp.get('seasonId')) || undefined,
       status: st === 'active' || st === 'discontinued' || st === 'archived' || st === 'all' ? st : 'live',
+      sort: sp.get('sort') === 'stock_desc' || sp.get('sort') === 'stock_asc' ? (sp.get('sort') as 'stock_desc' | 'stock_asc') : undefined,
       page: Number(sp.get('page')) || 1,
     }));
   } catch (e) { return errorResponse(e); }

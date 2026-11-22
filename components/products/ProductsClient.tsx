@@ -64,6 +64,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
   const [status, setStatus] = useState('live');
   const [categoryId, setCategoryId] = useState('');
   const [seasonId, setSeasonId] = useState('');
+  const [sort, setSort] = useState('');
   const [page, setPage] = useState(1);
   const [data, setData] = useState<ListResp | null>(null);
   const [loading, setLoading] = useState(true);
@@ -98,6 +99,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
     if (q.trim()) sp.set('q', q.trim());
     if (categoryId) sp.set('categoryId', categoryId);
     if (seasonId) sp.set('seasonId', seasonId);
+    if (sort) sp.set('sort', sort);
     try {
       const r = await api<ListResp>(`/api/products?${sp}`);
       if (id === reqId.current) setData(r);
@@ -106,7 +108,7 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
     } finally {
       if (id === reqId.current) setLoading(false);
     }
-  }, [q, status, categoryId, seasonId, page]);
+  }, [q, status, categoryId, seasonId, sort, page]);
   useEffect(() => { const t = setTimeout(load, q ? 250 : 0); return () => clearTimeout(t); }, [load, q]);
   const loadArch = useCallback(async () => {
     if (!archTab) { setArch(null); return; }
@@ -156,6 +158,11 @@ export function ProductsClient({ canEdit, showCost, canManageLists, canSeeHistor
         <Select id="f-season" value={seasonId} onChange={(e) => { setSeasonId(e.target.value); setPage(1); }} className="flex-[1_1_130px] md:flex-none" aria-label="Улирал">
           <option value="">Бүх улирал</option>
           {seasons.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </Select>
+        <Select id="f-sort" value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }} className="flex-[1_1_170px] md:flex-none" aria-label="Эрэмбэ" data-sort>
+          <option value="">Сүүлд засварласан</option>
+          <option value="stock_desc">Үлдэгдэл: ихээс бага</option>
+          <option value="stock_asc">Үлдэгдэл: багаас их</option>
         </Select>
       </div>
 
