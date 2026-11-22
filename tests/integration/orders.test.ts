@@ -368,6 +368,11 @@ describe('дуудлагын бүртгэл (хуучин логик + #54)', ()
   it('олноор нэмэх, 30 мин зай, 5 оролдлого, захиалга үүсэхэд автомат холбогдох, хаах шалтгаан, шилжүүлэх', async () => {
     const r = await C.createCallNotes(op, { phones: '99112233, 8800-1122\n80001133', variantId: v2, pageId: page1, note: 'Орой залгана' });
     expect(r.created).toBe(3);
+    // #208: тус тусад нь бүртгэхэд ч (01:55 → 01:56) эхэлсэн нь дээр
+    await C.createCallNotes(op, { phones: '91335599', variantId: v2 });
+    await C.createCallNotes(op, { phones: '88118811', variantId: v2 });
+    expect((await C.listCallNotes(op, { status: 'PENDING' })).items.map((x) => x.phone).slice(-2)).toEqual(['91335599', '88118811']);
+    await db.callNote.deleteMany({ where: { phone: { in: ['91335599', '88118811'] } } });
     await err(C.createCallNotes(op, { phones: '123' }), 400, 'bad_phone');
     // #207: үлдэгдэлгүй бараагаар бүртгэхгүй (сонгосон ч, кодоор бичсэн ч)
     const z = await P.createProduct(sa, { code: 'ZERO1', name: 'Үлдэгдэлгүй бараа', price: 10000 });
@@ -379,6 +384,8 @@ describe('дуудлагын бүртгэл (хуучин логик + #54)', ()
     await C.attemptCall(op, n2!.id);
     // #199: залгаж «Холбогдсон» болсон ч байраа солихгүй — бүртгэсэн дарааллаар
     expect((await C.listCallNotes(op, {})).items.map((x) => x.phone)).toEqual(['99112233', '88001122', '80001133']);
+    // #208: UI-ийн «Залгаагүй» таб (status=PENDING) ч мөн эхэлж бүртгэсэн нь дээр
+    expect((await C.listCallNotes(op, { status: 'PENDING' })).items.map((x) => x.phone)).toEqual(['99112233', '80001133']);
     await err(C.attemptCall(op, n2!.id), 409, 'too_soon');
     await db.callNote.update({ where: { id: n3!.id }, data: { attempts: 5 } });
     await err(C.attemptCall(op, n3!.id), 409, 'max_attempts');

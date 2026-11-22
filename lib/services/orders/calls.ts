@@ -79,7 +79,8 @@ export async function listCallNotes(actor: UserActor, p: { status?: string; owne
     db.callNote.count({ where }),
     // #191/#199 (эзэн): идэвхтэй (залгах) жагсаалт — ЗӨВХӨН бүртгэсэн дарааллаар: эхэлж бүртгэсэн хамгийн дээр, сүүлд бүртгэсэн хамгийн доор
     // (залгасан / «Холбогдсон» болсон ч байраа солихгүй). Хаагдсан / «Бүгд» түүх — шинэ нь дээр хэвээр
-    db.callNote.findMany({ where, orderBy: open ? { id: 'asc' } : [{ status: 'asc' }, { id: 'desc' }], skip: (page - 1) * 50, take: 50 }),
+    // #208: «Залгаагүй» / «Залгасан» табууд (UI эдгээрийг ашигладаг) ч мөн бүртгэсэн дарааллаар
+    db.callNote.findMany({ where, orderBy: open || p.status === 'PENDING' || p.status === 'CONTACTED' ? { id: 'asc' } : [{ status: 'asc' }, { id: 'desc' }], skip: (page - 1) * 50, take: 50 }),
     db.callNoteTransfer.findMany({ where: { toId: actor.id, status: 'PENDING' }, include: { note: true }, orderBy: { id: 'desc' }, take: 100 }),
     db.callNote.groupBy({ by: ['status'], where: { AND: base }, _count: true }),
   ]);
