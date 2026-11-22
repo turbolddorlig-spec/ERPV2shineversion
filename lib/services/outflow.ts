@@ -1116,6 +1116,8 @@ export type ReorderLevel = 'OK' | 'ORDER' | 'URGENT' | 'ORDERED' | 'LATE';
 const NEEDS: ReorderLevel[] = ['ORDER', 'URGENT', 'LATE'];
 export interface ReorderInfo {
   productId: number; available: number; pace: number; days: number | null; runOutDay: string | null; level: ReorderLevel;
+  /** #206: «Идэвхтэй» бараа эсэх — зогсоосон / архивласныг «Бараа татах», «Нөөц»-д тооцохгүй (бүүстийн үлдэгдэл дуусах #198-д тооцно) */
+  active: boolean;
   /** Нийлүүлэгчийн дэлгүүрт оноогдсон бол тэр дэлгүүр (#120) */
   shopId: number | null;
   basis: { avg7: number; avg3: number; today: number; fullDays: number };
@@ -1171,8 +1173,13 @@ function bustReorder() { reorderCache = null; reorderGen++; }
 const REORDER_FRESH_MS = 60_000;
 const REORDER_STALE_MS = 10 * 60_000;
 /** Супер админы «Бараа татах»: тохиргоогоор нийлүүлэгчийн барааг хасна */
+/** #206 (эзний шийдвэр): зогсоосон (архивласан) бараанд нөөц / бараа татах тооцохгүй */
+export async function computeReorderActive(): Promise<Map<number, ReorderInfo>> {
+  const m = await computeReorder();
+  return new Map([...m].filter(([, x]) => x.active));
+}
 async function ownerReorder(): Promise<Map<number, ReorderInfo>> {
-  const [m, cfg] = await Promise.all([computeReorder(), getConfig()]);
+  const [m, cfg] = await Promise.all([computeReorderActive(), getConfig()]);
   if (!cfg.hideSupplierReorder) return m;
   return new Map([...m].filter(([, x]) => x.shopId === null));
 }
@@ -1254,10 +1261,12 @@ async function computeReorderNow(gen: number): Promise<Map<number, ReorderInfo>>
   }
   const ZERO = [0, 0, 0, 0, 0, 0, 0, 0];
   const ids = [...new Set([...vrows.filter((r) => r.qty > 0).map((r) => r.productId), ...orders.map((o) => o.productId)])];
-  const [stock, variants] = await Promise.all([
+  const [stock, variants, statuses] = await Promise.all([
     productStockTotals(ids),
     ids.length ? db.productVariant.findMany({ where: { productId: { in: ids } }, select: { id: true, productId: true, code: true, color: true, size: true, isActive: true }, orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] }) : Promise.resolve([]),
+    ids.length ? db.product.findMany({ where: { id: { in: ids } }, select: { id: true, status: true } }) : Promise.resolve([]),
   ]);
+  const activeIds = new Set(statuses.filter((x) => x.status === 'ACTIVE').map((x) => x.id));
   const sp = ids.length ? await db.supplierProduct.findMany({ where: { productId: { in: ids }, OR: [{ toDate: null }, { toDate: { gt: dateOnly(today) } }] }, select: { productId: true, shopId: true } }) : [];
   const shopOf = new Map(sp.map((x) => [x.productId, x.shopId]));
   const paceOf = (a: number[]) => {
@@ -1315,7 +1324,7 @@ async function computeReorderNow(gen: number): Promise<Map<number, ReorderInfo>>
     if (!vcov.length && ow.order && ow.level === 'ORDERED' && pplan?.again) ow.level = pplan.coverUntil && daysTo(pplan.coverUntil) <= cfg.urgentDays ? 'URGENT' : 'ORDER';
     const sw = worst('SUPPLIER', (v) => v.supLevel, (v) => v.supOrder);
     map.set(id, {
-      productId: id, shopId: shopOf.get(id) ?? null, available, pace: r1(tp.pace), days: ow.days, runOutDay: ow.days === null ? null : addDays(today, ow.days), level: ow.level,
+      productId: id, shopId: shopOf.get(id) ?? null, active: activeIds.has(id), available, pace: r1(tp.pace), days: ow.days, runOutDay: ow.days === null ? null : addDays(today, ow.days), level: ow.level,
       basis: { avg7: r1(tp.avg7), avg3: r1(tp.avg3), today: tp.td, fullDays: tp.fullDays },
       order: ow.order, worstLabel: ow.label, variants: vcov, plan: pplan, suggestQty: tp.pace > 0 ? Math.ceil(tp.pace * cfg.coverDays) : 0,
       sup: { level: sw.level, order: sw.order, days: sw.days, worstLabel: sw.label },
@@ -1509,7 +1518,7 @@ export async function reorderDetail(actor: UserActor, productIdIn: unknown) {
 }
 export async function reorderDetailOf(productIdIn: unknown, scope: ReorderScope = 'OWNER', shopId: number | null = null) {
   const id = Number(productIdIn);
-  const m = await computeReorder();
+  const m = await computeReorderActive();
   const cfg = await getConfig();
   // Аудит #151: нийлүүлэгч зөвхөн өөрийн дэлгүүрийн тэмдгийн түүхийг харна
   const history = await db.reorderOrder.findMany({ where: { productId: id, scope, ...(scope === 'SUPPLIER' && shopId !== null ? { shopId } : {}) }, orderBy: { orderedAt: 'desc' }, take: 10 });

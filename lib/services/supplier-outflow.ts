@@ -4,7 +4,7 @@ import { writeAudit } from '../audit';
 import { dateOnly, ubDay } from '../ubdate';
 import { addDays } from './delivery/core';
 import { productStockTotals } from './stock/views';
-import { computeReorder, createReorder, cancelReorderOf, getConfig, reorderDetailOf, unitsByDay, type ReorderInfo } from './outflow';
+import { computeReorderActive, createReorder, cancelReorderOf, getConfig, reorderDetailOf, unitsByDay, type ReorderInfo } from './outflow';
 import { shopOf } from './supplier';
 import type { UserActor } from './users';
 
@@ -35,7 +35,7 @@ export async function supplierOutflow(actor: UserActor, shopIdIn: unknown) {
     productStockTotals(ids),
     db.supplierDeduction.findMany({ where: { shopId: shop.id, productId: { in: ids } } }),
     isOwner ? db.supplierOwnCost.findMany({ where: { shopId: shop.id, productId: { in: ids } } }) : Promise.resolve([]),
-    computeReorder(),
+    computeReorderActive(),
   ]);
   const di = new Map(days.map((d, i) => [d, i]));
   const dm = new Map(ded.map((d) => [d.productId, d.operatorCost + d.deliveryCost + d.marketingCost + d.otherCost]));
@@ -97,7 +97,7 @@ export async function supplierReorderBanner(actor: UserActor): Promise<{ urgent:
   if (!shop?.isActive) return null;
   const today = ubDay();
   const asg = await db.supplierProduct.findMany({ where: { shopId: shop.id, OR: [{ toDate: null }, { toDate: { gt: dateOnly(today) } }] }, select: { productId: true } });
-  const m = await computeReorder();
+  const m = await computeReorderActive();
   let urgent = 0, order = 0, late = 0;
   for (const a of asg) { const l = m.get(a.productId)?.sup.level; if (l === 'URGENT') urgent++; else if (l === 'ORDER') order++; else if (l === 'LATE') late++; }
   return urgent || order || late ? { urgent, order, late } : null;

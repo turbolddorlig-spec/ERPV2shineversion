@@ -625,3 +625,21 @@ describe('#205 «Захиалсан»-ы дараа дахин татах төл
     expect(x.plan!.incoming).toEqual([{ day: U.ubDay(new Date(), 3), qty: 500 }]);
   });
 });
+
+describe('#206 зогсоосон бараа — нөөц / бараа татах тооцохгүй', () => {
+  it('зогсоосон бол «Бараа татах», сануулга, хүснэгтийн «Нөөц»-д алга; бүүстийн үлдэгдэл дуусах сануулга ажилласаар', async () => {
+    for (let d = 1; d <= 3; d++) for (let i = 0; i < 10; i++) await order({ daysAgo: d });
+    const { order: o } = await O.createOrder(op, { phone: String(99800000 + ++ph), province: 'Улаанбаатар', district: 'Баянзүрх', khoroo: 13, addressDetail: 'Тест', pageId: page1, lines: [{ variantId: v, qty: 465 }], idemKey: randomUUID(), deliveryDate: U.ubDay(new Date(), 1) });
+    await db.order.update({ where: { id: o.id }, data: { confirmedAt: new Date(Date.now() - 400 * 86_400_000) } }); // боломжтой 5
+    expect(await OF.reorderBanner(['SUPER_ADMIN'])).toEqual({ urgent: 1, order: 0, late: 0 });
+    await boostAt(2, new Date());
+    await db.product.update({ where: { id: prod }, data: { status: 'DISCONTINUED' } });
+    OF.bustOutflowCache(); OF.bustTable();
+    expect(await OF.reorderBanner(['SUPER_ADMIN'])).toBeNull();
+    expect((await OF.reorderBoard(sa, { tab: 'all' })).rows).toEqual([]);
+    expect((await OF.reorderDetail(sa, prod)).info).toBeNull();
+    expect((await OF.outflowTable(sa, {})).rows.find((r) => r.id === prod)?.reorder ?? null).toBeNull();
+    // бүүсттэй хэвээр — үлдэгдэл дуусах «бүүст унтраа» сануулга ажилласаар
+    expect((await OF.computeStockOut()).map((a) => a.productId)).toContain(prod);
+  });
+});
