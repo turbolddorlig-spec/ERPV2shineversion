@@ -638,8 +638,16 @@ describe('#206 зогсоосон бараа — нөөц / бараа тата�
     expect(await OF.reorderBanner(['SUPER_ADMIN'])).toBeNull();
     expect((await OF.reorderBoard(sa, { tab: 'all' })).rows).toEqual([]);
     expect((await OF.reorderDetail(sa, prod)).info).toBeNull();
-    expect((await OF.outflowTable(sa, {})).rows.find((r) => r.id === prod)?.reorder ?? null).toBeNull();
+    // Барааны гарцад зогсоосон бараа ГАРСАН ТОО-той харагдсаар, зөвхөн нөөц / татах сануулгагүй
+    const row = (await OF.outflowTable(sa, {})).rows.find((r) => r.id === prod);
+    expect(row?.weekTotal).toBe(30);
+    expect(row?.reorder ?? null).toBeNull();
     // бүүсттэй хэвээр — үлдэгдэл дуусах «бүүст унтраа» сануулга ажилласаар
     expect((await OF.computeStockOut()).map((a) => a.productId)).toContain(prod);
+    // Архивласан: «Бараа татах»-д алга, сануулгагүй (барааны гарцаас ч хасагдана)
+    await db.product.update({ where: { id: prod }, data: { status: 'ARCHIVED' } });
+    OF.bustOutflowCache(); OF.bustTable();
+    expect((await OF.reorderBoard(sa, { tab: 'all' })).rows).toEqual([]);
+    expect(await OF.reorderBanner(['SUPER_ADMIN'])).toBeNull();
   });
 });
