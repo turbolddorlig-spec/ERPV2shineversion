@@ -10,10 +10,10 @@ import { PlanLine, ReorderDialog, type ReorderPlan } from './OutflowClient';
 type Level = 'URGENT' | 'ORDER' | 'LATE' | 'ORDERED' | 'OK';
 interface Ord { id: number; qty: number; expectedDay: string; byName: string; note: string; variantId: number | null }
 interface Row {
-  id: number; code: string; name: string; thumb: string | null; level: Level; available: number; pace: number; days: number | null; runOutDay: string | null; worstLabel: string | null; order: Ord | null; plan?: ReorderPlan | null;
+  id: number; code: string; name: string; thumb: string | null; level: Level; available: number; pace: number; days: number | null; runOutDay: string | null; worstLabel: string | null; order: Ord | null; plan?: ReorderPlan | null; nextOrderDay?: string | null; suggestQty?: number;
   variants: { variantId: number; label: string; available: number; pace: number; days: number | null; level: Level; order: Ord | null; plan?: ReorderPlan | null }[];
 }
-interface Resp { tab: string; page: number; total: number; pages: number; counts: { need: number; ordered: number }; rows: Row[] }
+interface Resp { tab: string; page: number; total: number; pages: number; counts: { need: number; ordered: number; again?: number }; today?: string; againDays?: number; rows: Row[] }
 const LV: Record<Level, { l: string; cls: string }> = {
   URGENT: { l: '🔴 Яаралтай', cls: 'bg-bad-soft text-bad-ink' },
   LATE: { l: '⏰ Хоцорсон', cls: 'bg-bad-soft text-bad-ink' },
@@ -26,7 +26,7 @@ const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа г�
 
 /** #174 «Бараа татах» — бараа захиалгын ажилтан: дуусах дөхсөн бараа, нөөц хоног, «Захиалсан» тэмдэглэх. Мөнгөн дүнгүй. */
 export function ReorderClient() {
-  const [tab, setTab] = useState<'need' | 'ordered' | 'all'>('need');
+  const [tab, setTab] = useState<'need' | 'ordered' | 'again' | 'all'>('need');
   const [q, setQ] = useState(''); const [qd, setQd] = useState('');
   const [page, setPage] = useState(1);
   const [d, setD] = useState<Resp | null>(null);
@@ -54,11 +54,12 @@ export function ReorderClient() {
       {err ? <Notice>{err}</Notice> : null}
       {ok ? <Notice tone="ok">{ok}</Notice> : null}
       <div className="flex flex-wrap items-center gap-2">
-        {([['need', `Татах${d ? ` (${d.counts.need})` : ''}`], ['ordered', `Захиалсан${d ? ` (${d.counts.ordered})` : ''}`], ['all', 'Бүгд']] as const).map(([k, l]) => (
-          <button key={k} type="button" onClick={() => { setTab(k); setPage(1); }} className={clsx('h-9 rounded-full border px-3.5 text-[13px] font-bold', tab === k ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface text-muted')}>{l}</button>
+        {([['need', `Татах${d ? ` (${d.counts.need})` : ''}`], ['ordered', `Захиалсан${d ? ` (${d.counts.ordered})` : ''}`], ['again', `🔴 Дахин тасрах${d?.counts.again !== undefined ? ` (${d.counts.again})` : ''}`], ['all', 'Бүгд']] as const).map(([k, l]) => (
+          <button key={k} type="button" data-tab={k} onClick={() => { setTab(k); setPage(1); }} className={clsx('h-9 rounded-full border px-3.5 text-[13px] font-bold', tab === k ? 'border-ink bg-ink text-on-ink' : k === 'again' && d?.counts.again ? 'border-bad bg-bad-soft text-bad-ink' : 'border-line bg-surface text-muted')}>{l}</button>
         ))}
         <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Нэр, код…" aria-label="Хайх" className="h-9 min-w-[180px] flex-1 rounded-[10px] border border-line bg-surface px-3 text-[13.5px]" />
       </div>
+      {tab === 'again' ? <p data-again-help className="rounded-xl border border-bad/30 bg-bad-soft px-3 py-2 text-[13px] text-bad-ink [overflow-wrap:anywhere]">Захиалсан ч ирэх ачаа нь хүрэлцэхгүй бараа: доорх <b>улаан огноонд</b> дахин татахгүй бол ачаа ирээд дахин дуусч тасарна. Дараагийн {d?.againDays ?? 14} хоногт татах ёстой, ойрынх нь дээр.</p> : null}
       <div className="overflow-hidden rounded-[16px] border border-line bg-surface shadow-card">
         <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-[13px]">
           <thead className="bg-surface2 text-[12px] text-muted"><tr><th className="px-3 py-2 text-left">Бараа</th><th className="px-3 py-2 text-right">Боломжтой</th><th className="px-3 py-2 text-right">Өдөрт</th><th className="px-3 py-2 text-center">Нөөц</th><th className="px-3 py-2 text-right" /></tr></thead>
@@ -70,7 +71,8 @@ export function ReorderClient() {
                     <div className="flex items-center gap-2">
                       {r.variants.length > 1 ? <button type="button" aria-label={`${r.name} өнгөөр`} aria-expanded={open.has(r.id)} onClick={() => toggle(r.id)} className="h-6 w-6 shrink-0 rounded text-muted hover:bg-surface2">{open.has(r.id) ? '▾' : '▸'}</button> : <span className="w-6 shrink-0" />}
                       {r.thumb ? <img src={r.thumb} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover" /> : <span className="h-9 w-9 shrink-0 rounded-lg bg-surface2" />}
-                      <div className="min-w-0"><div className="line-clamp-2 font-semibold [overflow-wrap:anywhere]">{r.name}</div><div className="text-[11.5px] text-muted [overflow-wrap:anywhere]">{r.code}{r.worstLabel ? ` · хамгийн дутуу: ${r.worstLabel}` : ''}</div>{r.plan ? <PlanLine p={r.plan} compact /> : null}</div>
+                      <div className="min-w-0"><div className="line-clamp-2 font-semibold [overflow-wrap:anywhere]">{r.name}</div><div className="text-[11.5px] text-muted [overflow-wrap:anywhere]">{r.code}{r.worstLabel ? ` · хамгийн дутуу: ${r.worstLabel}` : ''}</div>{r.plan ? <PlanLine p={r.plan} compact /> : null}
+                        {tab === 'again' && r.nextOrderDay ? <div data-again-day className="mt-1 inline-flex flex-wrap items-center gap-1.5 rounded-lg bg-bad px-2 py-1 text-[12.5px] font-extrabold text-white">{d && d.today && r.nextOrderDay <= d.today ? '🔴 Яаралтай тат!' : '🔴 Татах өдөр'} {md(r.nextOrderDay)}{r.suggestQty ? ` · ~${r.suggestQty}ш` : ''}</div> : null}</div>
                     </div>
                   </td>
                   <td className="px-3 py-2 text-right font-bold">{r.available}</td>
@@ -91,7 +93,7 @@ export function ReorderClient() {
             ))}
           </tbody>
         </table></div>
-        {d && !d.rows.length ? <p className="px-4 py-10 text-center text-muted">{tab === 'need' ? 'Татах шаардлагатай бараа алга ✓' : 'Жагсаалт хоосон'}</p> : null}
+        {d && !d.rows.length ? <p className="px-4 py-10 text-center text-muted">{tab === 'need' ? 'Татах шаардлагатай бараа алга ✓' : tab === 'again' ? 'Дахин тасрах бараа алга ✓' : 'Жагсаалт хоосон'}</p> : null}
         {d && d.pages > 1 ? (
           <div className="flex items-center justify-between border-t border-line px-3 py-2 text-[13px]"><span className="text-muted">{d.total} бараа</span>
             <div className="flex items-center gap-2"><Button size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>‹</Button><span>{page} / {d.pages}</span><Button size="sm" disabled={page >= d.pages} onClick={() => setPage(page + 1)}>›</Button></div></div>

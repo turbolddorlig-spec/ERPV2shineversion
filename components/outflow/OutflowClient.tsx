@@ -832,7 +832,7 @@ function ConfigDialog({ sa, onClose, onDone }: { sa: boolean; onClose: () => voi
   const f = (k: string, l: string) => <label key={k} className="flex flex-col gap-1 text-[12.5px] font-semibold text-muted">{l}<input value={v?.[k] ?? ''} inputMode="numeric" onChange={(e) => setV({ ...v!, [k]: digits(e.target.value) })} className={clsx(inputCls, 'text-right')} /></label>;
   const save = async () => {
     try {
-      const keys = ['claimTarget', 'claimExpireDays', 'stockDays', ...(sa ? ['oppCost', 'deliveryCost', 'rate', 'costPct', 'watchHours', 'defaultDollar', 'bulkMin', 'leadDays', 'urgentDays', 'coverDays'] : [])];
+      const keys = ['claimTarget', 'claimExpireDays', 'stockDays', ...(sa ? ['oppCost', 'deliveryCost', 'rate', 'costPct', 'watchHours', 'defaultDollar', 'bulkMin', 'leadDays', 'urgentDays', 'coverDays', 'againDays'] : [])];
       await api('/api/goods-outflow', { method: 'POST', json: { action: 'config', ...Object.fromEntries(keys.map((k) => [k, Number(v?.[k])])), ...(sa ? { hideSupplierReorder: v?.hideSupplierReorder !== 'false' } : {}) } }); onDone();
     } catch (e) { setErr(msg(e)); }
   };
@@ -848,7 +848,7 @@ function ConfigDialog({ sa, onClose, onDone }: { sa: boolean; onClose: () => voi
             <div className="grid grid-cols-2 gap-3">{f('oppCost', 'Опп цалин (₮/захиалга)')}{f('deliveryCost', 'Хүргэлтийн цалин (₮/захиалга)')}{f('rate', 'Долларын ханш (₮)')}{f('defaultDollar', 'Анхдагч $ (бүүст)')}{f('costPct', 'Өртөг оруулаагүй бол үнийн %')}{f('bulkMin', '📦 Бөөний захиалга (ширхэгээс)')}{f('watchHours', 'Ажиглах цаг (асаасан цагаас)')}</div>
             <b className="text-[14px]">🚚 Бараа татах (зөвхөн Супер админ)</b>
             <div className="grid grid-cols-2 gap-3">{f('leadDays', '🟠 Бараа ирэх хоног (нөөц үүнээс бага бол «татах»)')}{f('urgentDays', '🔴 Яаралтай (нөөц үүнээс бага)')}</div>
-            <div className="grid grid-cols-2 gap-3">{f('coverDays', '📦 Нэг татахад хүрэлцэх хоног (санал болгох тоо = хурд × энэ)')}</div>
+            <div className="grid grid-cols-2 gap-3">{f('coverDays', '📦 Нэг татахад хүрэлцэх хоног (санал болгох тоо = хурд × энэ)')}{f('againDays', '🔴 «Дахин тасрах»: дараагийн татах өдөр ойртсон (хоног)')}</div>
             <label className="flex items-start gap-2 text-[13px] font-semibold"><input type="checkbox" className="mt-0.5" checked={v.hideSupplierReorder !== 'false'} onChange={(e) => setV({ ...v, hideSupplierReorder: String(e.target.checked) })} /><span className="min-w-0 [overflow-wrap:anywhere]">Нийлүүлэгчийн дэлгүүрт оноосон барааг миний «Бараа татах»-д харуулахгүй (нийлүүлэгч өөрийн хуудаснаас харна)</span></label>
           </>) : null}
         </div>

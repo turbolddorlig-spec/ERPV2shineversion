@@ -612,10 +612,19 @@ describe('#205 «Захиалсан»-ы дараа дахин татах төл
     x = (await OF.computeReorder(true)).get(prod)!;
     expect(x.plan).toMatchObject({ gapDays: 15, gapFrom: U.ubDay(new Date(), 5), coverUntil: U.ubDay(new Date(), 30), nextOrderDay: U.ubDay(new Date(), 15), again: false });
     expect(x.level).toBe('ORDERED');
+    // #213: «Дахин тасрах» таб — дараагийн татах өдөр (15 хоногийн дараа) нь 14 хоногоос хол тул ороогүй; 20 хоног болговол орно
+    let ag = await OF.reorderBoard(sa, { tab: 'again' });
+    expect([ag.counts.again, ag.rows.length]).toEqual([0, 0]);
+    await OF.setConfig(sa, { againDays: 20 });
+    ag = await OF.reorderBoard(sa, { tab: 'again' });
+    expect([ag.tab, ag.counts.again, ag.rows[0]?.id, ag.rows[0]?.nextOrderDay, ag.rows[0]?.suggestQty]).toEqual(['again', 1, prod, U.ubDay(new Date(), 15), 300]);
+    await err(OF.setConfig(sa, { againDays: 0 }), 400);
     // 3 хоногт ирэх 500 нэмж захиалбал тасрахгүй
     await OF.markReordered(sa, { productId: prod, qty: 500, expectedDay: U.ubDay(new Date(), 3) });
     x = (await OF.computeReorder(true)).get(prod)!;
     expect([x.plan!.gapDays, x.plan!.incoming.length, x.level]).toEqual([0, 2, 'ORDERED']);
+    // 600 ширхэг нь ~60 хоног хүрэлцэнэ → «Дахин тасрах»-аас гарна
+    expect((await OF.reorderBoard(sa, { tab: 'again' })).counts.again).toBe(0);
     // Агуулахад нэг орлого орвол зөвхөн эртний (100) захиалга хаагдана, 500 хүлээгдсэн хэвээр
     const wh = (await db.warehouse.findFirstOrThrow()).id;
     await D.createReceipt(sa, { warehouseId: wh, lines: [{ variantId: v, qty: 100 }], idemKey: randomUUID() });

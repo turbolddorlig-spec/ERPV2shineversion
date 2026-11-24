@@ -50,10 +50,12 @@ export interface OutflowConfig {
   leadDays: number; urgentDays: number;
   /** #205: дахин татах тоо = өдрийн хурд × энэ хоног (санал) */
   coverDays: number;
+  /** #213: «Дахин тасрах» таб — дараагийн татах өдөр нь энэ хоногт (эсвэл өнгөрсөн) захиалсан бараа */
+  againDays: number;
   /** Нийлүүлэгчийн дэлгүүрт оноосон барааг СА-ын «Бараа татах»-д харуулахгүй (#120) */
   hideSupplierReorder: boolean;
 }
-export const DEFAULT_CFG: OutflowConfig = { claimTarget: 5, claimExpireDays: 7, watchHours: 8, defaultDollar: 5, oppCost: 1200, deliveryCost: 5000, rate: 3600, costPct: 35, lowProfit: 1500, bulkMin: 5, stockDays: 1, leadDays: 15, urgentDays: 7, coverDays: 30, hideSupplierReorder: true };
+export const DEFAULT_CFG: OutflowConfig = { claimTarget: 5, claimExpireDays: 7, watchHours: 8, defaultDollar: 5, oppCost: 1200, deliveryCost: 5000, rate: 3600, costPct: 35, lowProfit: 1500, bulkMin: 5, stockDays: 1, leadDays: 15, urgentDays: 7, coverDays: 30, againDays: 14, hideSupplierReorder: true };
 let cfgCache: { at: number; v: OutflowConfig } | null = null;
 export async function getConfig(tx: Tx | typeof db = db): Promise<OutflowConfig> {
   if (tx === db && cfgCache && Date.now() - cfgCache.at < 30_000) return cfgCache.v;
@@ -78,7 +80,7 @@ export async function setConfig(actor: UserActor, b: Record<string, unknown>) {
   if (b.claimExpireDays !== undefined) next.claimExpireDays = cleanInt(b.claimExpireDays, 'Чөлөөлөх хоног', 1, 365);
   if (b.stockDays !== undefined) next.stockDays = cleanInt(b.stockDays, 'Дуусах анхааруулга (өдөр)', 1, 30);
   if (b.hideSupplierReorder !== undefined) { assertSA(actor); next.hideSupplierReorder = b.hideSupplierReorder === true || b.hideSupplierReorder === 'true'; }
-  const money = ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar', 'bulkMin', 'leadDays', 'urgentDays', 'coverDays'] as const;
+  const money = ['oppCost', 'deliveryCost', 'rate', 'costPct', 'lowProfit', 'watchHours', 'defaultDollar', 'bulkMin', 'leadDays', 'urgentDays', 'coverDays', 'againDays'] as const;
   if (money.some((k) => b[k] !== undefined)) {
     assertSA(actor);
     if (b.oppCost !== undefined) next.oppCost = cleanInt(b.oppCost, 'Опп цалин', 0, 1_000_000);
@@ -92,6 +94,7 @@ export async function setConfig(actor: UserActor, b: Record<string, unknown>) {
     if (b.leadDays !== undefined) next.leadDays = cleanInt(b.leadDays, 'Бараа ирэх хоног', 1, 180);
     if (b.urgentDays !== undefined) next.urgentDays = cleanInt(b.urgentDays, 'Яаралтай хоног', 0, 180);
     if (b.coverDays !== undefined) next.coverDays = cleanInt(b.coverDays, 'Нэг татахад хүрэлцэх хоног', 1, 180);
+    if (b.againDays !== undefined) next.againDays = cleanInt(b.againDays, '«Дахин тасрах» хоног', 1, 90);
     if (next.urgentDays >= next.leadDays) throw badRequest('Яаралтай хоног нь ирэх хоногоос бага байна');
   }
   const json = next as unknown as Prisma.InputJsonValue;
@@ -1595,26 +1598,31 @@ export async function pageShortView(actor: UserActor) {
  */
 export async function reorderBoard(actor: UserActor, p: { tab?: string; q?: string; page?: number }) {
   assertReorder(actor);
-  const m = await ownerReorder();
-  const tab = p.tab === 'ordered' || p.tab === 'all' ? p.tab : 'need';
+  const [m, cfg] = await Promise.all([ownerReorder(), getConfig()]);
+  const tab = p.tab === 'ordered' || p.tab === 'all' || p.tab === 'again' ? p.tab : 'need';
   const RANK: Record<ReorderLevel, number> = { URGENT: 5, LATE: 4, ORDER: 3, ORDERED: 2, OK: 1 };
-  let list = [...m.values()].filter((x) => tab === 'need' ? NEEDS.includes(x.level) : tab === 'ordered' ? x.level === 'ORDERED' || x.level === 'LATE' || !!x.order : x.level !== 'OK' || !!x.order);
+  // #213 (эзэн): «Дахин тасрах» — захиалсан ч ирэх ачаа нь хүрэлцэхгүй, дараагийн татах өдөр нь againDays хоногт (эсвэл өнгөрсөн) бараа
+  const againBy = addDays(ubDay(), cfg.againDays);
+  const nextOf = (x: ReorderInfo) => [x.plan?.nextOrderDay, ...x.variants.map((v) => v.plan?.nextOrderDay)].filter((d): d is string => !!d).sort()[0] ?? null;
+  const isAgain = (x: ReorderInfo) => { const d = nextOf(x); return !!d && d <= againBy; };
+  let list = [...m.values()].filter((x) => tab === 'again' ? isAgain(x) : tab === 'need' ? NEEDS.includes(x.level) : tab === 'ordered' ? x.level === 'ORDERED' || x.level === 'LATE' || !!x.order : x.level !== 'OK' || !!x.order);
   const ids = list.map((x) => x.productId);
   const products = ids.length ? await db.product.findMany({ where: { id: { in: ids } }, select: { id: true, code: true, name: true, images: { where: { isMain: true }, take: 1, select: { fileKey: true } } } }) : [];
   const pm = new Map(products.map((x) => [x.id, x]));
   const q = String(p.q ?? '').trim().toLowerCase();
   if (q) list = list.filter((x) => { const pr = pm.get(x.productId); return !!pr && (pr.name.toLowerCase().includes(q) || pr.code.toLowerCase().includes(q)); });
-  list.sort((a, b) => RANK[b.level] - RANK[a.level] || (a.days ?? 1e9) - (b.days ?? 1e9));
+  if (tab === 'again') list.sort((a, b) => nextOf(a)!.localeCompare(nextOf(b)!) || a.productId - b.productId);
+  else list.sort((a, b) => RANK[b.level] - RANK[a.level] || (a.days ?? 1e9) - (b.days ?? 1e9));
   const page = Math.max(1, Math.floor(Number(p.page) || 1)); const size = 50;
-  const counts = { need: [...m.values()].filter((x) => NEEDS.includes(x.level)).length, ordered: [...m.values()].filter((x) => x.level === 'ORDERED' || x.level === 'LATE' || !!x.order).length };
+  const counts = { need: [...m.values()].filter((x) => NEEDS.includes(x.level)).length, ordered: [...m.values()].filter((x) => x.level === 'ORDERED' || x.level === 'LATE' || !!x.order).length, again: [...m.values()].filter(isAgain).length };
   const { mediaUrl } = await import('../storage');
   return {
-    tab, page, total: list.length, pages: Math.max(1, Math.ceil(list.length / size)), counts,
+    tab, page, total: list.length, pages: Math.max(1, Math.ceil(list.length / size)), counts, today: ubDay(), againDays: cfg.againDays,
     rows: list.slice((page - 1) * size, page * size).map((x) => {
       const pr = pm.get(x.productId);
       return {
         id: x.productId, code: pr?.code ?? '', name: pr?.name ?? `#${x.productId}`, thumb: pr?.images[0] ? mediaUrl(pr.images[0].fileKey, 'sm') : null,
-        level: x.level, available: x.available, pace: x.pace, days: x.days, runOutDay: x.runOutDay, worstLabel: x.worstLabel, order: x.order, plan: x.plan, suggestQty: x.suggestQty,
+        level: x.level, available: x.available, pace: x.pace, days: x.days, runOutDay: x.runOutDay, worstLabel: x.worstLabel, order: x.order, plan: x.plan, suggestQty: x.suggestQty, nextOrderDay: nextOf(x),
         variants: x.variants.map((v) => ({ variantId: v.variantId, label: v.label, available: v.available, pace: v.pace, days: v.days, level: v.level, order: v.order, plan: v.plan ?? null })),
       };
     }),
