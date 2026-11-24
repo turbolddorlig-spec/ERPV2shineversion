@@ -15,6 +15,7 @@ import { unassignedAlert } from '@/lib/services/delivery/assign';
 import { staleHandoverAlert } from '@/lib/services/delivery/handover';
 import { paidCancelledAlert, unmatchedBankAlert } from '@/lib/services/accounting/bank';
 import { refundRequestAlert } from '@/lib/services/accounting/refunds';
+import { borderAlert } from '@/lib/services/border';
 import { idleOperatorsAlert } from '@/lib/services/orders/idle';
 import { smsFailAlert } from '@/lib/services/orders/sms';
 import { staleGoodsAlert } from '@/lib/services/accounting/debts';
@@ -29,7 +30,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Шалгаагүй барааны засварын тоо — шалгах эрхтэй хүнд цэс дээр харагдана
   const actor = { id: user.id, name: user.name, roles: user.roles };
   // Агуулахын «Өнөөдрийн ажил»-ын тоо (дүүргэх, ирэх шилжүүлэг, зээлийн хүсэлт, батлах тооллого)
-  const [pending, whWork, discounts, recAlert, issues, boost, reorder, unassigned, jobs, skip, backup, staleHo, paidCancel, staleGoods, smsFail, stockOut, unmatchedBank, idleOps, refundReq] = await Promise.all([
+  const [pending, whWork, discounts, recAlert, issues, boost, reorder, unassigned, jobs, skip, backup, staleHo, paidCancel, staleGoods, smsFail, stockOut, unmatchedBank, idleOps, refundReq, border] = await Promise.all([
     unreviewedCount(actor).catch(() => 0),
     warehouseBadge(actor).catch(() => 0),
     // Супер админд: шалгаагүй үнийн хөнгөлөлт / хүргэлтийн өөрчлөлт (#43 2)
@@ -65,6 +66,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     idleOperatorsAlert(user.roles).catch(() => null),
     // #211: хүлээгдэж буй мөнгө буцаах хүсэлт (СА, Нягтлан)
     refundRequestAlert(user.roles).catch(() => null),
+    // #214: Замын-Үүдийн хил хаалт (СА, Бараа захиалгын ажилтан)
+    borderAlert(user.roles).catch(() => null),
   ]);
   const brand = await getBrand();
   const nav: NavItem[] = visiblePages(user.roles).map((p) => ({
@@ -74,7 +77,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }));
   return (
     <AppShell user={{ name: user.name, roleLabels: user.roles.map((r) => ROLE_LABEL[r]) }} nav={nav} brand={{ name: brand.name, dot: brand.dot, logo: logoUrl(brand) }}
-      jobsAlert={jobs} shortageSkip={skip} backupAlert={backup} boostAlert={boost} stockOutAlert={stockOut} unmatchedBankAlert={unmatchedBank} refundAlert={refundReq} idleAlert={idleOps?.map((x) => ({ name: x.name, inWindow: x.inWindow, windowMin: x.windowMin })) ?? null} reorderAlert={reorder} assignAlert={unassigned} handoverAlert={staleHo} paidCancelAlert={paidCancel} staleGoodsAlert={staleGoods} smsAlert={smsFail} reorderHref={user.roles.includes('SUPPLIER') ? '/supplier' : user.roles.includes('PURCHASER') && !user.roles.includes('SUPER_ADMIN') ? '/reorder' : '/goods-outflow?tab=reorder'}
+      jobsAlert={jobs} shortageSkip={skip} backupAlert={backup} boostAlert={boost} stockOutAlert={stockOut} unmatchedBankAlert={unmatchedBank} refundAlert={refundReq} borderAlert={border} idleAlert={idleOps?.map((x) => ({ name: x.name, inWindow: x.inWindow, windowMin: x.windowMin })) ?? null} reorderAlert={reorder} assignAlert={unassigned} handoverAlert={staleHo} paidCancelAlert={paidCancel} staleGoodsAlert={staleGoods} smsAlert={smsFail} reorderHref={user.roles.includes('SUPPLIER') ? '/supplier' : user.roles.includes('PURCHASER') && !user.roles.includes('SUPER_ADMIN') ? '/reorder' : '/goods-outflow?tab=reorder'}
       alert={recAlert ? { kind: recAlert.kind, count: recAlert.status?.count ?? 0, at: recAlert.status?.at ?? null, since: recAlert.status?.since ?? null } : null}>
       {children}
     </AppShell>

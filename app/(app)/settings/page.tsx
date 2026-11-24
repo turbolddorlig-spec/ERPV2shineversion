@@ -7,6 +7,7 @@ import { OfficeAccess } from '@/components/orders/OfficeAccess';
 import { PenaltyAutoSettings } from '@/components/penalties/PenaltyAutoSettings';
 import { DriveSettings } from '@/components/orders/DriveSettings';
 import { BrandSettings } from '@/components/orders/BrandSettings';
+import { BorderSettings } from '@/components/settings/BorderSettings';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Тохиргоо' };
@@ -33,6 +34,7 @@ export default async function SettingsPage() {
         <GmailSettings />
         {user.roles.includes('SUPER_ADMIN') ? <BankSmsSettings /> : null}
       </section>
+      {user.roles.includes('SUPER_ADMIN') ? <BorderSettings /> : null}
       {user.roles.includes('SUPER_ADMIN') ? <><BrandSettings /><DriveSettings /></> : null}
     </>
   );

@@ -36,7 +36,7 @@ async function logout() {
 export interface StockAlert { kind: 'mismatch' | 'stale'; count: number; at: string | null; since: string | null }
 const ubTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString('mn-MN', { timeZone: 'Asia/Ulaanbaatar', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 
-export function AppShell({ user, nav, alert, boostAlert, stockOutAlert, unmatchedBankAlert, refundAlert, idleAlert, reorderAlert, reorderHref, assignAlert, handoverAlert, paidCancelAlert, staleGoodsAlert, jobsAlert, shortageSkip, backupAlert, smsAlert, brand = DEFAULT_BRAND_VIEW, children }: { brand?: BrandView; user: { name: string; roleLabels: string[] }; nav: NavItem[]; alert?: StockAlert | null; boostAlert?: { red: number; orange: number } | null; stockOutAlert?: { today: number; tomorrow: number; variant: number } | null; unmatchedBankAlert?: { count: number } | null; refundAlert?: { count: number } | null; idleAlert?: { name: string; inWindow: number; windowMin: number }[] | null; reorderAlert?: { urgent: number; order: number; late: number } | null; reorderHref?: string; assignAlert?: { today: number; leftover: number; late: boolean; hour: number } | null; handoverAlert?: { count: number } | null; paidCancelAlert?: { count: number } | null; staleGoodsAlert?: { drivers: number; qty: number; amount: number; days: number } | null; jobsAlert?: { at: string } | null; shortageSkip?: { date: string; at: string } | null; backupAlert?: { level: 'bad' | 'warn'; text: string }[] | null; smsAlert?: { count: number; error: string | null } | null; children: ReactNode }) {
+export function AppShell({ user, nav, alert, boostAlert, stockOutAlert, unmatchedBankAlert, refundAlert, borderAlert, idleAlert, reorderAlert, reorderHref, assignAlert, handoverAlert, paidCancelAlert, staleGoodsAlert, jobsAlert, shortageSkip, backupAlert, smsAlert, brand = DEFAULT_BRAND_VIEW, children }: { brand?: BrandView; user: { name: string; roleLabels: string[] }; nav: NavItem[]; alert?: StockAlert | null; boostAlert?: { red: number; orange: number } | null; stockOutAlert?: { today: number; tomorrow: number; variant: number } | null; unmatchedBankAlert?: { count: number } | null; refundAlert?: { count: number } | null; borderAlert?: { name: string; from: string; to: string; days: number; daysLeft: number; closed: boolean }[] | null; idleAlert?: { name: string; inWindow: number; windowMin: number }[] | null; reorderAlert?: { urgent: number; order: number; late: number } | null; reorderHref?: string; assignAlert?: { today: number; leftover: number; late: boolean; hour: number } | null; handoverAlert?: { count: number } | null; paidCancelAlert?: { count: number } | null; staleGoodsAlert?: { drivers: number; qty: number; amount: number; days: number } | null; jobsAlert?: { at: string } | null; shortageSkip?: { date: string; at: string } | null; backupAlert?: { level: 'bad' | 'warn'; text: string }[] | null; smsAlert?: { count: number; error: string | null } | null; children: ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [pathname]);
@@ -79,6 +79,11 @@ export function AppShell({ user, nav, alert, boostAlert, stockOutAlert, unmatche
   // #201: таараагүй банкны гүйлгээ
   if (unmatchedBankAlert) alerts.push({ key: 'bank-unmatched', level: 'warn', icon: '💰', href: '/bank-import?tab=UNMATCHED', link: 'Таараагүй хуулга',
     text: `Таараагүй ${unmatchedBankAlert.count} банкны гүйлгээ байна — аль захиалгынх болохыг шалгаж тааруулна уу.` });
+  // #214: Замын-Үүдийн хил хаалт — эхлэхээс 1 сарын өмнөөс хатуу (улаан) мэдэгдэл
+  const bmd = (d: string) => `${d.slice(0, 4)}/${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+  for (const b of borderAlert ?? []) alerts.push({ key: `border-${b.from}`, level: 'bad', icon: '🚧', href: reorderHref ?? '/reorder', link: 'Бараа татах',
+    text: b.closed ? `Замын-Үүдийн хил хаалттай (${b.name}) — ${bmd(b.to)} хүртэл бараа ирэхгүй.`
+      : `Замын-Үүдийн хил ${bmd(b.from)} – ${bmd(b.to)} хаагдана (${b.name}, ${b.days} хоног бараа ирэхгүй) — ${b.daysLeft} хоног үлдлээ. Бараагаа тооцоолж нөөцөлж аваарай!` });
   // #211: мөнгө буцаах хүсэлт (СА, Нягтлан)
   if (refundAlert) alerts.push({ key: 'refund-req', level: 'warn', icon: '💸', href: '/bank-import?tab=refunds', link: 'Буцаах хүсэлт',
     text: `Мөнгө буцаах ${refundAlert.count} хүсэлт хүлээгдэж байна — данс, шалтгааныг шалгаад мөнгийг шилжүүлнэ үү.` });
@@ -228,6 +233,12 @@ export function AppShell({ user, nav, alert, boostAlert, stockOutAlert, unmatche
 
       <div className={slim ? 'lg:pl-[84px]' : 'lg:pl-[204px]'}>
         <div className="mx-auto w-full max-w-[1400px] has-[.full-bleed]:max-w-none px-[max(16px,env(safe-area-inset-left))] pb-[max(24px,env(safe-area-inset-bottom))] pt-4 lg:px-7 lg:pt-6">
+          {/* #214 (эзэн): хил хаалтын ХАТУУ мэдэгдэл — хонхноос гадна бүх хуудасны дээд талд үргэлж харагдана (хаах товчгүй) */}
+          {alerts.filter((a) => a.key.startsWith('border-')).map((a) => (
+            <Link key={a.key} href={a.href ?? '/reorder'} role="alert" data-border-alert className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border-2 border-bad bg-bad px-4 py-2.5 text-[14px] font-bold text-white shadow-card hover:brightness-110">
+              <span aria-hidden>🚧</span><span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{a.text}</span><span className="shrink-0 rounded-lg bg-white/20 px-2 py-0.5 text-[12.5px]">{a.link} →</span>
+            </Link>
+          ))}
           {children}
         </div>
       </div>
