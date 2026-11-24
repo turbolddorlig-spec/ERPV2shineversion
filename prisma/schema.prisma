@@ -1642,3 +1642,28 @@ model RefundRequest {
   @@index([bankTransactionId])
   @@index([orderId])
 }
+
+/// #215 (эзэн): Нийлүүлэгчид мэдэгдэл — Супер админ / Админ нэг дэлгүүрт эсвэл бүгдэд (shopId хоосон) бичнэ; устгатал улаан мэдэгдлээр харагдана
+model SupplierNotice {
+  id            Int       @id @default(autoincrement())
+  shopId        Int?
+  text          String
+  createdByName String
+  createdAt     DateTime  @default(now())
+  deletedAt     DateTime?
+  deletedByName String?
+
+  reads SupplierNoticeRead[]
+
+  @@index([deletedAt, shopId])
+}
+
+model SupplierNoticeRead {
+  noticeId Int
+  shopId   Int
+  readAt   DateTime       @default(now())
+  readBy   String
+  notice   SupplierNotice @relation(fields: [noticeId], references: [id])
+
+  @@id([noticeId, shopId])
+}

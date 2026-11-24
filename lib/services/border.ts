@@ -8,7 +8,7 @@ import type { UserActor } from './users';
 /**
  * #214 (эзэн): Замын-Үүдийн хил хаагдах өдрүүд — Тохиргоонд гараар бичнэ (компани бүр өөрөө, MULTI_COMPANY).
  * Хаалт эхлэх өдрөөс warnMonths (анх 1) САРЫН өмнөөс (2/6 → 1/6) хаалт дуустал бүх хуудасны дээд талд улаан мэдэгдэл
- * (Супер админ, Бараа захиалгын ажилтан). Бараа татах тооцоонд нөлөөлөхгүй — эзэн өөрөө тооцоолж нөөцөлнө.
+ * (Супер админ, Бараа захиалгын ажилтан, Нийлүүлэгч). Бараа татах тооцоонд нөлөөлөхгүй — эзэн өөрөө тооцоолж нөөцөлнө.
  */
 const KEY = 'borderClosures';
 export interface BorderClosure { name: string; from: string; to: string }
@@ -22,7 +22,8 @@ export function minusMonths(ymd: string, n: number): string {
   t.setUTCDate(Math.min(d, last));
   return t.toISOString().slice(0, 10);
 }
-const ROLES: Role[] = ['SUPER_ADMIN', 'PURCHASER'];
+// #215 (эзэн): нийлүүлэгч нар ч харна
+const ROLES: Role[] = ['SUPER_ADMIN', 'PURCHASER', 'SUPPLIER'];
 
 export async function getBorder(): Promise<BorderConfig> {
   const r = await db.appSetting.findUnique({ where: { key: KEY } });

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Notice } from '@/components/ui/Notice';
 import { Badge } from '@/components/ui/Badge';
+import { SupplierNotices } from './SupplierNotices';
 import { api, ApiError } from '@/components/ui/api';
 import { money, ubDateTime } from '@/lib/format';
 import { ReorderDialog } from '@/components/outflow/OutflowClient';
@@ -145,6 +146,8 @@ function AdminOverview({ onOpen }: { onOpen: (id: number) => void }) {
       </div>
       {ok ? <Notice tone="ok">{ok}</Notice> : null}
       {err ? <Notice>{err}</Notice> : null}
+      {/* #215: нийлүүлэгчид мэдэгдэл */}
+      <SupplierNotices />
       {d ? (() => {
         const dueShops = d.shops.filter((x) => x.isActive && (x.balance !== 0 || x.openDays > 0));
         const filter = filterSel ?? (dueShops.length ? 'due' : 'all');

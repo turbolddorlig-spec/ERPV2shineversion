@@ -25,7 +25,7 @@ export function BorderSettings() {
   return (
     <section id="border" data-border-settings className="mt-4 flex min-w-0 flex-col gap-3 rounded-[18px] border border-line bg-surface p-4 shadow-card">
       <h2 className="text-[16px] font-extrabold">🚧 Замын-Үүдийн хил хаагдах өдрүүд</h2>
-      <p className="text-[13px] text-subtle">Хил хаагдах өдрүүдийг гараар бичнэ (жишээ нь Цагаан сар). Хаалт эхлэх өдрөөс доорх сарын өмнөөс (жишээ 2/6 → 1/6) хаалт дуустал Супер админ, Бараа захиалгын ажилтанд бүх хуудасны дээд талд улаан мэдэгдэл гарна.</p>
+      <p className="text-[13px] text-subtle">Хил хаагдах өдрүүдийг гараар бичнэ (жишээ нь Цагаан сар). Хаалт эхлэх өдрөөс доорх сарын өмнөөс (жишээ 2/6 → 1/6) хаалт дуустал Супер админ, Бараа захиалгын ажилтан, Нийлүүлэгч нарт бүх хуудасны дээд талд улаан мэдэгдэл гарна.</p>
       {err ? <Notice>{err}</Notice> : null}
       {ok ? <Notice tone="ok">{ok}</Notice> : null}
       <label className="flex flex-wrap items-center gap-2 text-[13.5px] font-semibold">Хаалт эхлэхээс

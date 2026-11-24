@@ -36,7 +36,7 @@ async function logout() {
 export interface StockAlert { kind: 'mismatch' | 'stale'; count: number; at: string | null; since: string | null }
 const ubTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString('mn-MN', { timeZone: 'Asia/Ulaanbaatar', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 
-export function AppShell({ user, nav, alert, boostAlert, stockOutAlert, unmatchedBankAlert, refundAlert, borderAlert, idleAlert, reorderAlert, reorderHref, assignAlert, handoverAlert, paidCancelAlert, staleGoodsAlert, jobsAlert, shortageSkip, backupAlert, smsAlert, brand = DEFAULT_BRAND_VIEW, children }: { brand?: BrandView; user: { name: string; roleLabels: string[] }; nav: NavItem[]; alert?: StockAlert | null; boostAlert?: { red: number; orange: number } | null; stockOutAlert?: { today: number; tomorrow: number; variant: number } | null; unmatchedBankAlert?: { count: number } | null; refundAlert?: { count: number } | null; borderAlert?: { name: string; from: string; to: string; days: number; daysLeft: number; closed: boolean }[] | null; idleAlert?: { name: string; inWindow: number; windowMin: number }[] | null; reorderAlert?: { urgent: number; order: number; late: number } | null; reorderHref?: string; assignAlert?: { today: number; leftover: number; late: boolean; hour: number } | null; handoverAlert?: { count: number } | null; paidCancelAlert?: { count: number } | null; staleGoodsAlert?: { drivers: number; qty: number; amount: number; days: number } | null; jobsAlert?: { at: string } | null; shortageSkip?: { date: string; at: string } | null; backupAlert?: { level: 'bad' | 'warn'; text: string }[] | null; smsAlert?: { count: number; error: string | null } | null; children: ReactNode }) {
+export function AppShell({ user, nav, alert, boostAlert, stockOutAlert, unmatchedBankAlert, refundAlert, borderAlert, supplierNotices, idleAlert, reorderAlert, reorderHref, assignAlert, handoverAlert, paidCancelAlert, staleGoodsAlert, jobsAlert, shortageSkip, backupAlert, smsAlert, brand = DEFAULT_BRAND_VIEW, children }: { brand?: BrandView; user: { name: string; roleLabels: string[] }; nav: NavItem[]; alert?: StockAlert | null; boostAlert?: { red: number; orange: number } | null; stockOutAlert?: { today: number; tomorrow: number; variant: number } | null; unmatchedBankAlert?: { count: number } | null; refundAlert?: { count: number } | null; borderAlert?: { name: string; from: string; to: string; days: number; daysLeft: number; closed: boolean }[] | null; supplierNotices?: { id: number; text: string; read: boolean; createdAt: string }[] | null; idleAlert?: { name: string; inWindow: number; windowMin: number }[] | null; reorderAlert?: { urgent: number; order: number; late: number } | null; reorderHref?: string; assignAlert?: { today: number; leftover: number; late: boolean; hour: number } | null; handoverAlert?: { count: number } | null; paidCancelAlert?: { count: number } | null; staleGoodsAlert?: { drivers: number; qty: number; amount: number; days: number } | null; jobsAlert?: { at: string } | null; shortageSkip?: { date: string; at: string } | null; backupAlert?: { level: 'bad' | 'warn'; text: string }[] | null; smsAlert?: { count: number; error: string | null } | null; children: ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [pathname]);
@@ -84,6 +84,8 @@ export function AppShell({ user, nav, alert, boostAlert, stockOutAlert, unmatche
   for (const b of borderAlert ?? []) alerts.push({ key: `border-${b.from}`, level: 'bad', icon: '🚧', href: reorderHref ?? '/reorder', link: 'Бараа татах',
     text: b.closed ? `Замын-Үүдийн хил хаалттай (${b.name}) — ${bmd(b.to)} хүртэл бараа ирэхгүй.`
       : `Замын-Үүдийн хил ${bmd(b.from)} – ${bmd(b.to)} хаагдана (${b.name}, ${b.days} хоног бараа ирэхгүй) — ${b.daysLeft} хоног үлдлээ. Бараагаа тооцоолж нөөцөлж аваарай!` });
+  // #215: нийлүүлэгчид бичсэн мэдэгдэл (хонхонд ч)
+  for (const n of supplierNotices ?? []) alerts.push({ key: `supnote-${n.id}`, level: 'bad', icon: '📢', text: n.text });
   // #211: мөнгө буцаах хүсэлт (СА, Нягтлан)
   if (refundAlert) alerts.push({ key: 'refund-req', level: 'warn', icon: '💸', href: '/bank-import?tab=refunds', link: 'Буцаах хүсэлт',
     text: `Мөнгө буцаах ${refundAlert.count} хүсэлт хүлээгдэж байна — данс, шалтгааныг шалгаад мөнгийг шилжүүлнэ үү.` });
@@ -239,6 +241,7 @@ export function AppShell({ user, nav, alert, boostAlert, stockOutAlert, unmatche
               <span aria-hidden>🚧</span><span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{a.text}</span><span className="shrink-0 rounded-lg bg-white/20 px-2 py-0.5 text-[12.5px]">{a.link} →</span>
             </Link>
           ))}
+          {supplierNotices?.length ? <SupplierNoticeStrip items={supplierNotices} /> : null}
           {children}
         </div>
       </div>
@@ -313,5 +316,25 @@ export function PageBand({ title, subtitle, actions, className, children }: { ti
       {actions ? <div className="flex min-w-0 flex-wrap items-center gap-2 text-ink">{actions}</div> : null}
       {children}
     </div>
+  );
+}
+
+/** #215 (эзэн): нийлүүлэгчид бичсэн мэдэгдэл — бүх хуудасны дээд талд улаан (бичсэн хүн устгатал); «Уншсан» дарна */
+function SupplierNoticeStrip({ items }: { items: { id: number; text: string; read: boolean; createdAt: string }[] }) {
+  const [read, setRead] = useState<Set<number>>(() => new Set(items.filter((x) => x.read).map((x) => x.id)));
+  const mark = async (id: number) => {
+    try { await fetch('/api/supplier/notices', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'read', id }) }); setRead((s) => new Set(s).add(id)); } catch { /* дахин дарна */ }
+  };
+  return (
+    <>
+      {items.map((n) => (
+        <div key={n.id} role="alert" data-supplier-notice className="mb-3 flex flex-wrap items-start gap-2 rounded-xl border-2 border-bad bg-bad px-4 py-2.5 text-[14px] font-bold text-white shadow-card">
+          <span aria-hidden>📢</span>
+          <span className="min-w-0 flex-1 whitespace-pre-wrap [overflow-wrap:anywhere]">{n.text}<span className="block text-[11.5px] font-medium text-white/80">{new Date(n.createdAt).toLocaleString('en-GB', { timeZone: 'Asia/Ulaanbaatar', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}</span></span>
+          {read.has(n.id) ? <span className="shrink-0 rounded-lg bg-white/20 px-2 py-0.5 text-[12.5px]">✓ Уншсан</span>
+            : <button type="button" data-notice-read onClick={() => void mark(n.id)} className="shrink-0 rounded-lg bg-white px-3 py-1 text-[12.5px] font-extrabold text-bad-ink hover:brightness-95">Уншсан</button>}
+        </div>
+      ))}
+    </>
   );
 }
