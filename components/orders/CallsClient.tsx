@@ -266,6 +266,7 @@ function CallsBody({ onCreateOrder }: { onCreateOrder: (p: OrderPrefill) => void
   );
 }
 
+const DRAFT_KEY = 'calls.addDraft';
 /** Хуучин шиг нэмэх хэсэг: Бараа (код/нэр) · Утас (олон мөр, Enter → дараагийн) · Пэйж · Бүртгэх */
 function AddForm({ pages, onAdded, onError }: { pages: { id: number; name: string }[]; onAdded: (n: number) => void; onError: (m: string | null) => void }) {
   const [term, setTerm] = useState('');
@@ -276,6 +277,22 @@ function AddForm({ pages, onAdded, onError }: { pages: { id: number; name: strin
   const [pageId, setPageId] = useState('');
   const [busy, setBusy] = useState(false);
   const rows = useRef<(HTMLInputElement | null)[]>([]);
+  // #216 (эзэн): хадгалж дуусаагүй бүртгэл (бараа, утас, пэйж) — цонхыг санамсаргүй хаавал дахин нээхэд ноорог хэвээр
+  const loaded = useRef(false);
+  useEffect(() => {
+    try {
+      const d = JSON.parse(sessionStorage.getItem(DRAFT_KEY) ?? 'null') as { term?: string; hit?: Hit | null; phones?: string[]; pageId?: string } | null;
+      if (d) { setTerm(d.term ?? ''); setHit(d.hit ?? null); setPhones(d.phones?.length ? d.phones : ['']); setPageId(d.pageId ?? ''); }
+    } catch { /* ноорог уншигдахгүй бол хоосноор */ }
+    loaded.current = true;
+  }, []);
+  useEffect(() => {
+    if (!loaded.current) return;
+    try {
+      const empty = !term.trim() && !hit && phones.every((p) => !p.trim()) && !pageId;
+      if (empty) sessionStorage.removeItem(DRAFT_KEY); else sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ term, hit, phones, pageId }));
+    } catch { /* хадгалах боломжгүй бол алгасна */ }
+  }, [term, hit, phones, pageId]);
   useEffect(() => {
     if (term.trim().length < 2 || hit) { setHits([]); return; }
     const t = setTimeout(() => api<{ items: Hit[] }>(`/api/products/search?q=${encodeURIComponent(term)}&limit=8`).then((r) => setHits(r.items)).catch(() => undefined), 200);
@@ -288,6 +305,7 @@ function AddForm({ pages, onAdded, onError }: { pages: { id: number; name: strin
     try {
       const r = await api<{ created: number }>('/api/calls', { method: 'POST', json: { phones: valid.join(' '), variantId: hit?.variantId, productText: hit ? undefined : term.trim() || undefined, pageId: pageId || undefined } });
       setPhones(['']); setTerm(''); setHit(null);
+      try { sessionStorage.removeItem(DRAFT_KEY); } catch { /* */ }
       onAdded(r.created);
       setTimeout(() => rows.current[0]?.focus(), 0);
     } catch (e) { onError(msg(e)); } finally { setBusy(false); }

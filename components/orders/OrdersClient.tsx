@@ -25,7 +25,7 @@ export interface OLine { id: number; variantId: number; code: string; name: stri
 export interface OItem {
   id: number; number: string; status: string; displayStatus: DStatus; statusLabel: string; phone: string; extraPhone: string | null; fullAddress: string; noKhoroo: boolean;
   note: string | null; pageName: string | null; operatorName: string; deliveryDate: string; isToday: boolean; prepaid: boolean; createdAt: string;
-  total: number; discount: number; deliveryFee: number; postponeCount: number; lines: OLine[]; cancelLabel: string | null; inHandover: boolean; version: number; driverName?: string | null;
+  total: number; discount: number; deliveryFee: number; postponeCount: number; lines: OLine[]; cancelLabel: string | null; inHandover: boolean; version: number; driverName?: string | null; driverPhone?: string | null;
 }
 interface ListResp { items: OItem[]; hasMore: boolean; matched: number | null; matchedCapped: boolean; counts: Record<string, number>; can: { edit: boolean; markPaid: boolean; supervise: boolean; review: boolean; saPaid?: boolean } }
 
@@ -319,7 +319,7 @@ export function OrdersClient({ initialModal }: { initialModal?: { kind: 'new' } 
                   <td className="px-2.5 py-2"><StatusChip o={o} /></td>
                   <td className="px-2.5 py-2 text-right font-bold">{money(o.total)}</td>
                   <td className="px-2.5 py-2"><div className="line-clamp-1">{o.operatorName}</div>{o.pageName ? <div className="line-clamp-1 text-[11.5px] text-subtle">{o.pageName}</div> : null}</td>
-                  <td className="px-2.5 py-2">{o.driverName ? <div className="line-clamp-1">{o.driverName}</div> : <span className="text-subtle">—</span>}</td>
+                  <td className="px-2.5 py-2">{o.driverName ? <><div className="line-clamp-1">{o.driverName}</div>{o.driverPhone ? <a href={`tel:${o.driverPhone}`} data-driver-phone className="block whitespace-nowrap text-[12px] text-muted hover:text-ink">{formatPhone(o.driverPhone)}</a> : null}</> : <span className="text-subtle">—</span>}</td>
                   <td className="px-1.5 py-1.5">
                     <div className="flex items-center justify-center gap-0.5">
                       {active && can?.edit ? (o.inHandover

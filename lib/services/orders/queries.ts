@@ -166,16 +166,20 @@ export async function listOrders(actor: UserActor, p: ListParams) {
   const rows = await db.order.findMany({ where, orderBy, skip: (page - 1) * ORDER_PAGE_SIZE, take: ORDER_PAGE_SIZE + 1, include: { lines: true } });
   const hasMore = rows.length > ORDER_PAGE_SIZE;
   const list = rows.slice(0, ORDER_PAGE_SIZE);
-  const [pn, matched] = await Promise.all([
+  const dids = [...new Set(list.map((o) => o.driverId).filter((x): x is string => !!x))];
+  const [pn, matched, drivers] = await Promise.all([
     pageNames(list.map((o) => o.pageId)),
     // «Үр дүн: N» (хуучин шиг) — 10,000-аас олон бол «10,000+» (1 сая мөрийг тоолж удаашруулахгүй)
     and.length ? db.order.count({ where, take: RESULT_CAP + 1 }) : Promise.resolve(null),
+    // #216 (эзэн): жагсаалтын «Жолооч» баганад нэрийн доор утас
+    dids.length ? db.user.findMany({ where: { id: { in: dids } }, select: { id: true, phone: true } }) : Promise.resolve([]),
   ]);
+  const dph = new Map(drivers.map((u) => [u.id, u.phone]));
   return {
     tab, page, pageSize: ORDER_PAGE_SIZE, hasMore, matched, matchedCapped: matched !== null && matched > RESULT_CAP,
     counts: await tabCounts(),
     can: { edit: canEditOrders(actor.roles), markPaid: canMarkPaid(actor.roles), supervise: canSuperviseOperators(actor.roles), review: canReviewDiscounts(actor.roles), saPaid: actor.roles.includes('SUPER_ADMIN') },
-    items: list.map((o) => serializeOrder(o, pn.get(o.pageId))),
+    items: list.map((o) => ({ ...serializeOrder(o, pn.get(o.pageId)), driverPhone: o.driverId ? dph.get(o.driverId) ?? null : null })),
   };
 }
 
