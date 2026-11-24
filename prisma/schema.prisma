@@ -721,6 +721,10 @@ model Order {
   lateCancelledAt   DateTime?
   lateCancelByName  String?
   lateCancelNote    String?
+  /// #212 (эзэн): тооцоо түгжсэн өдрийн цуцлагдсан захиалгыг нягтлан хожуу «Хүргэсэн» болгосон — тэр өдрийн тооцоонд «цуцлагдсан» хэвээр; операторын цоожилсон цалин бол дараагийн цалинд нэмэгдэнэ
+  lateDeliveredAt     DateTime?
+  lateDeliverByName   String?
+  lateDeliverNote     String?
   issueResolvedByName String?
   issueResolveNote    String?
   /// Давхар дарах / сүлжээ тасрахаас хамгаалах (#47)
@@ -748,6 +752,7 @@ model Order {
   @@index([issueResolvedAt])
   @@index([lateCancelledAt])
   @@index([operatorId, lateCancelledAt])
+  @@index([operatorId, lateDeliveredAt])
 }
 
 /// Захиалгын мөр — барааны хуулбар (#28)

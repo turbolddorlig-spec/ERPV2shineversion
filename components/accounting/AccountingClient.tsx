@@ -182,6 +182,9 @@ export function AccountingClient() {
 
       {data?.extras ? <ExtrasSection d={data.extras} onDone={load} onErr={setErr} onOk={setOkMsg} /> : null}
 
+      {/* #212: захиалгын дугаараар хайх (хэзээний ч) */}
+      <OrderSearch onOpenDay={(d, drv) => { setDate(d); setOpen(drv); }} onChanged={load} />
+
       {/* Жолоочид */}
       <section className="overflow-hidden rounded-[20px] border border-line bg-surface shadow-card">
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2.5 sm:px-4">
@@ -414,6 +417,8 @@ interface DOrder {
   id: number; number: string; status: string; phone: string; total: number; originalTotal: number | null; prepaid: boolean; deliveryPayment: string | null;
   cancelReason: string | null; cancelNote: string | null; issueFault: string | null; postponed: boolean; deliveredAt: string | null; cancelledAt: string | null;
   province: string; district: string | null; addressDetail: string; deliveredByName: string | null; cancelledByName: string | null; refused: number; version: number;
+  /** #212: хожуу буцаалт (RETURNED) / хожуу хүргэлт (DELIVERED) хийгдсэн бол дахин солихгүй */
+  late?: string | null;
   lines: { id: number; name: string; label: string; qty: number; refusedQty: number; unitPrice: number }[];
 }
 export interface Detail {
@@ -572,7 +577,8 @@ function DriverDrawer({ driverId, date, onClose, onChanged, onPerf, onApprove }:
           <ul className="divide-y divide-line rounded-[14px] border border-line">
             {d.orders.map((o) => {
               const b = orderBadge(o);
-              const canToggle = !r.locked && !o.postponed && ['OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED'].includes(o.status);
+              // #212: түгжсэн өдөрт ч хүргэсэн ↔ цуцласан (хожуу буцаалт / хожуу хүргэлт); нэг удаа л
+              const canToggle = !o.postponed && !o.late && (r.locked ? ['DELIVERED', 'CANCELLED'] : ['OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED']).includes(o.status);
               return (
                 <li key={o.id} className="grid gap-x-4 gap-y-1 px-3 py-2.5 text-[13px] sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1.4fr)_auto]">
                   <div className="min-w-0">
@@ -584,7 +590,8 @@ function DriverDrawer({ driverId, date, onClose, onChanged, onPerf, onApprove }:
                   <div className="flex items-start justify-between gap-3 sm:flex-col sm:items-end">
                     <div className="text-right"><b className="whitespace-nowrap">{money(o.total)}</b>{o.originalTotal !== null && o.originalTotal !== o.total ? <span className="block text-[11px] text-subtle line-through">{money(o.originalTotal)}</span> : null}</div>
                     {canToggle ? <Button size="sm" variant="ghost" onClick={() => setToggle(o)}>Төлөв солих</Button> : null}
-                    {canToggle && o.status === 'DELIVERED' && o.lines.reduce((a, l) => a + l.qty - l.refusedQty, 0) > 1 ? <Button size="sm" variant="ghost" data-return-lines onClick={() => setRetLines(o)}>Бараа хасах</Button> : null}
+                    {o.late ? <span className="text-[11.5px] font-semibold text-warn">{o.late === 'RETURNED' ? 'Хожуу буцаасан' : 'Хожуу хүргэсэн'}</span> : null}
+                    {canToggle && !r.locked && o.status === 'DELIVERED' && o.lines.reduce((a, l) => a + l.qty - l.refusedQty, 0) > 1 ? <Button size="sm" variant="ghost" data-return-lines onClick={() => setRetLines(o)}>Бараа хасах</Button> : null}
                   </div>
                 </li>
               );
@@ -593,7 +600,7 @@ function DriverDrawer({ driverId, date, onClose, onChanged, onPerf, onApprove }:
           </ul>
         </div>
       ) : null}
-      {toggle ? <ToggleDialog o={toggle} onClose={() => setToggle(null)} onDone={async () => { setToggle(null); await load(); onChanged(); }} /> : null}
+      {toggle ? <ToggleDialog o={toggle} locked={!!r?.locked} onClose={() => setToggle(null)} onDone={async () => { setToggle(null); await load(); onChanged(); }} /> : null}
       {retLines ? <ReturnLinesDialog o={retLines} onClose={() => setRetLines(null)} onDone={async () => { setRetLines(null); await load(); onChanged(); }} /> : null}
     </Modal>
   );
@@ -645,7 +652,7 @@ function ReturnLinesDialog({ o, onClose, onDone }: { o: DOrder; onClose: () => v
   );
 }
 
-function ToggleDialog({ o, onClose, onDone }: { o: DOrder; onClose: () => void; onDone: () => void }) {
+function ToggleDialog({ o, locked, onClose, onDone }: { o: DOrder; locked?: boolean; onClose: () => void; onDone: () => void }) {
   const targets = o.status === 'OUT_FOR_DELIVERY' ? ['DELIVERED', 'CANCELLED'] : o.status === 'DELIVERED' ? ['CANCELLED'] : ['DELIVERED'];
   const [target, setTarget] = useState(targets[0]!);
   const [payment, setPayment] = useState('CASH');
@@ -661,14 +668,83 @@ function ToggleDialog({ o, onClose, onDone }: { o: DOrder; onClose: () => void; 
       footer={<><Button onClick={onClose}>Болих</Button><Button variant="primary" loading={busy} onClick={() => void go()}>Солих</Button></>}>
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap gap-2">{targets.map((t) => <button key={t} onClick={() => setTarget(t)} className={clsx('h-10 rounded-full border px-4 text-[13.5px] font-bold', target === t ? 'border-ink bg-ink text-on-ink' : 'border-line bg-surface')}>{t === 'DELIVERED' ? 'Хүргэсэн' : 'Цуцласан'}</button>)}</div>
-        {target === 'DELIVERED' && !o.prepaid ? (
+        {locked ? (
+          // #212: түгжсэн өдөр — хожуу буцаалт / хожуу хүргэлт
+          <div data-late-info className="rounded-xl border border-warn/40 bg-warn-soft px-3 py-2 text-[12.5px] text-warn [overflow-wrap:anywhere]">
+            <b className="block">🔒 Энэ өдрийн тооцоо баталгаажсан — {target === 'CANCELLED' ? 'хожуу буцаалт' : 'хожуу хүргэлт'}</b>
+            {target === 'CANCELLED'
+              ? 'Бараа үйлчлүүлэгчээс шууд үндсэн агуулахад нэмэгдэнэ — барааг гартаа авсан үедээ дарна уу. Жолоочийн тооцоо, цалин хөдлөхгүй (шаардлагатай бол гараар). Операторын цалин цоожлогдсон бол дараагийн цалингаас хасагдана.'
+              : 'Бараа үндсэн агуулахаас үйлчлүүлэгчид гарна. Жолоочийн тооцоо, мөнгө хөдлөхгүй (мөнгийг гараар). Операторын цалин цоожлогдсон бол дараагийн цалинд нэмэгдэнэ.'}
+            <span className="block font-semibold">Дахин солих боломжгүй.</span>
+          </div>
+        ) : null}
+        {target === 'DELIVERED' && !o.prepaid && !locked ? (
           <div className="flex flex-wrap gap-2">{['CASH', 'BANK', 'UNPAID'].map((p) => <button key={p} onClick={() => setPayment(p)} className={clsx('h-9 rounded-full border px-3 text-[13px] font-semibold', payment === p ? 'border-accent bg-accent-soft text-accent-ink' : 'border-line bg-surface')}>{PAY_L[p]}</button>)}</div>
         ) : null}
-        {o.status === 'CANCELLED' ? <p className="text-[12.5px] text-muted">Бараа жолоочид (агуулахад буцаагаагүй) байх ёстой.</p> : null}
+        {o.status === 'CANCELLED' && !locked ? <p className="text-[12.5px] text-muted">Бараа жолоочид (агуулахад буцаагаагүй) байх ёстой.</p> : null}
         <label htmlFor="tnote" className="text-[13px] font-semibold text-muted">Шалтгаан (заавал)</label>
         <textarea id="tnote" data-autofocus rows={2} maxLength={300} value={note} onChange={(e) => setNote(e.target.value)} className="rounded-xl border border-line bg-surface px-3 py-2" />
         {err ? <Notice>{err}</Notice> : null}
       </div>
     </Modal>
+  );
+}
+
+interface Found {
+  order: DOrder & { lines: { id: number; name: string; label: string | null; qty: number; refusedQty: number; unitPrice: number }[]; createdAt: string; operatorName: string | null; lateNote: string | null; lateAt: string | null; lateBy: string | null };
+  handover: { id: number; number: string; date: string; driverId: string; driverName: string } | null; locked: boolean; canToggle: boolean;
+}
+const ST_LABEL: Record<string, string> = { PENDING_PAYMENT: 'Төлбөр хүлээж буй', NEW: 'Шинэ', ASSIGNED: 'Оноосон', OUT_FOR_DELIVERY: 'Хүргэлтэд', DELIVERED: 'Хүргэсэн', CANCELLED: 'Цуцлагдсан' };
+
+/** #212 (эзэн): нягтлан захиалгын дугаараар хайж, тухайн үеийн падааны тооцоо руу орох / төлөв солих (түгжсэн өдөр — хожуу буцаалт, хожуу хүргэлт) */
+function OrderSearch({ onOpenDay, onChanged }: { onOpenDay: (date: string, driverId: string) => void; onChanged: () => void }) {
+  const [q, setQ] = useState('');
+  const [f, setF] = useState<Found | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [toggle, setToggle] = useState(false);
+  const find = async (num = q) => {
+    if (!num.replace(/\D/g, '')) return;
+    setBusy(true); setErr(null);
+    try { setF(await api<Found>(`/api/accounting/orders?number=${encodeURIComponent(num)}`)); } catch (e) { setF(null); setErr(msg(e)); } finally { setBusy(false); }
+  };
+  const o = f?.order;
+  return (
+    <section data-order-search className="rounded-[20px] border border-line bg-surface p-3 shadow-card sm:p-4">
+      <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); void find(); }}>
+        <span className="text-[14px] font-extrabold">🔎 Захиалга хайх</span>
+        <input value={q} onChange={(e) => setQ(e.target.value.replace(/\D/g, '').slice(0, 12))} inputMode="numeric" placeholder="Захиалгын дугаар (жишээ 00174486)" aria-label="Захиалгын дугаар"
+          className="h-10 min-w-0 flex-[1_1_200px] rounded-full border border-line bg-surface px-4 text-[14px] sm:max-w-[280px]" />
+        <Button type="submit" size="sm" variant="primary" loading={busy} disabled={!q}>Хайх</Button>
+        {f ? <Button size="sm" variant="ghost" onClick={() => { setF(null); setQ(''); }}>Цэвэрлэх</Button> : null}
+      </form>
+      {err ? <div className="mt-2"><Notice>{err}</Notice></div> : null}
+      {f && o ? (
+        <div data-found-order className="mt-3 grid gap-3 rounded-[14px] border border-line p-3 text-[13px] sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1.2fr)_auto]">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2"><Link href={`/orders?q=${o.number}`} className="text-[15px] font-extrabold hover:underline">№{o.number}</Link>
+              <Badge tone={o.status === 'DELIVERED' ? 'ok' : o.status === 'CANCELLED' ? 'bad' : 'info'}>{ST_LABEL[o.status] ?? o.status}</Badge>
+              {o.late ? <Badge tone="warn">{o.late === 'RETURNED' ? 'Хожуу буцаасан' : 'Хожуу хүргэсэн'}</Badge> : null}
+              {o.prepaid ? <Badge tone="accent">Орон нутаг</Badge> : null}</div>
+            <div className="text-subtle [overflow-wrap:anywhere]">{o.phone} · {[o.district, o.addressDetail].filter(Boolean).join(', ')}</div>
+            <div className="text-subtle [overflow-wrap:anywhere]">Үүссэн {ubDateTime(o.createdAt)} · опп {o.operatorName ?? '—'}</div>
+            {o.cancelNote ? <div className="text-[12px] text-subtle [overflow-wrap:anywhere]">«{o.cancelNote}»</div> : null}
+            {o.lateNote ? <div className="text-[12px] font-semibold text-warn [overflow-wrap:anywhere]">{o.lateBy}: «{o.lateNote}»</div> : null}
+          </div>
+          <div className="min-w-0 [overflow-wrap:anywhere]">
+            {o.lines.map((l) => <span key={l.id} className="block">{l.name}{l.label ? ` · ${l.label}` : ''} ×{l.qty}{l.refusedQty ? <b className="text-warn"> (болиулсан {l.refusedQty})</b> : null}</span>)}
+            <b className="mt-1 block">{money(o.total)}</b>
+          </div>
+          <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
+            {f.handover ? <>
+              <span className="text-[12.5px] text-muted sm:text-right [overflow-wrap:anywhere]">Падаан {f.handover.number} · {f.handover.date}<span className="block">{f.handover.driverName}{f.locked ? ' · 🔒 тооцоо баталгаажсан' : ''}</span></span>
+              <Button size="sm" onClick={() => onOpenDay(f.handover!.date, f.handover!.driverId)}>Тэр өдрийн тооцоо</Button>
+              {f.canToggle ? <Button size="sm" variant="primary" data-found-toggle onClick={() => setToggle(true)}>Төлөв солих</Button> : null}
+            </> : <span className="text-[12.5px] text-muted">Падаанд ороогүй захиалга</span>}
+          </div>
+        </div>
+      ) : null}
+      {toggle && o ? <ToggleDialog o={o} locked={f!.locked} onClose={() => setToggle(false)} onDone={async () => { setToggle(false); await find(o.number); onChanged(); }} /> : null}
+    </section>
   );
 }

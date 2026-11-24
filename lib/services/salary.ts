@@ -264,6 +264,7 @@ async function computeInputs(tx: Tx | typeof db, st: Staff, p: Period) {
   const isOpp = st.roles.some((r) => r === 'OPERATOR' || r === 'OPERATOR_LEAD');
   let orderCount = 0;
   let lateReturns: { id: number; number: string }[] = [];
+  let lateDelivers: { id: number; number: string }[] = [];
   if (!st.external && cfg.salaryType === 'ORDER_BASED' && isOpp) {
     // #185 (эзний шийдвэр, #157-г орлоно): хуучин ERP шиг — тухайн хагас сард ҮҮССЭН, ХҮРГЭГДСЭН захиалга (Улаанбаатар).
     // Цалинг хагас сар дууссанаас 4 хоногийн дараа боддог тул ихэнх нь хүргэгдсэн / цуцлагдсан байна; хүргэгдээгүй, цуцлагдсан нь тоологдохгүй.
@@ -283,6 +284,15 @@ async function computeInputs(tx: Tx | typeof db, st: Staff, p: Period) {
       WHERE o."operatorId" = ${st.userId!}::uuid AND o."lateCancelledAt" IS NOT NULL AND o."lateCancelledAt" < ${ubDayStart(addDays(p.end, 1))}
         AND GREATEST((o."lateCancelledAt" + interval '8 hours')::date, r."periodEnd" + 1) BETWEEN ${dateOnly(p.start)}::date AND ${dateOnly(p.end)}::date
       ORDER BY o.id`;
+    // #212 (эзэн): хожуу «Хүргэсэн» болгосон захиалга — тэр хугацааны цалин аль хэдийн ЦООЖЛОГДСОН бол (тэнд тоологдоогүй) энэ цалинд нэмнэ.
+    // Цоожлогдоогүй бол orderCount-д ердийнхөөрөө орно (давхардахгүй). Нэмэх өдөр = max(хүргэсэн өдөр, цоожилсон хугацааны дараагийн өдөр)
+    lateDelivers = await tx.$queryRaw<{ id: number; number: string }[]>`
+      SELECT o.id, o.number FROM "Order" o
+      JOIN "StaffSalaryRecord" r ON r."staffKey" = ${st.key} AND r."isLocked" AND r."salaryType" = 'ORDER_BASED' AND r."lockedAt" < o."lateDeliveredAt"
+        AND (o."createdAt" + interval '8 hours')::date BETWEEN r."periodStart" AND r."periodEnd"
+      WHERE o."operatorId" = ${st.userId!}::uuid AND o.status = 'DELIVERED' AND o."lateDeliveredAt" IS NOT NULL AND o."lateDeliveredAt" < ${ubDayStart(addDays(p.end, 1))}
+        AND GREATEST((o."lateDeliveredAt" + interval '8 hours')::date, r."periodEnd" + 1) BETWEEN ${dateOnly(p.start)}::date AND ${dateOnly(p.end)}::date
+      ORDER BY o.id`;
   }
   // Торгууль: хасагдаагүй үлдэгдэл (энэ хугацаа + өмнөхөөс үлдсэн), ролын төрлөөр; «Хаяг тодорхойгүй» хасна (хуучин шиг)
   // Аудит #150: торгуулийн модультай нэг эх сурвалж (salaryPenaltyType)
@@ -297,7 +307,7 @@ async function computeInputs(tx: Tx | typeof db, st: Staff, p: Period) {
   // Модуль 7г (#104): маркетингийн үнэлгээний цалин — «Нэмэлт орлого»-д автоматаар (давхардахгүй)
   // Аудит #152: үнэлгээний цалин одоогийн ролоос үл хамааран (маркетингаас өөр ажилд шилжсэн ч тавигдсан үнэлгээ алга болохгүй)
   const evalSalary = st.external ? 0 : await evaluationSalary(tx, st.userId!, p.start, p.end);
-  return { cfg, isOpp, totalDays, workingDays, offDays, dailyRate, calcBase, orderCount, lateReturns, penalties, loans, debts, evalSalary };
+  return { cfg, isOpp, totalDays, workingDays, offDays, dailyRate, calcBase, orderCount, lateReturns, lateDelivers, penalties, loans, debts, evalSalary };
 }
 
 export async function prepareSalary(actor: UserActor, staffKeyIn: unknown, ymIn: unknown, halfIn: unknown) {
@@ -305,7 +315,8 @@ export async function prepareSalary(actor: UserActor, staffKeyIn: unknown, ymIn:
   const st = await staffOf(db, String(staffKeyIn ?? ''));
   const p = periodOf(String(ymIn ?? ''), Number(halfIn));
   const [inp, rec] = await Promise.all([computeInputs(db, st, p), db.staffSalaryRecord.findUnique({ where: { staffKey_periodStart: { staffKey: st.key, periodStart: dateOnly(p.start) } } })]);
-  return { staff: st, period: p, auto: { ...inp, orderSalary: inp.orderCount * inp.cfg.oppRatePerOrder, lateDeduction: inp.lateReturns.length * inp.cfg.oppRatePerOrder, lateLabel: inp.lateReturns.length ? lateLabel(inp.lateReturns) : null, penaltyTotal: inp.penalties.reduce((s, x) => s + x.remaining, 0) }, record: rec, dayLabels: DAY_TYPE_LABEL };
+  return { staff: st, period: p, auto: { ...inp, orderSalary: inp.orderCount * inp.cfg.oppRatePerOrder, lateDeduction: inp.lateReturns.length * inp.cfg.oppRatePerOrder, lateLabel: inp.lateReturns.length ? lateLabel(inp.lateReturns) : null,
+    lateAddition: inp.lateDelivers.length * inp.cfg.oppRatePerOrder, lateAddLabel: inp.lateDelivers.length ? lateAddLabel(inp.lateDelivers) : null, penaltyTotal: inp.penalties.reduce((s, x) => s + x.remaining, 0) }, record: rec, dayLabels: DAY_TYPE_LABEL };
 }
 
 export interface SaveInput {
@@ -316,6 +327,9 @@ export interface SaveInput {
 /** Хадгалах — бүх нийлбэрийг сервер тооцно. Цоожтой бол 423 */
 /** Аудит #160: хожуу буцаасан захиалгын автомат суутгалын мөр */
 export const LATE_LABEL = 'Хүргэсний дараа буцаасан';
+/** #212: хожуу хүргэсэн захиалгын автомат нэмэгдлийн мөр */
+export const LATE_ADD_LABEL = 'Хожуу хүргэсэн';
+const lateAddLabel = (xs: { number: string }[]) => `${LATE_ADD_LABEL} ${xs.length} захиалга (${xs.slice(0, 10).map((x) => `№${x.number}`).join(', ')}${xs.length > 10 ? '…' : ''})`;
 const lateLabel = (xs: { number: string }[]) => `${LATE_LABEL} ${xs.length} захиалга (${xs.slice(0, 10).map((x) => `№${x.number}`).join(', ')}${xs.length > 10 ? '…' : ''})`;
 
 export async function saveSalary(actor: UserActor, input: SaveInput) {
@@ -334,8 +348,10 @@ export async function saveSalary(actor: UserActor, input: SaveInput) {
     const baseSalary = orderBased ? 0 : input.baseSalary === undefined ? inp.calcBase : cleanInt(input.baseSalary, 'Үндсэн цалин');
     const bonusSalary = input.bonusSalary === undefined ? inp.cfg.bonusSalary : cleanInt(input.bonusSalary, 'Урамшуулал');
     const orderSalary = orderBased ? inp.orderCount * inp.cfg.oppRatePerOrder : 0;
-    const additions = cleanLines(input.additions, 'Нэмэлт орлого').filter((x) => x.label !== EVAL_LABEL);
+    const additions = cleanLines(input.additions, 'Нэмэлт орлого').filter((x) => x.label !== EVAL_LABEL && !x.label.startsWith(LATE_ADD_LABEL));
     if (inp.evalSalary > 0) additions.push({ label: EVAL_LABEL, amount: inp.evalSalary });
+    const lateAdd = orderBased ? inp.lateDelivers.length * inp.cfg.oppRatePerOrder : 0;
+    if (lateAdd > 0) additions.push({ label: lateAddLabel(inp.lateDelivers), amount: lateAdd });
     const deductions = cleanLines(input.deductions, 'Суутгал').filter((x) => !x.label.startsWith(LATE_LABEL));
     const lateAmount = orderBased ? inp.lateReturns.length * inp.cfg.oppRatePerOrder : 0;
     if (lateAmount > 0) deductions.push({ label: lateLabel(inp.lateReturns), amount: lateAmount });
@@ -441,6 +457,10 @@ export async function lockSalary(actor: UserActor, idIn: unknown, versionIn?: un
       const savedLate = ((r.deductions as { label: string; amount: number }[] | null) ?? []).filter((x) => x.label.startsWith(LATE_LABEL)).reduce((s2, x) => s2 + x.amount, 0);
       const nowLate = inp.lateReturns.length * r.orderRate;
       if (savedLate !== nowLate) throw conflict(`Хожуу буцаасан захиалгын суутгал өөрчлөгдсөн (${money(savedLate)} → ${money(nowLate)}) — цалинг дахин хадгална уу`, 'stale');
+      // #212: хожуу хүргэсэн захиалгын нэмэгдэл өөрчлөгдсөн бол хуучин дүнгээр цоожлохгүй
+      const savedAdd = ((r.additions as { label: string; amount: number }[] | null) ?? []).filter((x) => x.label.startsWith(LATE_ADD_LABEL)).reduce((s2, x) => s2 + x.amount, 0);
+      const nowAdd = inp.lateDelivers.length * r.orderRate;
+      if (savedAdd !== nowAdd) throw conflict(`Хожуу хүргэсэн захиалгын нэмэгдэл өөрчлөгдсөн (${money(savedAdd)} → ${money(nowAdd)}) — цалинг дахин хадгална уу`, 'stale');
     }
     const prev = (r.applied as Applied | null) ?? { penalties: [], loansCharged: [], debtPaymentIds: [] };
     // Аудит А7: хадгалсны дараа маркетингийн үнэлгээ өөрчлөгдсөн бол хуучин дүнгээр түгжихгүй

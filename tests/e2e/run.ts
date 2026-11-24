@@ -556,6 +556,10 @@ async function main() {
     check('банк: ахлах оператор CSV экспорт татахгүй → 403 (#173)', exp6ol.status === 403, String(exp6ol.status));
     const exp6 = await req('/api/bank/export', { cookie: acc6.cookie });
     check('банк: CSV экспорт (нягтлан)', exp6.status === 200 && exp6.text.includes('Огноо,Утга,Дүн'), String(exp6.status));
+    // #212: нягтлан захиалгын дугаараар хайх — нягтлан 404 (байхгүй дугаар), оператор 403
+    const fo1 = await req('/api/accounting/orders?number=99999999', { cookie: acc6.cookie });
+    const fo2 = await req('/api/accounting/orders?number=1', { cookie: op4.cookie });
+    check('нягтлан: дугаараар хайх — байхгүй 404, оператор 403', fo1.status === 404 && fo2.status === 403, `${fo1.status} ${fo2.status}`);
     // #211: мөнгө буцаах хүсэлт — оператор, нягтлан жагсаалт харна; оператор эцэслэхгүй (403); буруу данс 400
     const rf1 = await req('/api/bank/refunds', { cookie: op4.cookie });
     const rf2 = await req('/api/bank/refunds?status=DONE', { cookie: acc6.cookie });

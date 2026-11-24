@@ -131,10 +131,11 @@ async function deliveredLocked(n = 1) {
 }
 
 describe('#160 хожуу буцаалт', () => {
-  it('түгжсэн өдөр нягтлан «Цуцалсан» болгоно: тооцоо хөдлөхгүй, бараа жолоочид буцна, дахин солихгүй; бусад төлөв солих түгжээтэй хэвээр', async () => {
+  it('түгжсэн өдөр нягтлан «Цуцалсан» болгоно: тооцоо хөдлөхгүй, бараа шууд үндсэн агуулахад (#212), дахин солихгүй; бусад төлөв солих түгжээтэй хэвээр', async () => {
     const St = await S();
     const { ids: [a, b], day } = await deliveredLocked(2);
     const dl = await drvLoc(drv); const before = await bal(dl, v1);
+    const ml = await locOf(mainWh); const whBefore = await bal(ml, v1);
     await err(St.toggleOrderStatus(acc, a!, { target: 'CANCELLED' }), 400, 'reason_required');
     await St.toggleOrderStatus(acc, a!, { target: 'CANCELLED', note: 'Үйлчлүүлэгч 7 хоногийн дараа буцаасан' });
     const o = await db.order.findUniqueOrThrow({ where: { id: a! } });
@@ -143,21 +144,28 @@ describe('#160 хожуу буцаалт', () => {
     const day2 = (await (await C()).computeDay(db, today)).find((x) => x.driverId === drv.id)!;
     expect([day2.delivered, day2.cash, day2.salary, day2.toReceive]).toEqual([day.delivered, day.cash, day.salary, day.toReceive]);
     expect((await db.driverSettlement.findFirstOrThrow({ where: { driverId: drv.id } })).status).toBe('COMPLETED');
-    // бараа үйлчлүүлэгчээс жолоочид (буцаалтаар агуулахад өгнө)
-    expect(await bal(dl, v1)).toBe(before + 2);
+    // #212: бараа үйлчлүүлэгчээс шууд үндсэн агуулахад (нягтлан хүлээн авсан) — жолоочид бичигдэхгүй, өр үүсэхгүй
+    expect(await bal(dl, v1)).toBe(before);
+    expect(await bal(ml, v1)).toBe(whBefore + 2);
+    expect(await db.companyDebt.count({ where: { driverId: drv.id, kind: 'GOODS_NOT_RETURNED' } })).toBe(0);
     await err(St.toggleOrderStatus(acc, a!, { target: 'DELIVERED', note: 'Буцааж хүргэсэн' }), 409, 'late_returned');
     // түгжсэн өдөр «хүргэсэн» болгох зэрэг бусад өөрчлөлт хориотой хэвээр
     await err(DR.undoDelivery(drv, b!, { note: 'Жолооч оролдов' }), 409);
     await recOk();
   });
 
-  it('захиалга үүссэнээс 14 хоног өнгөрсөн бол хэн ч төлөв солихгүй', async () => {
+  it('#212: 14 хоног өнгөрсөн ч нягтлан, супер админ «Төлөв солих» хийнэ; админ хийхгүй', async () => {
     const St = await S();
-    const { ids: [a] } = await deliveredLocked(1);
-    await db.order.update({ where: { id: a! }, data: { createdAt: new Date(Date.now() - 15 * 86_400_000) } });
-    await err(St.toggleOrderStatus(acc, a!, { target: 'CANCELLED', note: 'Хэтэрхий хожуу буцаалт' }), 409, 'too_old');
-    const o = await db.order.findUniqueOrThrow({ where: { id: a! } });
-    await err(O.saCancelOrder(sa, a!, { reason: 'OTHER', note: 'Супер админ оролдов', version: o.version }), 409, 'too_old');
+    const { ids: [a, b] } = await deliveredLocked(2);
+    await db.order.updateMany({ where: { id: { in: [a!, b!] } }, data: { createdAt: new Date(Date.now() - 60 * 86_400_000) } });
+    await err(St.toggleOrderStatus(await actor(['ADMIN']), a!, { target: 'CANCELLED', note: 'Хэтэрхий хожуу буцаалт' }), 409, 'too_old');
+    await St.toggleOrderStatus(acc, a!, { target: 'CANCELLED', note: '2 сарын дараа буцаасан' });
+    await St.toggleOrderStatus(sa, b!, { target: 'CANCELLED', note: '2 сарын дараа буцаасан' });
+    expect((await db.order.findMany({ where: { id: { in: [a!, b!] } } })).map((o) => o.status)).toEqual(['CANCELLED', 'CANCELLED']);
+    // захиалгын хуудасны СА цуцлалт өөрийн хязгаартай хэвээр
+    const c = (await O.createOrder(op, ub({ deliveryDate: today }))).order;
+    await db.order.update({ where: { id: c.id }, data: { createdAt: new Date(Date.now() - 15 * 86_400_000) } });
+    await recOk();
   });
 
   it('операторын цалин: цоожилсон цалинд тоологдсон бол дараагийн цалингаас хасна; цоожлоогүй бол автоматаар тоологдохгүй (давхар хасахгүй)', async () => {
@@ -206,5 +214,97 @@ describe('#160 хожуу буцаалт', () => {
     await db.companyDebt.create({ data: { driverId: drv.id, driverName: drv.name, kind: 'GOODS_NOT_RETURNED', description: 'Буцаагаагүй', amount: 20000, qty: 2, unitPrice: 10000, variantId: v1, date: U.dateOnly(U.ubDay(new Date(), -8)), createdByName: 'Автомат' } });
     expect(await DB.staleGoodsAlert(['SUPER_ADMIN'])).toMatchObject({ drivers: 1, qty: 2, amount: 20000, days: 7 });
     expect(await DB.staleGoodsAlert(['ADMIN'])).toBeNull();
+  });
+});
+
+describe('#212 хожуу хүргэлт, дугаараар хайх', () => {
+  /** a = хүргэсэн, b = жолооч цуцалсан (бараа агуулахад буцаасан) → тооцоо баталгаажсан */
+  async function cancelledLocked() {
+    const St = await S();
+    const [a, b] = await outFor(drv, 2);
+    await DR.deliverOrder(drv, a!, { payment: 'CASH' });
+    await DR.driverCancel(drv, b!, { note: 'Үйлчлүүлэгч утсаа авахгүй байна' });
+    const g = await G.goodsView(drv.id);
+    await G.receiveReturn(wh, { driverId: drv.id, lines: g.items.filter((i) => i.returnable > 0).map((i) => ({ variantId: i.variantId, qty: i.returnable })), idemKey: key() });
+    const day = (await (await C()).computeDay(db, today)).find((x) => x.driverId === drv.id)!;
+    await St.submitSettlement(drv, { date: today, cash: day.toReceive });
+    const s = await db.driverSettlement.findFirstOrThrow({ where: { driverId: drv.id } });
+    await St.approveSettlement(acc, s.id);
+    return { a: a!, b: b!, day };
+  }
+
+  it('түгжсэн өдрийн цуцлагдсаныг «Хүргэсэн»: бараа үндсэн агуулахаас гарна, тооцоо хөдлөхгүй, дахин солихгүй', async () => {
+    const St = await S();
+    const { b, day } = await cancelledLocked();
+    const ml = await locOf(mainWh); const w1 = await bal(ml, v1); const w2 = await bal(ml, v2);
+    const dl = await drvLoc(drv); const d1 = await bal(dl, v1);
+    await St.toggleOrderStatus(acc, b, { target: 'DELIVERED', note: 'Үйлчлүүлэгч дараа нь ирж авсан' });
+    const o = await db.order.findUniqueOrThrow({ where: { id: b } });
+    expect([o.status, !!o.lateDeliveredAt, o.lateDeliverByName, o.collectAmount, o.cancelReason]).toEqual(['DELIVERED', true, acc.name, 0, 'DRIVER_CANCELLED']);
+    expect([await bal(ml, v1), await bal(ml, v2), await bal(dl, v1)]).toEqual([w1 - 2, w2 - 1, d1]);
+    const day2 = (await (await C()).computeDay(db, today)).find((x) => x.driverId === drv.id)!;
+    expect([day2.delivered, day2.cash, day2.salary, day2.toReceive]).toEqual([day.delivered, day.cash, day.salary, day.toReceive]);
+    await err(St.toggleOrderStatus(acc, b, { target: 'CANCELLED', note: 'Дахин буцаах' }), 409, 'late_delivered');
+    expect(await db.auditLog.count({ where: { action: 'order.late_delivered', entityId: String(b) } })).toBe(1);
+    await recOk();
+  });
+
+  it('агуулахад бараа хүрэлцэхгүй бол хожуу хүргэлт хийгдэхгүй (үлдэгдэл хасах руу орохгүй)', async () => {
+    const St = await S();
+    const { b } = await cancelledLocked();
+    const ml = await locOf(mainWh);
+    const q = await bal(ml, v2);
+    await D.createIssue(wh, { warehouseId: mainWh, reason: 'DAMAGE', lines: [{ variantId: v2, qty: q }], note: 'Гэмтэл туршилт', idemKey: key() });
+    await err(St.toggleOrderStatus(acc, b, { target: 'DELIVERED', note: 'Үйлчлүүлэгч авсан' }), 409, 'insufficient_stock');
+    expect((await db.order.findUniqueOrThrow({ where: { id: b } })).status).toBe('CANCELLED');
+    await recOk();
+  });
+
+  it('операторын цалин: цоожилсон бол дараагийн цалинд нэмнэ; цоожлоогүй бол ердийнхөөрөө тоологдоно', async () => {
+    const St = await S(); const Sal = await SAL();
+    const key2 = `u:${op.id}`;
+    await Sal.setConfig(sa, { staffKey: key2, salaryType: 'ORDER_BASED', baseSalary: 0, bonusSalary: 0, oppRatePerOrder: 1500, dailyRate: 0 });
+    const { b } = await cancelledLocked();
+    const ym = today.slice(0, 7);
+    const rec = await Sal.saveSalary(sa, { staffKey: key2, ym, half: half() });
+    expect(rec.orderCount).toBe(1);
+    await Sal.lockSalary(sa, rec.id);
+    await St.toggleOrderStatus(acc, b, { target: 'DELIVERED', note: 'Үйлчлүүлэгч дараа нь авсан' });
+    const np = nextPeriod();
+    const pre = await Sal.prepareSalary(sa, key2, np.ym, np.half);
+    expect([pre.auto.lateDelivers.length, pre.auto.lateAddition]).toEqual([1, 1500]);
+    expect(pre.auto.lateAddLabel).toContain('Хожуу хүргэсэн 1 захиалга');
+    const r2 = await Sal.saveSalary(sa, { staffKey: key2, ym: np.ym, half: np.half });
+    expect((r2.additions as { label: string; amount: number }[]).find((x) => x.label.startsWith('Хожуу хүргэсэн'))?.amount).toBe(1500);
+  });
+
+  it('цоожлоогүй үед хожуу хүргэсэн бол тэр цалинд тоологдоно, дараагийнд нэмэгдэхгүй', async () => {
+    const St = await S(); const Sal = await SAL();
+    const key2 = `u:${op.id}`;
+    await Sal.setConfig(sa, { staffKey: key2, salaryType: 'ORDER_BASED', baseSalary: 0, bonusSalary: 0, oppRatePerOrder: 1500, dailyRate: 0 });
+    const { b } = await cancelledLocked();
+    await St.toggleOrderStatus(acc, b, { target: 'DELIVERED', note: 'Үйлчлүүлэгч авсан' });
+    expect((await Sal.prepareSalary(sa, key2, today.slice(0, 7), half())).auto.orderCount).toBe(2);
+    const np = nextPeriod();
+    expect((await Sal.prepareSalary(sa, key2, np.ym, np.half)).auto.lateDelivers).toHaveLength(0);
+  });
+
+  it('дугаараар хайх: падааны өдөр, түгжээ, «Төлөв солих» боломж; нягтлан биш бол 403', async () => {
+    const St = await S();
+    const { a, b } = await cancelledLocked();
+    const na = (await db.order.findUniqueOrThrow({ where: { id: a } })).number;
+    const f = await St.findOrderForAccounting(acc, na);
+    expect([f.order.id, f.locked, f.canToggle, f.handover?.date, f.handover?.driverId]).toEqual([a, true, true, today, drv.id]);
+    expect((await St.findOrderForAccounting(acc, String(Number(na)))).order.id).toBe(a); // эхний 0-гүй бичсэн ч олно
+    await err(St.findOrderForAccounting(op, na), 403);
+    await err(St.findOrderForAccounting(acc, '99999999'), 404);
+    await St.toggleOrderStatus(acc, a, { target: 'CANCELLED', note: 'Хожуу буцаасан' });
+    const f2 = await St.findOrderForAccounting(acc, na);
+    expect([f2.order.late, f2.canToggle]).toEqual(['RETURNED', false]);
+    // түгжсэн өдрийн жолоочийн дэлгэрэнгүйд «хожуу» тэмдэг
+    const det = await St.accountingDriver(acc, drv.id, today);
+    expect(det.orders.find((o) => o.id === a)?.late).toBe('RETURNED');
+    expect(det.orders.find((o) => o.id === b)?.late).toBeNull();
+    await recOk();
   });
 });

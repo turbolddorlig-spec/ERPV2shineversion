@@ -10,7 +10,7 @@ import { inTx, lockOrder, requireReason, type UserActor } from '../orders/core';
 import { bustCounts, serializeOrder } from '../orders/queries';
 import { skipMeta } from '../orders/meta';
 import { assignCore } from './assign';
-import { addDays, assertLockedDrivers, driverLocationId, isGiven, lockOrderDrivers, removeFromHandover, type Tx } from './core';
+import { addDays, assertLockedDrivers, driverLocationId, isGiven, lockOrderDrivers, primaryWarehouse, removeFromHandover, type Tx } from './core';
 import { assertDayOpen } from '../accounting/lock';
 import { syncShortageDebts } from '../accounting/debts';
 import { computeDay } from '../accounting/calc';
@@ -312,7 +312,8 @@ export async function returnDeliveredLines(actor: UserActor, idIn: unknown, inpu
 /**
  * Аудит #160 (эзний шийдвэр): түгжсэн (нягтлан баталгаажуулсан) өдрийн хүргэсэн захиалгыг үйлчлүүлэгч хожуу буцаасан — зөвхөн нягтлангийн «Төлөв солих»-оос.
  *  • Захиалга «Цуцлагдсан» болно, гэхдээ хүргэсэн мөч, төлбөр, дүн хадгалагдана — тэр өдрийн тооцоонд «хүргэсэн» хэвээр (жолоочийн тооцоо, цалин хөдлөхгүй).
- *  • Бараа үйлчлүүлэгчээс → тэр захиалгын жолоочид (DELIVERY_BACK), жолооч буцаалтаар агуулахад өгнө (өгөхгүй бол шөнө өр).
+ *  • #212 (эзэн): бараа үйлчлүүлэгчээс → шууд ҮНДСЭН АГУУЛАХАД (DELIVERY_BACK) — нягтлан барааг гартаа авах үед дарна (агуулахын эрхээр хүлээн авна);
+ *    жолоочид бичигдэхгүй тул түүнд буруу өр үүсэхгүй. (Өмнө нь жолоочид бичигдэж, жолооч буцаалтаар өгдөг байв — #160.)
  *  • Операторын цалин: тэр хагас сарын цалин цоожлогдоогүй бол автоматаар тоологдохгүй; цоожлогдсон бол дараагийн цалингаас хасагдана (salary.ts).
  */
 export async function lateReturn(actor: UserActor, idIn: unknown, input: { note?: unknown; version?: unknown }) {
@@ -324,10 +325,11 @@ export async function lateReturn(actor: UserActor, idIn: unknown, input: { note?
     if (o.status === 'CANCELLED' && o.lateCancelledAt) return { order: o, duplicate: true };
     if (o.status !== 'DELIVERED') throw conflict('Зөвхөн хүргэсэн захиалгыг буцаана', 'bad_status');
     checkVersion(o, input.version);
+    if (o.lateDeliveredAt) throw conflict('Хожуу «Хүргэсэн» болгосон захиалга — төлвийг дахин солихгүй', 'late_delivered');
     const drv = driverOf(o, actor, ob);
     const labels = new Map(o.lines.map((l) => [l.variantId, l.name]));
-    const toId = await driverLocationId(tx, drv);
-    const back = o.lines.map((l) => ({ type: 'DELIVERY_BACK' as const, variantId: l.variantId, qty: l.qty - l.refusedQty, fromId: null, toId, note: `№${o.number} хожуу буцаалт (үйлчлүүлэгч буцаасан)` })).filter((m) => m.qty > 0);
+    const { locationId: toId, warehouse } = await primaryWarehouse(tx);
+    const back = o.lines.map((l) => ({ type: 'DELIVERY_BACK' as const, variantId: l.variantId, qty: l.qty - l.refusedQty, fromId: null, toId, note: `№${o.number} хожуу буцаалт — нягтлан хүлээн авав (${warehouse.name})` })).filter((m) => m.qty > 0);
     await applyMoves(tx, actor, { type: 'order', id }, back, labels);
     // Төлөөгүй мөр (өрийн дэвтэр) — бараа буцсан тул хаагдана
     await tx.driverDebt.updateMany({ where: { orderId: id, paidAt: null, cancelledAt: null }, data: { cancelledAt: new Date() } });
@@ -336,11 +338,46 @@ export async function lateReturn(actor: UserActor, idIn: unknown, input: { note?
       status: 'CANCELLED', cancelReason: 'CUSTOMER_CANCELLED', cancelNote: `Хожуу буцаалт: ${note}`, cancelledAt: now, cancelledByName: byName(actor, ob),
       lateCancelledAt: now, lateCancelByName: actor.name, lateCancelNote: note, version: { increment: 1 },
     } });
-    await writeAudit(actor, 'order.late_return', 'Order', String(id), { number: o.number, note, driver: drv.name, operator: o.operatorName, total: o.total, deliveredAt: o.deliveredAt }, tx, ['order', 'delivery', 'money', 'stock']);
+    await writeAudit(actor, 'order.late_return', 'Order', String(id), { number: o.number, note, driver: drv.name, operator: o.operatorName, total: o.total, deliveredAt: o.deliveredAt, warehouse: warehouse.name, goods: back.map((m) => ({ name: labels.get(m.variantId), qty: m.qty })) }, tx, ['order', 'delivery', 'money', 'stock']);
     return { order: u, duplicate: false };
   });
   bust();
   if (!r.duplicate && r.order.prepaid) await bankRestatus(r.order.id);
+  return r;
+}
+
+/**
+ * #212 (эзний шийдвэр): түгжсэн (нягтлан баталгаажуулсан) өдрийн ЦУЦЛАГДСАН захиалгыг хожуу «Хүргэсэн» болгох — зөвхөн нягтлангийн «Төлөв солих»-оос.
+ *  • Бараа үндсэн агуулахаас → үйлчлүүлэгчид (DELIVERY), журналаар; хүрэлцэхгүй бол зөвшөөрөхгүй.
+ *  • Тэр өдрийн жолоочийн тооцоо, мөнгө хөдлөхгүй (тооцоонд «цуцлагдсан» хэвээр) — мөнгийг нягтлан гараар зохицуулна (collectAmount 0, өрийн дэвтэргүй).
+ *  • Операторын цалин: тэр хагас сарын цалин цоожлогдоогүй бол ердийнхөөрөө тоологдоно; цоожлогдсон бол дараагийн цалинд нэмэгдэнэ (salary.ts).
+ *  • Цуцлалтын шалтгаан, мөч хадгалагдана (тэр өдрийн тооцоо зөв бодогдоно).
+ */
+export async function lateDeliver(actor: UserActor, idIn: unknown, input: { note?: unknown; version?: unknown }) {
+  const id = cleanId(idIn);
+  const note = requireReason(input.note);
+  const ob: OnBehalf = { accountant: true };
+  const r = await inTx(async (tx) => {
+    const o = await loadOwn(tx, actor, id, 'driver', ob);
+    if (o.status === 'DELIVERED' && o.lateDeliveredAt) return { order: o, duplicate: true };
+    if (o.status !== 'CANCELLED') throw conflict('Зөвхөн цуцлагдсан захиалгыг хүргэсэн болгоно', 'bad_status');
+    if (o.lateCancelledAt) throw conflict('Хожуу буцаалт хийгдсэн захиалга — төлвийг дахин солихгүй', 'late_returned');
+    checkVersion(o, input.version);
+    const drv = driverOf(o, actor, ob);
+    const labels = new Map(o.lines.map((l) => [l.variantId, `${l.name}${l.label ? ` · ${l.label}` : ''}`]));
+    const { locationId: fromId, warehouse } = await primaryWarehouse(tx);
+    const out = o.lines.map((l) => ({ type: 'DELIVERY' as const, variantId: l.variantId, qty: l.qty - l.refusedQty, fromId, toId: null, note: `№${o.number} хожуу хүргэсэн — нягтлан (${warehouse.name}-аас)` })).filter((m) => m.qty > 0);
+    if (!out.length) throw conflict('Хүргэх бараа алга', 'no_goods');
+    await applyMoves(tx, actor, { type: 'order', id }, out, labels);
+    const now = new Date();
+    const u = await tx.order.update({ where: { id }, data: {
+      status: 'DELIVERED', deliveredAt: now, deliveredByName: byName(actor, ob), collectAmount: 0,
+      lateDeliveredAt: now, lateDeliverByName: actor.name, lateDeliverNote: note, version: { increment: 1 },
+    } });
+    await writeAudit(actor, 'order.late_delivered', 'Order', String(id), { number: o.number, note, driver: drv.name, operator: o.operatorName, total: o.total, cancelledAt: o.cancelledAt, cancelReason: o.cancelReason, warehouse: warehouse.name, goods: out.map((m) => ({ name: labels.get(m.variantId), qty: m.qty })) } as Prisma.InputJsonValue, tx, ['order', 'delivery', 'money', 'stock']);
+    return { order: u, duplicate: false };
+  });
+  bust();
   return r;
 }
 

@@ -123,9 +123,9 @@ async function driverDetail(driverId: string, date: string) {
   const orders = await db.$queryRaw<{
     id: number; number: string; status: string; phone: string; total: number; originalTotal: number | null; prepaid: boolean; deliveryPayment: string | null;
     cancelReason: string | null; cancelNote: string | null; issueFault: string | null; postponed: boolean; deliveredAt: Date | null; cancelledAt: Date | null;
-    province: string; district: string | null; addressDetail: string; deliveredByName: string | null; cancelledByName: string | null; refused: number; version: number;
+    province: string; district: string | null; addressDetail: string; deliveredByName: string | null; cancelledByName: string | null; refused: number; version: number; late: string | null;
   }[]>`
-    SELECT o.id, o.number, o.status::text AS status, o.phone, o.total, o."originalTotal", o.prepaid, o."deliveryPayment"::text AS "deliveryPayment",
+    SELECT o.id, o.number, o.status::text AS status, CASE WHEN o."lateCancelledAt" IS NOT NULL THEN 'RETURNED' WHEN o."lateDeliveredAt" IS NOT NULL THEN 'DELIVERED' END AS late, o.phone, o.total, o."originalTotal", o.prepaid, o."deliveryPayment"::text AS "deliveryPayment",
            o."cancelReason"::text AS "cancelReason", o."cancelNote", o."issueFault"::text AS "issueFault", (ho."removedAt" IS NOT NULL) AS postponed,
            o."deliveredAt", o."cancelledAt", o.province, o.district, o."addressDetail", o."deliveredByName", o."cancelledByName", o.version,
            (SELECT coalesce(sum(l."refusedQty"), 0)::int FROM "OrderLine" l WHERE l."orderId" = o.id) AS refused
@@ -580,6 +580,14 @@ export async function approveDriverPayment(actor: UserActor, idIn: unknown, inpu
  */
 /** Аудит #160: төлөв солих хугацаа (захиалга үүссэнээс) */
 export const LATE_DAYS = 14;
+/** #212 (эзэн): Нягтлан, Супер админ — хэзээний захиалгын төлвийг ч солино */
+const noLateLimit = (roles: string[]) => roles.includes('SUPER_ADMIN') || roles.includes('ACCOUNTING');
+/** Падааны өдрийн тооцоо баталгаажсан (түгжсэн) эсэх */
+export async function dayLocked(handoverId: number) {
+  const h = await db.handover.findUnique({ where: { id: handoverId }, select: { driverId: true, date: true } });
+  const st = h ? await db.driverSettlement.findUnique({ where: { driverId_date: { driverId: h.driverId, date: h.date } }, select: { status: true } }) : null;
+  return st?.status === 'COMPLETED';
+}
 export async function toggleOrderStatus(actor: UserActor, idIn: unknown, input: { target?: unknown; note?: unknown; payment?: unknown; version?: unknown }) {
   assertAccount(actor);
   const id = Number(idIn);
@@ -589,20 +597,19 @@ export async function toggleOrderStatus(actor: UserActor, idIn: unknown, input: 
   const noteRaw = String(input.note ?? '').trim();
   if (noteRaw.length < 3) throw badRequest('Төлөв солих шалтгаанаа бичнэ үү', 'reason_required');
   const note = `Нягтлан: ${noteRaw}`.slice(0, 500);
-  const o = await db.order.findUnique({ where: { id }, select: { status: true, handoverId: true, driverId: true, prepaid: true, number: true, createdAt: true, lateCancelledAt: true } });
+  const o = await db.order.findUnique({ where: { id }, select: { status: true, handoverId: true, driverId: true, prepaid: true, number: true, createdAt: true, lateCancelledAt: true, lateDeliveredAt: true } });
   if (!o) throw notFound('Захиалга олдсонгүй');
   if (!o.handoverId || !o.driverId) throw conflict('Падаангүй захиалгын төлвийг энд солихгүй', 'no_handover');
-  // Аудит #160 (эзний шийдвэр): захиалга үүссэнээс 14 хоногоос хэтэрсэн бол хэн ч (Супер админ ч) төлөв солихгүй
-  if (Date.now() - o.createdAt.getTime() > LATE_DAYS * 86_400_000) throw conflict(`Захиалга үүссэнээс ${LATE_DAYS} хоног өнгөрсөн — төлвийг солих боломжгүй`, 'too_old');
+  // Аудит #160: захиалга үүссэнээс 14 хоногоос хэтэрсэн бол солихгүй. #212 (эзэн): Нягтлан, Супер админд хугацааны хязгааргүй (бусад — хэвээр)
+  if (!noLateLimit(actor.roles) && Date.now() - o.createdAt.getTime() > LATE_DAYS * 86_400_000) throw conflict(`Захиалга үүссэнээс ${LATE_DAYS} хоног өнгөрсөн — төлвийг солих боломжгүй`, 'too_old');
   if (o.lateCancelledAt) throw conflict('Хожуу буцаалт хийгдсэн захиалга — төлвийг дахин солихгүй', 'late_returned');
-  const { deliverOrder, undoDelivery, driverCancel, lateReturn } = await import('../delivery/driver');
-  // Түгжсэн (баталгаажсан) өдрийн хүргэсэн захиалгыг үйлчлүүлэгч буцаасан — хожуу буцаалт (тэр өдрийн тооцоо хөдлөхгүй)
-  if (o.status === 'DELIVERED' && target === 'CANCELLED') {
-    const h = await db.handover.findUnique({ where: { id: o.handoverId }, select: { driverId: true, date: true } });
-    const st = h ? await db.driverSettlement.findUnique({ where: { driverId_date: { driverId: h.driverId, date: h.date } }, select: { status: true } }) : null;
-    if (st?.status === 'COMPLETED') {
-      const lr = await lateReturn(actor, id, { note: noteRaw, version: input.version });
-      await writeAudit(actor, 'accounting.status_toggle', 'Order', String(id), { number: o.number, from: o.status, to: target, note: noteRaw, lateReturn: true }, db, ['order', 'money', 'delivery']);
+  if (o.lateDeliveredAt) throw conflict('Хожуу «Хүргэсэн» болгосон захиалга — төлвийг дахин солихгүй', 'late_delivered');
+  const { deliverOrder, undoDelivery, driverCancel, lateReturn, lateDeliver } = await import('../delivery/driver');
+  // Түгжсэн (баталгаажуулсан) өдөр: хүргэсэн → цуцлах = хожуу буцаалт (#160), цуцлагдсан → хүргэсэн = хожуу хүргэлт (#212). Тэр өдрийн тооцоо хөдлөхгүй
+  if ((o.status === 'DELIVERED' && target === 'CANCELLED') || (o.status === 'CANCELLED' && target === 'DELIVERED')) {
+    if (await dayLocked(o.handoverId)) {
+      const lr = target === 'CANCELLED' ? await lateReturn(actor, id, { note: noteRaw, version: input.version }) : await lateDeliver(actor, id, { note: noteRaw, version: input.version });
+      await writeAudit(actor, 'accounting.status_toggle', 'Order', String(id), { number: o.number, from: o.status, to: target, note: noteRaw, ...(target === 'CANCELLED' ? { lateReturn: true } : { lateDeliver: true }) }, db, ['order', 'money', 'delivery']);
       return lr;
     }
   }
@@ -634,4 +641,33 @@ export async function returnOrderLines(actor: UserActor, idIn: unknown, input: {
   const h = await db.handover.findUnique({ where: { id: o.handoverId }, select: { driverId: true, date: true } });
   if (h) await inTx((tx) => reopenPending(tx, h.driverId, ymdOf(h.date), actor.name, `№${o.number} бараа хасагдсан`));
   return r;
+}
+
+/**
+ * #212 (эзэн): «Нягтлан» хуудсанд захиалгын дугаараар хайх — хэзээний ч захиалга. Падааны өдөр, жолооч, тэр өдрийн тооцоо түгжигдсэн эсэх,
+ * бараа, оператор; «Төлөв солих» боломжтой эсэх. Зөвхөн уншина.
+ */
+export async function findOrderForAccounting(actor: UserActor, numberIn: unknown) {
+  assertAccount(actor);
+  const number = String(numberIn ?? '').replace(/[^0-9]/g, '').slice(0, 12);
+  if (!number) throw badRequest('Захиалгын дугаараа бичнэ үү');
+  const cands = [...new Set([number, number.padStart(8, '0')])];
+  const o = await db.order.findFirst({ where: { number: { in: cands } }, include: { lines: { orderBy: { id: 'asc' }, select: { id: true, name: true, label: true, qty: true, refusedQty: true, unitPrice: true } } } });
+  if (!o) throw notFound(`№${number} захиалга олдсонгүй`);
+  const h = o.handoverId ? await db.handover.findUnique({ where: { id: o.handoverId }, select: { id: true, number: true, date: true, driverId: true, driverName: true } }) : null;
+  const locked = o.handoverId ? await dayLocked(o.handoverId) : false;
+  const late = o.lateCancelledAt ? 'RETURNED' : o.lateDeliveredAt ? 'DELIVERED' : null;
+  const canToggle = !!h && !late && (locked ? ['DELIVERED', 'CANCELLED'] : ['OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED']).includes(o.status)
+    && (noLateLimit(actor.roles) || Date.now() - o.createdAt.getTime() <= LATE_DAYS * 86_400_000);
+  return {
+    order: {
+      id: o.id, number: o.number, status: o.status, phone: o.phone, total: o.total, originalTotal: o.originalTotal, prepaid: o.prepaid, deliveryPayment: o.deliveryPayment,
+      cancelReason: o.cancelReason, cancelNote: o.cancelNote, issueFault: o.issueFault, postponed: false, deliveredAt: o.deliveredAt, cancelledAt: o.cancelledAt,
+      province: o.province, district: o.district, addressDetail: o.addressDetail, deliveredByName: o.deliveredByName, cancelledByName: o.cancelledByName,
+      refused: o.lines.reduce((a, l) => a + l.refusedQty, 0), version: o.version, late, lines: o.lines,
+      createdAt: o.createdAt, operatorName: o.operatorName, lateNote: o.lateCancelNote ?? o.lateDeliverNote, lateAt: o.lateCancelledAt ?? o.lateDeliveredAt, lateBy: o.lateCancelByName ?? o.lateDeliverByName,
+    },
+    handover: h ? { id: h.id, number: h.number, date: ymdOf(h.date), driverId: h.driverId, driverName: h.driverName } : null,
+    locked, canToggle,
+  };
 }

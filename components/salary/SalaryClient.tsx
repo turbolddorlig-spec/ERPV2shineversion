@@ -15,6 +15,7 @@ import { money, ubDateTime } from '@/lib/format';
  */
 const EVAL_LABEL = 'Үнэлгээний цалин (автомат)';
 const LATE_LABEL = 'Хүргэсний дараа буцаасан';
+const LATE_ADD_LABEL = 'Хожуу хүргэсэн';
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : 'Алдаа гарлаа');
 const thisYm = () => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 7);
 const shiftYm = (ym: string, n: number) => { const [y, m] = ym.split('-').map(Number) as [number, number]; const d = new Date(Date.UTC(y, m - 1 + n, 1)); return d.toISOString().slice(0, 7); };
@@ -157,7 +158,7 @@ interface Prep {
   period: { start: string; end: string; label: string };
   auto: { cfg: { salaryType: string; baseSalary: number; bonusSalary: number; oppRatePerOrder: number; dailyRate: number; bankName: string; bankAccount: string }; isOpp: boolean; totalDays: number; workingDays: number; offDays: Record<string, number>; dailyRate: number; calcBase: number; orderCount: number; orderSalary: number;
     penalties: { id: number; category: string; createdAt: string; amount: number; remaining: number }[]; penaltyTotal: number;
-    loans: { id: number; issuedAt: string; pieces: number; amount: number; note: string | null }[]; debts: { id: number; description: string; totalAmount: number; remainingAmount: number }[]; evalSalary?: number; lateDeduction?: number; lateLabel?: string | null };
+    loans: { id: number; issuedAt: string; pieces: number; amount: number; note: string | null }[]; debts: { id: number; description: string; totalAmount: number; remainingAmount: number }[]; evalSalary?: number; lateDeduction?: number; lateLabel?: string | null; lateAddition?: number; lateAddLabel?: string | null };
   record: null | { id: number; version: number; baseSalary: number; bonusSalary: number; additions: { label: string; amount: number }[]; deductions: { label: string; amount: number }[]; penaltyDeducted: number; penaltyTotal: number;
     loans: { loanId: number; label: string; amount: number }[]; debtPayments: { debtId: number; label: string; amount: number }[]; notes: string | null; bankName: string; bankAccount: string; transferSalary: number; transferred: boolean; isLocked: boolean; lockedByName: string | null; lockedAt: string | null; orderCount: number; orderSalary: number };
   dayLabels: Record<string, string>;
@@ -197,7 +198,8 @@ function RecordDialog({ ym, row, half, isSA, hasLockCode, onClose, onDone, onUnl
       const rec = r.record; const a = r.auto;
       const s = (n: number) => String(n);
       setF({ base: s(rec ? rec.baseSalary : a.calcBase), bonus: s(rec ? rec.bonusSalary : a.cfg.bonusSalary), penalty: s(rec ? rec.penaltyDeducted : a.penaltyTotal), notes: rec?.notes ?? '', bankName: rec?.bankName ?? a.cfg.bankName, bankAccount: rec?.bankAccount ?? a.cfg.bankAccount });
-      setAdds((rec?.additions ?? []).filter((x) => x.label !== EVAL_LABEL).map((x) => ({ label: x.label, amount: s(x.amount) })));
+      // #212: хожуу хүргэсэн захиалгын нэмэгдэл автоматаар (сервер бодно)
+      setAdds((rec?.additions ?? []).filter((x) => x.label !== EVAL_LABEL && (rec?.isLocked || !x.label.startsWith(LATE_ADD_LABEL))).map((x) => ({ label: x.label, amount: s(x.amount) })));
       // Аудит #160: хожуу буцаалтын суутгал автоматаар (сервер бодно) — гараар засах мөрөнд харуулахгүй
       setDeds((rec?.deductions ?? []).filter((x) => rec?.isLocked || !x.label.startsWith(LATE_LABEL)).map((x) => ({ label: x.label, amount: s(x.amount) })));
       setLoanIds(rec ? rec.loans.map((l) => l.loanId) : a.loans.map((l) => l.id));
@@ -214,7 +216,8 @@ function RecordDialog({ ym, row, half, isSA, hasLockCode, onClose, onDone, onUnl
   const loanTotal = loanSel.reduce((s, l) => s + l.amount, 0);
   const debtTotal = Object.values(debtPay).reduce((s, v) => s + num(v), 0);
   const evalSal = a?.evalSalary ?? 0;
-  const gross = (orderBased ? (a?.orderSalary ?? 0) : num(f.base)) + num(f.bonus) + sumL(adds) + evalSal;
+  const lateAdd = locked ? 0 : (a?.lateAddition ?? 0);
+  const gross = (orderBased ? (a?.orderSalary ?? 0) : num(f.base)) + num(f.bonus) + sumL(adds) + evalSal + lateAdd;
   const lateDed = locked ? 0 : (a?.lateDeduction ?? 0);
   const transfer = gross - sumL(deds) - lateDed - num(f.penalty) - debtTotal - loanTotal;
   const save = async () => {
@@ -250,6 +253,7 @@ function RecordDialog({ ym, row, half, isSA, hasLockCode, onClose, onDone, onUnl
               <div className="mb-2 text-[13px] font-bold">{orderBased ? 'Захиалгын цалин' : 'Үндсэн цалин'}</div>
               {orderBased ? (
                 <div className="text-[14px]"><b>{a.orderCount}</b> хүргэгдсэн захиалга × {money(a.cfg.oppRatePerOrder)} = <b>{money(a.orderSalary)}</b><p className="text-[12px] text-subtle">Тухайн хугацаанд ҮҮССЭН, хүргэгдсэн захиалга (цуцлагдсан, хүргэгдээгүй нь тоологдохгүй)</p>
+                  {!locked && a.lateAddLabel ? <p className="mt-1 text-[13px] font-semibold text-ok-ink [overflow-wrap:anywhere]">+ {money(a.lateAddition ?? 0)} · {a.lateAddLabel} (өмнөх цоожилсон цалинд тоологдоогүй)</p> : null}
                   {!locked && a.lateLabel ? <p className="mt-1 text-[13px] font-semibold text-bad-ink [overflow-wrap:anywhere]">− {money(a.lateDeduction ?? 0)} · {a.lateLabel} (өмнөх цоожилсон цалинд тоологдсон)</p> : null}</div>
               ) : (
                 <div className="grid gap-2 sm:grid-cols-[1fr_1fr]">

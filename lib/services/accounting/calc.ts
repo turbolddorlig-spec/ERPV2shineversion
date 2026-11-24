@@ -100,7 +100,8 @@ export async function dayRows(tx: Tx | typeof db, ymd: string, driverId?: string
   const d = dateOnly(ymd);
   const rows = await tx.$queryRaw<Omit<DayRow, 'outcome'>[]>`
     -- Аудит #160: түгжсэн өдрийн дараа хожуу буцаасан захиалга тэр өдрийн тооцоонд «хүргэсэн» хэвээр (мөнгө тушаагдсан, тооцоо хөдлөхгүй)
-    SELECT h.id AS "handoverId", h."driverId", o.id AS "orderId", o.number, CASE WHEN o."lateCancelledAt" IS NOT NULL THEN 'DELIVERED' ELSE o.status::text END AS status, o.total, o."originalTotal", o.prepaid,
+    -- #212: хожуу «Хүргэсэн» болгосон захиалга тэр өдрийн тооцоонд «цуцлагдсан» хэвээр
+    SELECT h.id AS "handoverId", h."driverId", o.id AS "orderId", o.number, CASE WHEN o."lateCancelledAt" IS NOT NULL THEN 'DELIVERED' WHEN o."lateDeliveredAt" IS NOT NULL THEN 'CANCELLED' ELSE o.status::text END AS status, o.total, o."originalTotal", o.prepaid,
            o."deliveryPayment", o."cancelReason"::text AS "cancelReason", o."issueFault", (ho."removedAt" IS NOT NULL) AS postponed
     FROM "Handover" h
     JOIN "HandoverOrder" ho ON ho."handoverId" = h.id
