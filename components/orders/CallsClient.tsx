@@ -78,7 +78,8 @@ function CallsBody({ onCreateOrder }: { onCreateOrder: (p: OrderPrefill) => void
     const sp = new URLSearchParams({ status: tab === 'incoming' ? 'open' : tab, page: String(page), scope });
     if (q.trim()) sp.set('q', q.trim());
     if (scope === 'all' && owner) sp.set('ownerId', owner);
-    if (scope === 'all') { if (from) sp.set('from', from); if (to) sp.set('to', to); }
+    // #217 (эзэн): огноогоор шүүх — оператор өөрийн жагсаалтад ч (анх өнөөдөр); утсаар хайхад бүх өдрөөс
+    if (!q.trim()) { if (from) sp.set('from', from); if (to) sp.set('to', to); }
     return api<Resp>(`/api/calls?${sp}`).then((r) => { if (id === req.current) { setData(r); setError(null); } }).catch((e) => setError(msg(e)));
   }, [tab, page, q, scope, owner, from, to]);
   useEffect(() => { const t = setTimeout(load, q ? 250 : 0); return () => clearTimeout(t); }, [load, q]);
@@ -103,7 +104,7 @@ function CallsBody({ onCreateOrder }: { onCreateOrder: (p: OrderPrefill) => void
 
   return (
     <div className="flex flex-col gap-3 px-4 py-3 text-[13px]">
-      <AddForm pages={pages} onAdded={(n) => { setFlash(`${n} дугаар бүртгэлээ`); setTab('PENDING'); setPage(1); load(); }} onError={setError} />
+      <AddForm pages={pages} onAdded={(n) => { setFlash(`${n} дугаар бүртгэлээ`); setTab('PENDING'); setPage(1); if ((from && from > todayYmd()) || (to && to < todayYmd())) { setFrom(todayYmd()); setTo(todayYmd()); } load(); }} onError={setError} />
 
       <div className="flex flex-wrap items-center gap-2">
         {sup ? (
@@ -118,12 +119,13 @@ function CallsBody({ onCreateOrder }: { onCreateOrder: (p: OrderPrefill) => void
             {ops.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
           </select>
         ) : null}
-        {sup && scope === 'all' ? (
-          <span className="flex flex-wrap items-center gap-1.5">
+        {tab !== 'incoming' ? (
+          <span className="flex flex-wrap items-center gap-1.5" data-calls-dates>
             <input type="date" aria-label="Эхлэх огноо" value={from} max={to || undefined} onChange={(e) => { setFrom(e.target.value); setPage(1); }} className={clsx(inp, 'w-[150px]')} />
             <span className="text-muted">–</span>
             <input type="date" aria-label="Дуусах огноо" value={to} min={from || undefined} onChange={(e) => { setTo(e.target.value); setPage(1); }} className={clsx(inp, 'w-[150px]')} />
             <button type="button" onClick={() => { setFrom(todayYmd()); setTo(todayYmd()); setPage(1); }} className="h-9 rounded-lg px-2 text-[13px] font-semibold text-muted hover:bg-surface2">Өнөөдөр</button>
+            <button type="button" data-calls-alldays onClick={() => { setFrom(''); setTo(''); setPage(1); }} className={clsx('h-9 rounded-lg px-2 text-[13px] font-semibold hover:bg-surface2', !from && !to ? 'text-ink' : 'text-muted')}>Бүх өдөр</button>
           </span>
         ) : null}
         <label className="relative min-w-[180px] flex-1">

@@ -62,8 +62,9 @@ export async function listCallNotes(actor: UserActor, p: { status?: string; owne
   const base: Prisma.CallNoteWhereInput[] = [];
   if (!all) base.push({ ownerId: actor.id });
   else if (p.ownerId) base.push({ ownerId: p.ownerId });
-  // #172-6 (хуучин систем шиг): «Бүх оператор» үед бүртгэсэн огноогоор (эхлэх–дуусах, Улаанбаатар) шүүнэ
-  if (all) {
+  // #172-6 (хуучин систем шиг): бүртгэсэн огноогоор (эхлэх–дуусах, Улаанбаатар) шүүнэ.
+  // #217 (эзэн): оператор өөрийн жагсаалтад ч — тухайн өдрийн бүртгэл дотроо эхэлж бүртгэсэн нь дээр (өмнөх өдрүүдийн хуучин бүртгэлийн ард орохгүй)
+  {
     const from = p.from && isYmd(p.from) ? p.from : null; const to = p.to && isYmd(p.to) ? p.to : null;
     if (from || to) base.push({ createdAt: { ...(from ? { gte: ubDayStart(from) } : {}), ...(to ? { lt: ubDayStart(ubDay(new Date(ubDayStart(to).getTime() + 36 * 3600_000))) } : {}) } });
   }

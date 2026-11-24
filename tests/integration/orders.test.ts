@@ -372,7 +372,14 @@ describe('дуудлагын бүртгэл (хуучин логик + #54)', ()
     await C.createCallNotes(op, { phones: '91335599', variantId: v2 });
     await C.createCallNotes(op, { phones: '88118811', variantId: v2 });
     expect((await C.listCallNotes(op, { status: 'PENDING' })).items.map((x) => x.phone).slice(-2)).toEqual(['91335599', '88118811']);
-    await db.callNote.deleteMany({ where: { phone: { in: ['91335599', '88118811'] } } });
+    // #217: өмнөх өдрийн хаагаагүй (залгасан) бүртгэл олон байсан ч өнөөдрөөр шүүхэд өнөөдөр эхэлж бүртгэсэн нь хамгийн дээр
+    const ids217 = (await db.callNote.findMany({ where: { phone: { in: ['91335599', '88118811'] } }, orderBy: { id: 'asc' } })).map((x) => x.id);
+    await db.callNote.updateMany({ where: { id: { in: ids217 } }, data: { status: 'CONTACTED' } });
+    const old217 = await db.callNote.create({ data: { phone: '95550000', ownerId: op.id, ownerName: op.name, createdById: op.id, status: 'CONTACTED', createdAt: new Date(Date.now() - 3 * 86_400_000) } });
+    const today217 = U.ubDay();
+    expect((await C.listCallNotes(op, { status: 'CONTACTED', from: today217, to: today217 })).items.map((x) => x.phone)).toEqual(['91335599', '88118811']);
+    expect((await C.listCallNotes(op, { status: 'CONTACTED' })).items.map((x) => x.phone)).toEqual(['91335599', '88118811', '95550000']); // бүх өдөр — бүртгэсэн дарааллаар (id)
+    await db.callNote.deleteMany({ where: { id: { in: [...ids217, old217.id] } } });
     await err(C.createCallNotes(op, { phones: '123' }), 400, 'bad_phone');
     // #207: үлдэгдэлгүй бараагаар бүртгэхгүй (сонгосон ч, кодоор бичсэн ч)
     const z = await P.createProduct(sa, { code: 'ZERO1', name: 'Үлдэгдэлгүй бараа', price: 10000 });
