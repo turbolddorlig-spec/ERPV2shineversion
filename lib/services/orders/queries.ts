@@ -128,7 +128,8 @@ export async function listOrders(actor: UserActor, p: ListParams) {
   }
   switch (tab) {
     // #172-5 (эзний шийдвэр): «Өнөөдөр» = өнөөдөр баталгаажсан (мөнгө нь шөнө орж «Шинэ» болсон ч) + өнөөдөр үүссэн, баталгаажаагүй
-    case 'today': and.push({ OR: [{ confirmedAt: { gte: ubDayStart(today) } }, { confirmedAt: null, createdAt: { gte: ubDayStart(today) } }] }, { status: { not: 'CANCELLED' } }); break; // #186: цуцалсан нь «Цуцлагдсан» табд
+    // #219 (эзэн): «Төлбөр хүлээж буй» (мөнгө ороогүй) «Өнөөдөр»-т тоологдохгүй — өөрийн табд
+    case 'today': and.push({ confirmedAt: { gte: ubDayStart(today) } }, { status: { notIn: ['CANCELLED', 'PENDING_PAYMENT'] } }); break; // #186: цуцалсан нь «Цуцлагдсан» табд
     case 'SCHEDULED': and.push({ status: 'NEW', deliveryDate: { gt: dateOnly(tomorrow) } }); break;
     case 'NEW': and.push({ status: 'NEW', deliveryDate: { lte: dateOnly(tomorrow) } }); break;
     case 'all': break;
@@ -190,8 +191,7 @@ export async function tabCounts(): Promise<Record<string, number>> {
   if (countsCache && Date.now() - countsCache.at < 5000) return countsCache.data;
   const today = ubDay(); const tomorrow = ubDay(new Date(), 1);
   const rows = await db.$queryRaw<{ k: string; n: number }[]>`
-    SELECT 'today' AS k, ((SELECT count(*) FROM "Order" WHERE "confirmedAt" >= ${ubDayStart(today)} AND status <> 'CANCELLED')
-      + (SELECT count(*) FROM "Order" WHERE "confirmedAt" IS NULL AND "createdAt" >= ${ubDayStart(today)} AND status <> 'CANCELLED'))::int AS n
+    SELECT 'today' AS k, (SELECT count(*) FROM "Order" WHERE "confirmedAt" >= ${ubDayStart(today)} AND status NOT IN ('CANCELLED', 'PENDING_PAYMENT'))::int AS n
     UNION ALL SELECT 'PENDING_PAYMENT', count(*)::int FROM "Order" WHERE status = 'PENDING_PAYMENT'
     UNION ALL SELECT 'NEW', count(*)::int FROM "Order" WHERE status = 'NEW' AND "deliveryDate" <= ${dateOnly(tomorrow)}
     UNION ALL SELECT 'SCHEDULED', count(*)::int FROM "Order" WHERE status = 'NEW' AND "deliveryDate" > ${dateOnly(tomorrow)}
