@@ -113,9 +113,10 @@ function CallsBody({ onCreateOrder }: { onCreateOrder: (p: OrderPrefill) => void
             <option value="all">Бүх оператор</option>
           </select>
         ) : null}
-        {sup && scope === 'all' ? (
-          <select aria-label="Оператор" value={owner} onChange={(e) => { setOwner(e.target.value); setPage(1); }} className={clsx(inp, 'w-[180px]')}>
-            <option value="">Бүгд</option>
+        {/* #218 (эзэн): опп нэрээр шүүх — ахлах / СА-д байнга харагдана; опп сонговол «Бүх оператор» хүрээ автоматаар */}
+        {sup ? (
+          <select aria-label="Оператор" data-calls-owner value={scope === 'all' ? owner : ''} onChange={(e) => { const v = e.target.value; if (v === '') { setOwner(''); } else { setScope('all'); setOwner(v); } setPage(1); setSel(new Set()); }} className={clsx(inp, 'w-[190px]')}>
+            <option value="">{scope === 'all' ? 'Бүх опп' : '👤 Опп сонгох…'}</option>
             {ops.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
           </select>
         ) : null}
